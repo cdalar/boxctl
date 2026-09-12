@@ -50,6 +50,19 @@ type VM struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// Image is a boot image offered by boxctl-vms, as returned by
+// /api/images -- Name is exactly what a caller passes to Create's
+// --image flag. There's no "default" entry: omitting --image entirely
+// boots the host's own default rootfs image instead of picking one of
+// these by name.
+type Image struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Provider is the onctl provider a VM booted from this image will
+	// run under ("fc" or "ch"), mirroring VM.Provider.
+	Provider string `json:"provider"`
+}
+
 // apiError carries the backend's status and body text so callers see
 // something more useful than a bare status code.
 type apiError struct {
@@ -109,6 +122,14 @@ func (c *Client) List(ctx context.Context) ([]VM, error) {
 		return nil, err
 	}
 	return vms, nil
+}
+
+func (c *Client) ListImages(ctx context.Context) ([]Image, error) {
+	var images []Image
+	if err := c.do(ctx, http.MethodGet, "/api/images", nil, &images); err != nil {
+		return nil, err
+	}
+	return images, nil
 }
 
 // Create sends name as-is (a bare display name); the server prepends
