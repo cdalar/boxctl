@@ -7,7 +7,7 @@ import (
 )
 
 // Version/BuildTime/GoVersion are overridden at build time via
-// -ldflags "-X boxctl-cli/cmd.Version=..." -- see the Makefile, which
+// -ldflags "-X github.com/cdalar/boxctl/cmd.Version=..." -- see the Makefile, which
 // mirrors onctl's own.
 var (
 	Version   = "dev"

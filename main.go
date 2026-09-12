@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"boxctl-cli/cmd"
+	"github.com/cdalar/boxctl/cmd"
 )
 
 func main() {

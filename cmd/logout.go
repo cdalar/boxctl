@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"boxctl-cli/internal/config"
+	"github.com/cdalar/boxctl/internal/config"
 
 	"github.com/spf13/cobra"
 )

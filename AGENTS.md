@@ -4,12 +4,13 @@ Guidance for coding agents (and humans) working in this repository.
 
 ## What this is
 
-`boxctl-cli` is the `boxctl` command-line client for boxctl.io — a Cobra
-CLI that lets a user manage their own Firecracker microVMs ("boxes")
-without the browser dashboard. It's a thin HTTP client: all real logic
-(dispatching `onctl`, tracking VM state, the terminal tunnel) lives in
-`boxctl-vms` (separate repo, sibling directory `~/cdalar/boxctl-vms`,
-**not** part of this git repository).
+`boxctl` (repo name matches the binary, same convention as `onctl`) is
+the command-line client for boxctl.io — a Cobra CLI that lets a user
+manage their own Firecracker microVMs ("boxes") without the browser
+dashboard. It's a thin HTTP client: all real logic (dispatching `onctl`,
+tracking VM state, the terminal tunnel) lives in `boxctl-vms` (separate
+repo, sibling directory `~/cdalar/boxctl-vms`, **not** part of this git
+repository).
 
 Structurally it mirrors the `onctl` CLI (sibling directory
 `~/cdalar/onctl`, also not part of this repository) — same

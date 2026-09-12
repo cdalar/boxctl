@@ -12,23 +12,23 @@ build:
 	export CGO_ENABLED=0
 	$(GO_CMD) mod tidy
 	$(GO_CMD) fmt ./...
-	$(GO_CMD) build -ldflags="-w -s -X 'boxctl-cli/cmd.Version=`git rev-parse HEAD | cut -c1-7`' \
-		-X 'boxctl-cli/cmd.BuildTime=`date -u '+%Y-%m-%d %H:%M:%S'`' \
-		-X 'boxctl-cli/cmd.GoVersion=`go version`'" \
+	$(GO_CMD) build -ldflags="-w -s -X 'github.com/cdalar/boxctl/cmd.Version=`git rev-parse HEAD | cut -c1-7`' \
+		-X 'github.com/cdalar/boxctl/cmd.BuildTime=`date -u '+%Y-%m-%d %H:%M:%S'`' \
+		-X 'github.com/cdalar/boxctl/cmd.GoVersion=`go version`'" \
 		-o $(BINARY_NAME) main.go
 
 # Build a linux/amd64 binary (not part of the default build)
 build-amd64:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO_CMD) build -ldflags="-w -s -X 'boxctl-cli/cmd.Version=`git rev-parse HEAD | cut -c1-7`' \
-		-X 'boxctl-cli/cmd.BuildTime=`date -u '+%Y-%m-%d %H:%M:%S'`' \
-		-X 'boxctl-cli/cmd.GoVersion=`go version`'" \
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO_CMD) build -ldflags="-w -s -X 'github.com/cdalar/boxctl/cmd.Version=`git rev-parse HEAD | cut -c1-7`' \
+		-X 'github.com/cdalar/boxctl/cmd.BuildTime=`date -u '+%Y-%m-%d %H:%M:%S'`' \
+		-X 'github.com/cdalar/boxctl/cmd.GoVersion=`go version`'" \
 		-o $(BINARY_NAME)-amd64 main.go
 
 # Build a darwin/arm64 binary (not part of the default build)
 build-arm64:
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO_CMD) build -ldflags="-w -s -X 'boxctl-cli/cmd.Version=`git rev-parse HEAD | cut -c1-7`' \
-		-X 'boxctl-cli/cmd.BuildTime=`date -u '+%Y-%m-%d %H:%M:%S'`' \
-		-X 'boxctl-cli/cmd.GoVersion=`go version`'" \
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO_CMD) build -ldflags="-w -s -X 'github.com/cdalar/boxctl/cmd.Version=`git rev-parse HEAD | cut -c1-7`' \
+		-X 'github.com/cdalar/boxctl/cmd.BuildTime=`date -u '+%Y-%m-%d %H:%M:%S'`' \
+		-X 'github.com/cdalar/boxctl/cmd.GoVersion=`go version`'" \
 		-o $(BINARY_NAME)-arm64 main.go
 
 # Clean up the binary
