@@ -6,17 +6,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version is overridden at release build time via
-// -ldflags "-X boxctl-cli/cmd.version=..." (see onctl's own .goreleaser.yml
-// for the equivalent pattern this mirrors).
-var version = "dev"
+// Version/BuildTime/GoVersion are overridden at build time via
+// -ldflags "-X boxctl-cli/cmd.Version=..." -- see the Makefile, which
+// mirrors onctl's own.
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
+	GoVersion = "unknown"
+)
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the boxctl version",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("boxctl", version)
+		fmt.Printf("boxctl %s (built %s, %s)\n", Version, BuildTime, GoVersion)
 	},
 }
 
