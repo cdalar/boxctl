@@ -27,6 +27,7 @@ go build -o boxctl .
 boxctl login <token>
 
 boxctl ls
+boxctl images
 boxctl create my-box
 boxctl ssh my-box
 boxctl pause my-box
@@ -53,8 +54,8 @@ and is never sent anywhere except the configured API URL.
 
 ```
 main.go                 Entry point, delegates to cmd.Execute()
-cmd/                     Cobra subcommands (login/logout/ls/create/rm/pause/resume/ssh/version)
-internal/client/         HTTP client for boxctl-vms's /api/vms* routes
+cmd/                     Cobra subcommands (login/logout/ls/images/create/rm/pause/resume/ssh/version)
+internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
 internal/config/         ~/.boxctl/config.json read/write
 ```
 

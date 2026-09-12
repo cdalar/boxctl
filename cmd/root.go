@@ -45,6 +45,9 @@ list, connect to, and destroy your Firecracker microVMs ("boxes").`,
   # List your boxes
   boxctl ls
 
+  # List available boot images
+  boxctl images
+
   # Create a box
   boxctl create my-box
 

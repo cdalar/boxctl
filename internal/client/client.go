@@ -50,6 +50,16 @@ type VM struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// Image is a boot image offered by boxctl-vms, as returned by
+// /api/images -- the Name is what a caller passes to Create's --image
+// flag.
+type Image struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Default     bool   `json:"default"`
+}
+
 // apiError carries the backend's status and body text so callers see
 // something more useful than a bare status code.
 type apiError struct {
@@ -109,6 +119,14 @@ func (c *Client) List(ctx context.Context) ([]VM, error) {
 		return nil, err
 	}
 	return vms, nil
+}
+
+func (c *Client) ListImages(ctx context.Context) ([]Image, error) {
+	var images []Image
+	if err := c.do(ctx, http.MethodGet, "/api/images", nil, &images); err != nil {
+		return nil, err
+	}
+	return images, nil
 }
 
 // Create sends name as-is (a bare display name); the server prepends
