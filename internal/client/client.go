@@ -51,13 +51,16 @@ type VM struct {
 }
 
 // Image is a boot image offered by boxctl-vms, as returned by
-// /api/images -- the Name is what a caller passes to Create's --image
-// flag.
+// /api/images -- Name is exactly what a caller passes to Create's
+// --image flag. There's no "default" entry: omitting --image entirely
+// boots the host's own default rootfs image instead of picking one of
+// these by name.
 type Image struct {
-	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Default     bool   `json:"default"`
+	// Provider is the onctl provider a VM booted from this image will
+	// run under ("fc" or "ch"), mirroring VM.Provider.
+	Provider string `json:"provider"`
 }
 
 // apiError carries the backend's status and body text so callers see

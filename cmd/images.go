@@ -24,15 +24,11 @@ var imagesCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		if _, err := fmt.Fprintln(w, "NAME\tDEFAULT\tDESCRIPTION"); err != nil {
+		if _, err := fmt.Fprintln(w, "NAME\tPROVIDER\tDESCRIPTION"); err != nil {
 			return err
 		}
 		for _, img := range images {
-			def := ""
-			if img.Default {
-				def = "yes"
-			}
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", img.Name, def, img.Description); err != nil {
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", img.Name, img.Provider, img.Description); err != nil {
 				return err
 			}
 		}
