@@ -25,7 +25,9 @@ var lsCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tSTATE\tIP\tPROVIDER\tREADY\tAGE")
+		if _, err := fmt.Fprintln(w, "NAME\tSTATE\tIP\tPROVIDER\tREADY\tAGE"); err != nil {
+			return err
+		}
 		for _, vm := range vms {
 			ip := vm.IP
 			if ip == "" {
@@ -35,7 +37,9 @@ var lsCmd = &cobra.Command{
 			if vm.Ready {
 				ready = "yes"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, ip, vm.Provider, ready, age(vm.CreatedAt))
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, ip, vm.Provider, ready, age(vm.CreatedAt)); err != nil {
+				return err
+			}
 		}
 		return w.Flush()
 	},

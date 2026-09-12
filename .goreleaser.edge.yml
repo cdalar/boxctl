@@ -1,0 +1,41 @@
+version: 2
+project_name: boxctl
+
+# Used only by .github/workflows/edge.yml -- a lighter, unsigned config
+# for continuous builds off the tip of main, mirroring onctl's own
+# .goreleaser.edge.yml. Linux and macOS only (no Windows -- matches
+# onctl's edge config; add it here too if it turns out to matter before
+# a tagged release does).
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - binary: boxctl
+    id: boxctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}'
+
+archives:
+  - id: repl
+    name_template: "{{ .ProjectName }}-{{.Os}}-{{.Arch}}"
+    formats: [tar.gz]
+
+checksum:
+  name_template: checksums.txt
+
+# --snapshot skips all validation, so .Version comes purely from this
+# template rather than the latest git tag (there isn't one yet) --
+# distinguishes an edge build's `boxctl version` output from a real
+# release at a glance, same convention as onctl's edge builds.
+snapshot:
+  version_template: "{{ incpatch .Version }}-edge"
