@@ -1,0 +1,98 @@
+name: edge
+
+# Publishes an unsigned "edge" build of boxctl from the tip of main on
+# every push -- binaries carrying whatever just landed, without waiting
+# for a tagged release (release.yml's job, which this doesn't touch or
+# replace). Mirrors onctl's own edge.yml (github.com/cdalar/onctl):
+# uses GoReleaser's OSS --snapshot flag against a dedicated
+# .goreleaser.edge.yml, then this workflow deletes and recreates a single
+# rolling `edge` prerelease/tag on every run, so there's always exactly
+# one, always-current release at a fixed URL
+# (github.com/cdalar/boxctl/releases/tag/edge).
+#
+# Runs on a plain GitHub-hosted ubuntu-latest runner -- unlike onctl's
+# self-hosted onctl-4 runner (needed there because building
+# aws-sdk-go-v2/service/ec2 three times in parallel OOMs that box),
+# boxctl's dependency set (cobra, gorilla/websocket, x/term) is far
+# lighter, so there's no need for --parallelism=1 or a self-hosted runner
+# here.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: edge-build
+      cancel-in-progress: true
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Remove local non-semver tag refs
+        # See onctl's edge.yml for the full story: a stray rolling `edge`
+        # tag (or any other non-semver one) fetched by fetch-depth: 0 can
+        # confuse GoReleaser's git-describe-style version discovery into
+        # trying to `incpatch` a non-semver tag and failing outright.
+        # Deleting every tag that isn't `vX.Y.Z`-shaped (remote tags are
+        # untouched) avoids that regardless of which tag happens to be
+        # nearest HEAD.
+        run: |
+          for t in $(git tag -l); do
+            [[ "$t" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || git tag -d "$t"
+          done
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Build snapshot artifacts
+        uses: goreleaser/goreleaser-action@v7.2.3
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean -f .goreleaser.edge.yml --skip=publish
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: edge-dist
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: edge-publish
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: edge-dist
+          path: dist
+
+      - name: Replace the rolling edge release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release delete edge --yes --cleanup-tag --repo cdalar/boxctl 2>/dev/null || true
+          gh release create edge dist/*.tar.gz dist/checksums.txt \
+            --repo cdalar/boxctl \
+            --target "${{ github.sha }}" \
+            --title "edge ($(date -u +%Y-%m-%d))" \
+            --notes "Automated, unsigned build of main @ ${{ github.sha }}. Not a tagged release -- see the Releases page for stable versions." \
+            --prerelease
