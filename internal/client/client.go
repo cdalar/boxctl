@@ -183,3 +183,82 @@ func (c *Client) MintTerminalTicket(ctx context.Context, name string) (ticket, v
 	}
 	return res.Ticket, res.VMID, nil
 }
+
+// streamClient is used by Download/Import instead of c.http -- those
+// transfer real bundle bytes (tens of MB to multi-GB), so they must not
+// inherit c.http's fixed 60s timeout (fine for every other, fast JSON
+// call this client makes, but not for a transfer whose duration is
+// bounded by size/bandwidth instead). Relies on the caller's context for
+// cancellation instead, same reasoning as boxctl-vms's own
+// fetchVmDownload on the boxctl-web side.
+var streamClient = &http.Client{}
+
+// Download streams name's paused snapshot bundle to w -- see
+// boxctl-vms's GET /api/vms/{id}/download and vmbundle.Stream for
+// exactly what's in it (docs/plans/vm-snapshot-download.md).
+func (c *Client) Download(ctx context.Context, name string, w io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/vms/"+url.PathEscape(name)+"/download", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	res, err := streamClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("contacting %s: %w", c.baseURL, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("unauthorized -- your token may be wrong or revoked; run `boxctl login <token>` again")
+	}
+	if res.StatusCode >= 300 {
+		data, _ := io.ReadAll(res.Body)
+		return &apiError{status: res.StatusCode, body: string(data)}
+	}
+
+	_, err = io.Copy(w, res.Body)
+	return err
+}
+
+// Import uploads r (size bytes, a bundle previously produced by
+// Download) as a new box named name -- see boxctl-vms's
+// POST /api/vms/import. size is set as the request's Content-Length
+// upfront (the caller already has it, from stat'ing the local file)
+// rather than left for chunked transfer encoding to figure out.
+//
+// Only actually succeeds today against a boxctl-vms server running in
+// local/dev mode -- the real production server (agent-dispatched)
+// returns an error until the agent-tunneled import work lands. See
+// boxctl-vms's docs/plans/rootfs-diff-export-import.md.
+func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int64) (*VM, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/vms/import?name="+url.QueryEscape(name), r)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/zstd")
+	if size > 0 {
+		req.ContentLength = size
+	}
+
+	res, err := streamClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("contacting %s: %w", c.baseURL, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	if res.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("unauthorized -- your token may be wrong or revoked; run `boxctl login <token>` again")
+	}
+	if res.StatusCode >= 300 {
+		data, _ := io.ReadAll(res.Body)
+		return nil, &apiError{status: res.StatusCode, body: string(data)}
+	}
+
+	var vm VM
+	if err := json.NewDecoder(res.Body).Decode(&vm); err != nil {
+		return nil, err
+	}
+	return &vm, nil
+}
