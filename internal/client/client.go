@@ -217,7 +217,17 @@ func (c *Client) Download(ctx context.Context, name string, w io.Writer) error {
 		return &apiError{status: res.StatusCode, body: string(data)}
 	}
 
-	_, err = io.Copy(w, res.Body)
+	// total is 0 (unknown) unless the server reported a real
+	// Content-Length -- only true for a "diff" export (see boxctl-vms's
+	// vmbundle.SizedBundle); a "full" export is a live, unsized stream,
+	// so progress there is just a running byte count instead of a
+	// percentage.
+	pw := &progressWriter{w: w}
+	if res.ContentLength > 0 {
+		pw.total = res.ContentLength
+	}
+	_, err = io.Copy(pw, res.Body)
+	finishProgress(pw.written, pw.total)
 	return err
 }
 
@@ -225,14 +235,11 @@ func (c *Client) Download(ctx context.Context, name string, w io.Writer) error {
 // Download) as a new box named name -- see boxctl-vms's
 // POST /api/vms/import. size is set as the request's Content-Length
 // upfront (the caller already has it, from stat'ing the local file)
-// rather than left for chunked transfer encoding to figure out.
-//
-// Only actually succeeds today against a boxctl-vms server running in
-// local/dev mode -- the real production server (agent-dispatched)
-// returns an error until the agent-tunneled import work lands. See
-// boxctl-vms's docs/plans/rootfs-diff-export-import.md.
+// rather than left for chunked transfer encoding to figure out, and
+// doubles as the total for the upload's progress display.
 func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int64) (*VM, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/vms/import?name="+url.QueryEscape(name), r)
+	pr := &progressReader{r: r, total: size}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/vms/import?name="+url.QueryEscape(name), pr)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +250,7 @@ func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int6
 	}
 
 	res, err := streamClient.Do(req)
+	finishProgress(pr.read, pr.total)
 	if err != nil {
 		return nil, fmt.Errorf("contacting %s: %w", c.baseURL, err)
 	}
