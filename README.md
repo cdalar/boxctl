@@ -14,11 +14,26 @@ that repo's `AGENTS.md`/`README.md` for the backend architecture, and
 ## Install
 
 ```bash
-go build -o boxctl .
+curl -sLS https://boxctl.io/get.sh | bash
+sudo install boxctl /usr/local/bin/
 ```
 
-(A prebuilt-binary release pipeline, mirroring `onctl`'s own
-`.goreleaser.yml`, is a natural next step once this is ready to publish.)
+Windows: download the binary from the [releases page](https://github.com/cdalar/boxctl/releases).
+
+#### Edge build (latest `main`, Linux and macOS)
+
+To install or update to the `edge` build, an unsigned binary rebuilt from the tip of `main` on every push (no Windows build):
+
+```bash
+curl -sLS https://boxctl.io/get-edge.sh | bash
+sudo install boxctl /usr/local/bin/
+```
+
+Or build from source:
+
+```bash
+go build -o boxctl .
+```
 
 ## Usage
 
