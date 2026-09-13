@@ -18,10 +18,11 @@ var importCmd = &cobra.Command{
 paused box -- ready for 'boxctl resume' to actually boot it, same as a
 box paused on this account all along.
 
-Only works against a boxctl-vms server running in local/dev mode today
--- the hosted boxctl.io service returns an error until agent-tunneled
-import is built (see boxctl-vms's docs/plans/
-rootfs-diff-export-import.md).`,
+The bundle is uploaded directly to object storage and reconstructed by
+the target host's agent from there (see boxctl-vms's
+docs/plans/s3-transfer.md) -- boxctl-vms itself is never in the byte
+path. Not yet supported against a boxctl-vms server running in
+local/dev mode.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path := args[0]
