@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -184,43 +185,71 @@ func (c *Client) MintTerminalTicket(ctx context.Context, name string) (ticket, v
 	return res.Ticket, res.VMID, nil
 }
 
-// streamClient is used by Download/Import instead of c.http -- those
-// transfer real bundle bytes (tens of MB to multi-GB), so they must not
-// inherit c.http's fixed 60s timeout (fine for every other, fast JSON
-// call this client makes, but not for a transfer whose duration is
-// bounded by size/bandwidth instead). Relies on the caller's context for
-// cancellation instead, same reasoning as boxctl-vms's own
-// fetchVmDownload on the boxctl-web side.
+// streamClient is used for the actual bundle-byte transfers in
+// Download/Import -- both now go straight to R2 (see boxctl-vms's
+// docs/plans/s3-transfer.md), not through boxctl-vms itself, but still
+// need a client with no fixed timeout (unlike c.http's 60s, fine for
+// every other, fast JSON call this client makes) since a transfer's
+// duration is bounded by size/bandwidth instead. Relies on the caller's
+// context for cancellation.
 var streamClient = &http.Client{}
 
-// Download streams name's paused snapshot bundle to w -- see
-// boxctl-vms's GET /api/vms/{id}/download and vmbundle.Stream for
-// exactly what's in it (docs/plans/vm-snapshot-download.md).
+// transferPollInterval paces Download/Import's polling of boxctl-vms's
+// export/import status endpoints while the agent works in the
+// background (building+uploading a bundle, or fetching+reconstructing
+// one) -- see pollTransfer.
+const transferPollInterval = 1 * time.Second
+
+// transferStatus is the shape both GET /api/vms/{id}/export/{export_id}
+// and GET /api/vms/import/{import_id} respond with -- see boxctl-vms's
+// docs/plans/s3-transfer.md. Only the field relevant to whichever one is
+// actually populated.
+type transferStatus struct {
+	Status      string `json:"status"`
+	DownloadURL string `json:"download_url,omitempty"`
+	VM          *VM    `json:"vm,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+// Download streams name's paused snapshot bundle to w. As of boxctl-vms's
+// docs/plans/s3-transfer.md this is a three-step dance hidden entirely
+// behind this one call: kick off an export (POST .../export), poll until
+// the agent's finished building and uploading the bundle to R2 (GET
+// .../export/{export_id}), then stream straight from the presigned R2
+// URL that returns -- boxctl-vms is never in the byte path itself. See
+// vmbundle.Stream for exactly what's in the bundle
+// (docs/plans/vm-snapshot-download.md).
 func (c *Client) Download(ctx context.Context, name string, w io.Writer) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/vms/"+url.PathEscape(name)+"/download", nil)
+	var kickoff struct {
+		ExportID string `json:"export_id"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/vms/"+url.PathEscape(name)+"/export", nil, &kickoff); err != nil {
+		return err
+	}
+
+	status, err := c.pollTransfer(ctx, "/api/vms/"+url.PathEscape(name)+"/export/"+url.PathEscape(kickoff.ExportID))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
 
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, status.DownloadURL, nil)
+	if err != nil {
+		return err
+	}
 	res, err := streamClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("contacting %s: %w", c.baseURL, err)
+		return fmt.Errorf("downloading bundle from object storage: %w", err)
 	}
 	defer func() { _ = res.Body.Close() }()
-
-	if res.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("unauthorized -- your token may be wrong or revoked; run `boxctl login <token>` again")
-	}
 	if res.StatusCode >= 300 {
 		data, _ := io.ReadAll(res.Body)
-		return &apiError{status: res.StatusCode, body: string(data)}
+		return fmt.Errorf("downloading bundle from object storage: http %d: %s", res.StatusCode, string(data))
 	}
 
-	// total is 0 (unknown) unless the server reported a real
-	// Content-Length -- only true for a "diff" export (see boxctl-vms's
-	// vmbundle.SizedBundle); a "full" export is a live, unsized stream,
-	// so progress there is just a running byte count instead of a
+	// total is 0 (unknown) unless R2 reported a real Content-Length --
+	// only true for a "diff" export (see boxctl-vms's
+	// vmbundle.SizedBundle); a "full" export is unsized upfront, so
+	// progress there is just a running byte count instead of a
 	// percentage.
 	pw := &progressWriter{w: w}
 	if res.ContentLength > 0 {
@@ -232,41 +261,74 @@ func (c *Client) Download(ctx context.Context, name string, w io.Writer) error {
 }
 
 // Import uploads r (size bytes, a bundle previously produced by
-// Download) as a new box named name -- see boxctl-vms's
-// POST /api/vms/import. size is set as the request's Content-Length
-// upfront (the caller already has it, from stat'ing the local file)
-// rather than left for chunked transfer encoding to figure out, and
-// doubles as the total for the upload's progress display.
+// Download) as a new box named name. As of boxctl-vms's
+// docs/plans/s3-transfer.md this is a four-step dance hidden entirely
+// behind this one call: kick off an import (POST /api/vms/import,
+// returning a presigned R2 upload URL), PUT r straight to R2 (boxctl-vms
+// is never in the byte path itself), tell boxctl-vms the upload finished
+// (POST .../complete), then poll until the agent's fetched the bundle
+// back from R2 and reconstructed it (GET /api/vms/import/{import_id}).
+// size doubles as both the upload's Content-Length and the progress
+// display's total.
 func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int64) (*VM, error) {
+	var kickoff struct {
+		ImportID  string `json:"import_id"`
+		UploadURL string `json:"upload_url"`
+		Name      string `json:"name"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/vms/import", map[string]string{"name": name}, &kickoff); err != nil {
+		return nil, err
+	}
+
 	pr := &progressReader{r: r, total: size}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/vms/import?name="+url.QueryEscape(name), pr)
+	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, kickoff.UploadURL, pr)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/zstd")
 	if size > 0 {
-		req.ContentLength = size
+		putReq.ContentLength = size
 	}
-
-	res, err := streamClient.Do(req)
+	putRes, err := streamClient.Do(putReq)
 	finishProgress(pr.read, pr.total)
 	if err != nil {
-		return nil, fmt.Errorf("contacting %s: %w", c.baseURL, err)
+		return nil, fmt.Errorf("uploading bundle to object storage: %w", err)
 	}
-	defer func() { _ = res.Body.Close() }()
-
-	if res.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("unauthorized -- your token may be wrong or revoked; run `boxctl login <token>` again")
-	}
-	if res.StatusCode >= 300 {
-		data, _ := io.ReadAll(res.Body)
-		return nil, &apiError{status: res.StatusCode, body: string(data)}
+	defer func() { _ = putRes.Body.Close() }()
+	if putRes.StatusCode >= 300 {
+		data, _ := io.ReadAll(putRes.Body)
+		return nil, fmt.Errorf("uploading bundle to object storage: http %d: %s", putRes.StatusCode, string(data))
 	}
 
-	var vm VM
-	if err := json.NewDecoder(res.Body).Decode(&vm); err != nil {
+	completePath := "/api/vms/import/" + url.PathEscape(kickoff.ImportID) + "/complete?name=" + url.QueryEscape(kickoff.Name)
+	if err := c.do(ctx, http.MethodPost, completePath, nil, nil); err != nil {
 		return nil, err
 	}
-	return &vm, nil
+
+	status, err := c.pollTransfer(ctx, "/api/vms/import/"+url.PathEscape(kickoff.ImportID))
+	if err != nil {
+		return nil, err
+	}
+	return status.VM, nil
+}
+
+// pollTransfer polls path (an export or import status endpoint) at
+// transferPollInterval until it reports "done" or "failed", or ctx ends.
+func (c *Client) pollTransfer(ctx context.Context, path string) (*transferStatus, error) {
+	for {
+		var status transferStatus
+		if err := c.do(ctx, http.MethodGet, path, nil, &status); err != nil {
+			return nil, err
+		}
+		switch status.Status {
+		case "done":
+			return &status, nil
+		case "failed":
+			return nil, errors.New(status.Error)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(transferPollInterval):
+		}
+	}
 }
