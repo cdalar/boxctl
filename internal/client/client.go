@@ -201,7 +201,7 @@ var streamClient = &http.Client{}
 const transferPollInterval = 1 * time.Second
 
 // transferStatus is the shape both GET /api/vms/{id}/export/{export_id}
-// and GET /api/vms/import/{import_id} respond with -- see boxctl-vms's
+// and GET /api/imports/{import_id} respond with -- see boxctl-vms's
 // docs/plans/s3-transfer.md. Only the field relevant to whichever one is
 // actually populated.
 type transferStatus struct {
@@ -267,7 +267,7 @@ func (c *Client) Download(ctx context.Context, name string, w io.Writer) error {
 // returning a presigned R2 upload URL), PUT r straight to R2 (boxctl-vms
 // is never in the byte path itself), tell boxctl-vms the upload finished
 // (POST .../complete), then poll until the agent's fetched the bundle
-// back from R2 and reconstructed it (GET /api/vms/import/{import_id}).
+// back from R2 and reconstructed it (GET /api/imports/{import_id}).
 // size doubles as both the upload's Content-Length and the progress
 // display's total.
 func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int64) (*VM, error) {
@@ -299,12 +299,12 @@ func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int6
 		return nil, fmt.Errorf("uploading bundle to object storage: http %d: %s", putRes.StatusCode, string(data))
 	}
 
-	completePath := "/api/vms/import/" + url.PathEscape(kickoff.ImportID) + "/complete?name=" + url.QueryEscape(kickoff.Name)
+	completePath := "/api/imports/" + url.PathEscape(kickoff.ImportID) + "/complete?name=" + url.QueryEscape(kickoff.Name)
 	if err := c.do(ctx, http.MethodPost, completePath, nil, nil); err != nil {
 		return nil, err
 	}
 
-	status, err := c.pollTransfer(ctx, "/api/vms/import/"+url.PathEscape(kickoff.ImportID))
+	status, err := c.pollTransfer(ctx, "/api/imports/"+url.PathEscape(kickoff.ImportID))
 	if err != nil {
 		return nil, err
 	}
