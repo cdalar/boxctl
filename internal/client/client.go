@@ -227,7 +227,7 @@ func (c *Client) Download(ctx context.Context, name string, w io.Writer) error {
 		return err
 	}
 
-	status, err := c.pollTransfer(ctx, "/api/vms/"+url.PathEscape(name)+"/export/"+url.PathEscape(kickoff.ExportID))
+	status, err := c.pollTransfer(ctx, "/api/vms/"+url.PathEscape(name)+"/export/"+url.PathEscape(kickoff.ExportID), "waiting for the host to build and upload the bundle")
 	if err != nil {
 		return err
 	}
@@ -304,7 +304,7 @@ func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int6
 		return nil, err
 	}
 
-	status, err := c.pollTransfer(ctx, "/api/imports/"+url.PathEscape(kickoff.ImportID))
+	status, err := c.pollTransfer(ctx, "/api/imports/"+url.PathEscape(kickoff.ImportID), "waiting for the host to reconstruct the box")
 	if err != nil {
 		return nil, err
 	}
@@ -313,20 +313,33 @@ func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int6
 
 // pollTransfer polls path (an export or import status endpoint) at
 // transferPollInterval until it reports "done" or "failed", or ctx ends.
-func (c *Client) pollTransfer(ctx context.Context, path string) (*transferStatus, error) {
-	for {
+// label names what it's waiting on (e.g. "waiting for aimax to build and
+// upload the bundle") for printWaiting's spinner -- there's nothing else
+// to show while this runs (no byte count, no percentage: the backend
+// doesn't report incremental progress for either its build+upload or
+// fetch+reconstruct step), so without this a caller sees total silence
+// for anywhere from seconds to a couple of minutes and no way to tell
+// "still working" from "stuck".
+func (c *Client) pollTransfer(ctx context.Context, path, label string) (*transferStatus, error) {
+	start := time.Now()
+	for tick := 0; ; tick++ {
 		var status transferStatus
 		if err := c.do(ctx, http.MethodGet, path, nil, &status); err != nil {
+			finishWaiting()
 			return nil, err
 		}
 		switch status.Status {
 		case "done":
+			finishWaiting()
 			return &status, nil
 		case "failed":
+			finishWaiting()
 			return nil, errors.New(status.Error)
 		}
+		printWaiting(label, tick, time.Since(start))
 		select {
 		case <-ctx.Done():
+			finishWaiting()
 			return nil, ctx.Err()
 		case <-time.After(transferPollInterval):
 		}
