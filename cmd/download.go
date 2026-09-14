@@ -16,6 +16,10 @@ var downloadCmd = &cobra.Command{
 snapshot, kernel, and manifest, as one .tar.zst file. The box must
 already be paused (see 'boxctl pause').
 
+This also leaves a durable backup behind in the boxctl-web dashboard's
+Backups tab (aging out after the normal retention period) -- it's the
+same backup the dashboard's own Backup button creates.
+
 Re-create the box elsewhere with 'boxctl import'.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
