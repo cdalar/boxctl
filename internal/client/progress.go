@@ -84,6 +84,39 @@ func finishProgress(done, total int64) {
 	fmt.Fprintln(os.Stderr)
 }
 
+// waitFrames animates printWaiting's spinner -- there's no byte count or
+// percentage to show while polling boxctl-vms's async export/import
+// status (the backend doesn't report incremental progress during its
+// own build/upload or fetch/reconstruct step), so this is purely a
+// "still running, not stuck" signal alongside elapsed time.
+var waitFrames = [...]rune{'|', '/', '-', '\\'}
+
+// printWaiting prints a one-line, carriage-return-updated spinner plus
+// elapsed time, gated by the same showProgress terminal check as
+// printProgress/finishProgress -- used by pollTransfer while it waits on
+// boxctl-vms's agent to finish building+uploading a bundle to R2
+// (export) or fetching+reconstructing one from it (import), since both
+// can take anywhere from seconds to a couple minutes with nothing else
+// to show for it in the meantime.
+func printWaiting(label string, tick int, elapsed time.Duration) {
+	if !showProgress {
+		return
+	}
+	frame := waitFrames[tick%len(waitFrames)]
+	fmt.Fprintf(os.Stderr, "\r%c %s (%s)", frame, label, elapsed.Round(time.Second))
+}
+
+// finishWaiting clears printWaiting's line -- called once pollTransfer's
+// wait is over (successfully or not), same reasoning as finishProgress:
+// whatever message follows shouldn't land on the same line as a
+// half-drawn spinner.
+func finishWaiting() {
+	if !showProgress {
+		return
+	}
+	fmt.Fprint(os.Stderr, "\r\033[K")
+}
+
 func formatBytes(n int64) string {
 	const unit = 1024
 	if n < unit {
