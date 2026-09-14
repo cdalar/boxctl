@@ -40,7 +40,7 @@ func (p *progressReader) Read(b []byte) (int, error) {
 }
 
 // progressWriter is progressReader's sibling for Download. total is 0
-// when the server didn't report a Content-Length (a "full" export has
+// when the server didn't report a Content-Length (a "full" backup has
 // no knowable size at all -- see boxctl-vms's vmbundle.SizedBundle),
 // in which case this prints a running byte count instead of a percentage.
 type progressWriter struct {
@@ -85,7 +85,7 @@ func finishProgress(done, total int64) {
 }
 
 // waitFrames animates printWaiting's spinner -- there's no byte count or
-// percentage to show while polling boxctl-vms's async export/import
+// percentage to show while polling boxctl-vms's async backup/import
 // status (the backend doesn't report incremental progress during its
 // own build/upload or fetch/reconstruct step), so this is purely a
 // "still running, not stuck" signal alongside elapsed time.
@@ -95,7 +95,7 @@ var waitFrames = [...]rune{'|', '/', '-', '\\'}
 // elapsed time, gated by the same showProgress terminal check as
 // printProgress/finishProgress -- used by pollTransfer while it waits on
 // boxctl-vms's agent to finish building+uploading a bundle to R2
-// (export) or fetching+reconstructing one from it (import), since both
+// (backup) or fetching+reconstructing one from it (import), since both
 // can take anywhere from seconds to a couple minutes with nothing else
 // to show for it in the meantime.
 func printWaiting(label string, tick int, elapsed time.Duration) {
