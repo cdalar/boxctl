@@ -23,7 +23,7 @@ HTTPS instead.
 - `boxctl-vms` (Go, sibling repo) — the control plane this talks to via
   `internal/client`. Its README's "Personal API tokens (the `boxctl`
   CLI)" section is the authoritative description of the auth model this
-  CLI relies on: a personal token (`boxctl login <token>`) is resolved
+  CLI relies on: a personal token (`boxctl login`) is resolved
   server-side to an owner prefix, and every `/api/vms*` request this CLI
   makes is scoped to that prefix by the server itself — this repo never
   computes or sees the prefix.
