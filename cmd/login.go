@@ -20,23 +20,16 @@ var loginCmd = &cobra.Command{
 	Short: "Save a personal API token (create one at " + dashboardURL + ")",
 	Long: `Save a personal API token to ~/.boxctl/config.json.
 
-The token is deliberately not accepted as a command-line argument, since
-that would leave it in your shell history. Instead, login reads it from
-a hidden prompt when run interactively, or from stdin when piped.`,
+The token is read from a hidden prompt when run interactively, or from
+stdin when piped.`,
 	Example: `  # Interactive: paste the token at the hidden prompt
   boxctl login
 
-  # Non-interactive: pipe it in (never touches your shell history)
+  # Non-interactive: pipe it in
   pbpaste | boxctl login
   boxctl login < token.txt
   printf '%s' "$BOXCTL_TOKEN" | boxctl login`,
-	Args: func(cmd *cobra.Command, args []string) error {
-		if len(args) > 0 {
-			return errors.New("login no longer takes the token as an argument (it would end up in your shell history); " +
-				"run `boxctl login` and paste it at the prompt, or pipe it in: `pbpaste | boxctl login`")
-		}
-		return nil
-	},
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		apiURL := config.DefaultAPIURL
 		if apiURLFlag != "" {
@@ -62,11 +55,10 @@ a hidden prompt when run interactively, or from stdin when piped.`,
 	},
 }
 
-// readToken gets the token without it ever being a process argument:
-// from a no-echo prompt when stdin is a terminal, otherwise the first
-// line of stdin (so `pbpaste | boxctl login` and `boxctl login < file`
-// both work). The prompt goes to stderr so it never mixes with piped
-// output.
+// readToken reads the token from a no-echo prompt when stdin is a
+// terminal, otherwise from the first line of stdin (so `pbpaste | boxctl
+// login` and `boxctl login < file` both work). The prompt goes to stderr
+// so it never mixes with piped output.
 func readToken(in *os.File) (string, error) {
 	var raw string
 	if term.IsTerminal(int(in.Fd())) {
