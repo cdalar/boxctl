@@ -43,7 +43,7 @@ a hidden prompt when run interactively, or from stdin when piped.`,
 			apiURL = apiURLFlag
 		}
 
-		token, err := readToken(os.Stdin, cmd.ErrOrStderr())
+		token, err := readToken(os.Stdin)
 		if err != nil {
 			return err
 		}
@@ -67,12 +67,12 @@ a hidden prompt when run interactively, or from stdin when piped.`,
 // line of stdin (so `pbpaste | boxctl login` and `boxctl login < file`
 // both work). The prompt goes to stderr so it never mixes with piped
 // output.
-func readToken(in *os.File, prompt io.Writer) (string, error) {
+func readToken(in *os.File) (string, error) {
 	var raw string
 	if term.IsTerminal(int(in.Fd())) {
-		fmt.Fprintf(prompt, "Paste your personal token (input hidden; create one at %s): ", dashboardURL)
+		fmt.Fprintf(os.Stderr, "Paste your personal token (input hidden; create one at %s): ", dashboardURL)
 		b, err := term.ReadPassword(int(in.Fd()))
-		fmt.Fprintln(prompt)
+		fmt.Fprintln(os.Stderr)
 		if err != nil {
 			return "", fmt.Errorf("reading token: %w", err)
 		}
