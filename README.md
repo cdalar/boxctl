@@ -39,8 +39,7 @@ go build -o boxctl .
 
 ```bash
 # Create a personal token at https://boxctl.io/dashboard/tokens, then paste it
-# at the hidden prompt (or pipe it in: `pbpaste | boxctl login`). The token is
-# never taken as an argument, so it stays out of your shell history.
+# at the hidden prompt (or pipe it in: `pbpaste | boxctl login`).
 boxctl login
 
 boxctl ls
