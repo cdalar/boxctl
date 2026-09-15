@@ -105,7 +105,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("unauthorized -- your token may be wrong or revoked; run `boxctl login <token>` again")
+		return fmt.Errorf("unauthorized -- your token may be wrong or revoked; run `boxctl login` again")
 	}
 	if res.StatusCode >= 300 {
 		data, _ := io.ReadAll(res.Body)

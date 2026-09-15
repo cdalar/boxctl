@@ -38,8 +38,10 @@ go build -o boxctl .
 ## Usage
 
 ```bash
-# Create a personal token at https://boxctl.io/dashboard/tokens, then:
-boxctl login <token>
+# Create a personal token at https://boxctl.io/dashboard/tokens, then paste it
+# at the hidden prompt (or pipe it in: `pbpaste | boxctl login`). The token is
+# never taken as an argument, so it stays out of your shell history.
+boxctl login
 
 boxctl ls
 boxctl images
