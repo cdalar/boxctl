@@ -80,6 +80,19 @@ func (e *apiError) Error() string {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	return c.doWith(c.http, ctx, method, path, body, out)
+}
+
+// doLong is do's sibling for a call whose duration is bounded by the
+// caller's own timeout/ctx rather than c.http's fixed 60s -- Exec's
+// server-side wait can legitimately run for minutes. Reuses streamClient
+// (no fixed Timeout) for exactly the same reason Download/Import's byte
+// transfers do (see streamClient's doc comment).
+func (c *Client) doLong(ctx context.Context, method, path string, body, out any) error {
+	return c.doWith(streamClient, ctx, method, path, body, out)
+}
+
+func (c *Client) doWith(hc *http.Client, ctx context.Context, method, path string, body, out any) error {
 	var reqBody io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -98,7 +111,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	res, err := c.http.Do(req)
+	res, err := hc.Do(req)
 	if err != nil {
 		return fmt.Errorf("contacting %s: %w", c.baseURL, err)
 	}
@@ -187,12 +200,90 @@ func (c *Client) MintTerminalTicket(ctx context.Context, name string) (ticket, v
 
 // streamClient is used for the actual bundle-byte transfers in
 // Download/Import -- both now go straight to R2 (see boxctl-vms's
-// docs/plans/s3-transfer.md), not through boxctl-vms itself, but still
+// docs/plans/s3-transfer.md), not through boxctl-vms itself -- and,
+// via doLong, for Exec's own JSON call to boxctl-vms, which blocks
+// server-side for as long as the remote command takes to run. All three
 // need a client with no fixed timeout (unlike c.http's 60s, fine for
-// every other, fast JSON call this client makes) since a transfer's
-// duration is bounded by size/bandwidth instead. Relies on the caller's
-// context for cancellation.
+// every other, fast JSON call this client makes) since their duration
+// is bounded by something else instead (size/bandwidth for a transfer,
+// the command's own timeout for Exec). Relies on the caller's context
+// for cancellation.
 var streamClient = &http.Client{}
+
+// waitReadyPollInterval paces WaitReady's polling of GET /api/vms while a
+// freshly created box finishes booting.
+const waitReadyPollInterval = 500 * time.Millisecond
+
+// WaitReady polls until name reports ready (see VM.Ready's doc comment)
+// or timeout elapses -- boxctl.io's own dashboard says a box is "usually
+// ready in a few seconds", but there's no per-VM status endpoint to poll
+// instead of the full list (see List), so this just filters List's
+// result by name each tick. Used by Exec's ephemeral box, where a
+// created-but-not-yet-reachable box would otherwise just fail the exec
+// call outright.
+func (c *Client) WaitReady(ctx context.Context, name string, timeout time.Duration) (*VM, error) {
+	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	for tick := 0; ; tick++ {
+		vms, err := c.List(ctx)
+		if err != nil {
+			finishWaiting()
+			return nil, err
+		}
+		for i := range vms {
+			if vms[i].Name == name && vms[i].Ready {
+				finishWaiting()
+				return &vms[i], nil
+			}
+		}
+		if time.Now().After(deadline) {
+			finishWaiting()
+			return nil, fmt.Errorf("timed out after %s waiting for %s to become ready", timeout, name)
+		}
+		printWaiting(fmt.Sprintf("waiting for %s to boot", name), tick, time.Since(start))
+		select {
+		case <-ctx.Done():
+			finishWaiting()
+			return nil, ctx.Err()
+		case <-time.After(waitReadyPollInterval):
+		}
+	}
+}
+
+// ExecResult is POST /api/vms/{name}/exec's response.
+type ExecResult struct {
+	ExitCode int    `json:"exit_code"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	// Error is set only for a transport-level failure (couldn't reach
+	// the box at all, or the command timed out) -- a normal nonzero
+	// exit from the command itself is reported via ExitCode alone, not
+	// this field.
+	Error string `json:"error,omitempty"`
+}
+
+// Exec runs command on name over SSH, no pty -- unlike the interactive
+// ssh session above (WebSocket+pty relay), stdout/stderr/exit code come
+// back cleanly separated, for a caller (a script, an AI agent) that
+// needs a structured result rather than a terminal transcript. Blocks
+// server-side until the command finishes or timeout elapses --
+// boxctl-vms itself enforces timeout host-side too; this call's own HTTP
+// deadline is timeout plus headroom for the round trip, via doLong since
+// c.http's fixed 60s would otherwise cut off a longer-running command.
+func (c *Client) Exec(ctx context.Context, name, command string, timeout time.Duration) (*ExecResult, error) {
+	body := map[string]any{
+		"command":         command,
+		"timeout_seconds": int(timeout.Seconds()),
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout+15*time.Second)
+	defer cancel()
+
+	var result ExecResult
+	if err := c.doLong(ctx, http.MethodPost, "/api/vms/"+url.PathEscape(name)+"/exec", body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
 
 // transferPollInterval paces Download/Import's polling of boxctl-vms's
 // export/import status endpoints while the agent works in the
