@@ -286,44 +286,57 @@ func (c *Client) Exec(ctx context.Context, name, command string, timeout time.Du
 }
 
 // transferPollInterval paces Download/Import's polling of boxctl-vms's
-// export/import status endpoints while the agent works in the
+// backup/import status endpoints while the agent works in the
 // background (building+uploading a bundle, or fetching+reconstructing
 // one) -- see pollTransfer.
 const transferPollInterval = 1 * time.Second
 
-// transferStatus is the shape both GET /api/vms/{id}/export/{export_id}
+// transferStatus is the shape both GET /api/vms/{id}/backup/{backup_job_id}
 // and GET /api/imports/{import_id} respond with -- see boxctl-vms's
-// docs/plans/s3-transfer.md. Only the field relevant to whichever one is
-// actually populated.
+// docs/plans/s3-transfer.md and docs/plans/backups.md. Only the field
+// relevant to whichever one is actually populated.
 type transferStatus struct {
-	Status      string `json:"status"`
-	DownloadURL string `json:"download_url,omitempty"`
-	VM          *VM    `json:"vm,omitempty"`
-	Error       string `json:"error,omitempty"`
+	Status   string `json:"status"`
+	BackupID string `json:"backup_id,omitempty"`
+	VM       *VM    `json:"vm,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
-// Download streams name's paused snapshot bundle to w. As of boxctl-vms's
-// docs/plans/s3-transfer.md this is a three-step dance hidden entirely
-// behind this one call: kick off an export (POST .../export), poll until
-// the agent's finished building and uploading the bundle to R2 (GET
-// .../export/{export_id}), then stream straight from the presigned R2
-// URL that returns -- boxctl-vms is never in the byte path itself. See
-// vmbundle.Stream for exactly what's in the bundle
-// (docs/plans/vm-snapshot-download.md).
+// Download streams name's paused snapshot bundle to w. This is a
+// four-step dance hidden entirely behind this one call: kick off a backup
+// (POST .../backup, the same one boxctl-web's own Backup button drives),
+// poll until the agent's finished building and uploading the bundle to R2
+// (GET .../backup/{backup_job_id}), fetch a fresh presigned GET for it
+// (GET /api/backups/{backup_id}/download), then stream straight from that
+// URL -- boxctl-vms is never in the byte path itself. See vmbundle.Stream
+// for exactly what's in the bundle (docs/plans/vm-snapshot-download.md).
+//
+// Unlike the old export-based Download (removed once this landed -- see
+// boxctl-vms's handleBackupVM doc comment), this also leaves a durable,
+// catalogued backup behind in boxctl-web's Backups tab, aging out after
+// the normal retention period rather than vanishing the moment the
+// download finishes.
 func (c *Client) Download(ctx context.Context, name string, w io.Writer) error {
 	var kickoff struct {
-		ExportID string `json:"export_id"`
+		BackupJobID string `json:"backup_job_id"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/api/vms/"+url.PathEscape(name)+"/export", nil, &kickoff); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/api/vms/"+url.PathEscape(name)+"/backup", nil, &kickoff); err != nil {
 		return err
 	}
 
-	status, err := c.pollTransfer(ctx, "/api/vms/"+url.PathEscape(name)+"/export/"+url.PathEscape(kickoff.ExportID), "waiting for the host to build and upload the bundle")
+	status, err := c.pollTransfer(ctx, "/api/vms/"+url.PathEscape(name)+"/backup/"+url.PathEscape(kickoff.BackupJobID), "waiting for the host to build and upload the bundle")
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, status.DownloadURL, nil)
+	var link struct {
+		URL string `json:"url"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/backups/"+url.PathEscape(status.BackupID)+"/download", nil, &link); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link.URL, nil)
 	if err != nil {
 		return err
 	}
@@ -338,8 +351,8 @@ func (c *Client) Download(ctx context.Context, name string, w io.Writer) error {
 	}
 
 	// total is 0 (unknown) unless R2 reported a real Content-Length --
-	// only true for a "diff" export (see boxctl-vms's
-	// vmbundle.SizedBundle); a "full" export is unsized upfront, so
+	// only true for a "diff" backup (see boxctl-vms's
+	// vmbundle.SizedBundle); a "full" backup is unsized upfront, so
 	// progress there is just a running byte count instead of a
 	// percentage.
 	pw := &progressWriter{w: w}
@@ -402,7 +415,7 @@ func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int6
 	return status.VM, nil
 }
 
-// pollTransfer polls path (an export or import status endpoint) at
+// pollTransfer polls path (a backup or import status endpoint) at
 // transferPollInterval until it reports "done" or "failed", or ctx ends.
 // label names what it's waiting on (e.g. "waiting for aimax to build and
 // upload the bundle") for printWaiting's spinner -- there's nothing else
