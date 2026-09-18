@@ -2,10 +2,22 @@ version: 2
 project_name: boxctl
 
 # Real tagged releases (triggered by .github/workflows/release.yml on a
-# `v*` tag push). Deliberately no code-signing/notarization/homebrew-tap
-# publish step, unlike onctl's own .goreleaser.yml -- none of that
-# infrastructure (GPG key, Apple Developer cert, a boxctl homebrew tap)
-# exists yet. Add it here the same way onctl does if/when it does.
+# `v*` tag push). Mirrors onctl's own .goreleaser.yml: GPG-signed
+# checksums, Apple-signed+notarized macOS binaries (quill, run on the
+# self-hosted macOS runner), and a Homebrew cask pushed to
+# cdalar/homebrew-tap. The unsigned per-push edge build is
+# .goreleaser.edge.yml, not this file.
+
+signs:
+  - artifacts: checksum
+    args:
+      - "--batch"
+      - "-u"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
 
 before:
   hooks:
@@ -13,12 +25,30 @@ before:
 
 builds:
   - binary: boxctl
+    id: boxctl-macos
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}'
+    hooks:
+      post:
+        # --dry-run/--ad-hoc on snapshots so `goreleaser release --snapshot`
+        # works locally without Apple credentials.
+        - cmd: quill sign-and-notarize "{{ .Path }}" --dry-run={{ .IsSnapshot }} --ad-hoc={{ .IsSnapshot }} -vv
+          env:
+            - QUILL_LOG_FILE=/tmp/quill-{{ .Target }}.log
+
+  - binary: boxctl
     id: boxctl
     env:
       - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
       - windows
     goarch:
       - amd64
@@ -55,3 +85,10 @@ release:
     owner: cdalar
     name: boxctl
   prerelease: auto
+
+homebrew_casks:
+  - repository:
+      owner: cdalar
+      name: homebrew-tap
+    description: "Command-line client for boxctl.io -- manage your Firecracker microVMs"
+    homepage: "https://boxctl.io"

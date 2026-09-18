@@ -13,6 +13,14 @@ that repo's `AGENTS.md`/`README.md` for the backend architecture, and
 
 ## Install
 
+macOS (Homebrew):
+
+```bash
+brew install cdalar/tap/boxctl
+```
+
+macOS / Linux (install script, latest signed release):
+
 ```bash
 curl -sLS https://boxctl.io/get.sh | bash
 sudo install boxctl /usr/local/bin/
@@ -34,6 +42,17 @@ Or build from source:
 ```bash
 go build -o boxctl .
 ```
+
+## Releasing
+
+Push a `vX.Y.Z` tag and `.github/workflows/release.yml` does the rest via
+GoReleaser (`.goreleaser.yml`, mirroring onctl's): macOS binaries are
+Apple-signed and notarized with quill on the self-hosted macOS runner,
+`checksums.txt` is GPG-signed, the GitHub release is created, and the
+`boxctl` cask in `cdalar/homebrew-tap` is updated. Run the
+"release (self-hosted test)" workflow against an existing tag to dry-run
+all of that without publishing. `make release-snapshot` builds the same
+artifacts locally (unsigned, into `dist/`).
 
 ## Usage
 

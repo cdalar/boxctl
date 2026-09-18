@@ -2,7 +2,7 @@ GO_CMD=go
 BINARY_NAME=boxctl
 
 # Mark targets as phony (not files)
-.PHONY: all build build-amd64 build-arm64 clean run test lint
+.PHONY: all build build-amd64 build-arm64 clean run test lint release-snapshot
 
 # Default target
 all: build
@@ -34,6 +34,13 @@ build-arm64:
 # Clean up the binary
 clean:
 	rm -f $(BINARY_NAME) $(BINARY_NAME)-amd64 $(BINARY_NAME)-arm64
+	rm -rf dist
+
+# Build every release target locally into dist/ the way release.yml would,
+# minus publishing and GPG signing (quill runs in --dry-run/--ad-hoc mode on
+# a snapshot, so no Apple credentials are needed). Needs goreleaser + quill.
+release-snapshot:
+	goreleaser release --snapshot --clean --skip=publish,sign
 
 # Run against a local boxctl-vms (see README's "Testing locally")
 run: build

@@ -43,6 +43,10 @@ go vet ./...
 gofmt -l .
 ```
 
+`make release-snapshot` runs GoReleaser locally against `.goreleaser.yml`
+(unsigned, nothing published) to check the release config still builds
+every target; it needs `goreleaser` and `quill` on PATH.
+
 No test suite yet — this is a thin, mostly-I/O client; rely on `go vet`,
 `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl ...`)
 for changes.
@@ -64,8 +68,8 @@ for changes.
   `boxctl-vms`'s `internal/ptyrelay.ResizeMarker` exactly) — sent once at
   connect and again whenever a 1s poll of the local terminal size
   changes. Polling instead of a `SIGWINCH` handler is deliberate: that
-  signal doesn't exist on Windows, and goreleaser (once set up, see
-  README) will need to build for it. `ssh <name> -- command [args...]`
+  signal doesn't exist on Windows, and goreleaser (`.goreleaser.yml`)
+  builds for it. `ssh <name> -- command [args...]`
   bypasses all of that: it joins the words after `--` and runs them via
   `Client.Exec` (the same no-pty endpoint `exec` uses), relaying
   stdout/stderr and exiting with the remote exit code.
@@ -74,6 +78,20 @@ for changes.
   authenticated with the personal token from config.
 - `internal/config/config.go` — `~/.boxctl/config.json` (mode `0600`)
   read/write/clear.
+
+## Releases
+
+- `.github/workflows/release.yml` + `.goreleaser.yml` — tagged (`v*`)
+  releases, a copy of onctl's: self-hosted macOS/ARM64 runner, quill
+  sign-and-notarize on the darwin build, GPG-signed checksums, Homebrew
+  cask pushed to `cdalar/homebrew-tap` (needs `GORELEASER_GH_TOKEN`, a
+  PAT that can write to that repo, plus the GPG/Apple secrets listed in
+  the workflow's header comment).
+- `.github/workflows/release-self-hosted-test.yml` — the same job with
+  `--skip=publish`, run by hand against an existing tag.
+- `.github/workflows/edge.yml` + `.goreleaser.edge.yml` — unsigned
+  rolling `edge` prerelease from every push to `main`, on a GitHub-hosted
+  runner.
 
 ## Conventions
 
