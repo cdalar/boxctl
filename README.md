@@ -46,6 +46,7 @@ boxctl ls
 boxctl images
 boxctl create my-box
 boxctl ssh my-box
+boxctl ssh my-box -- ls -al   # run one command instead of a shell
 boxctl pause my-box
 boxctl resume my-box
 boxctl rm my-box
@@ -85,3 +86,10 @@ sent as a `0x01`-prefixed JSON payload on the same binary stream
 (`internal/ptyrelay.ResizeMarker` in `boxctl-vms`); this CLI polls the
 local terminal size once a second rather than hooking `SIGWINCH`, since
 that signal doesn't exist on Windows.
+
+`boxctl ssh <name> -- command [args...]` skips the WebSocket entirely: the
+words after `--` are joined with spaces (like `ssh host -- cmd`) and sent
+to `POST /api/vms/{name}/exec`, the same no-pty endpoint `boxctl exec`
+uses. The command's stdout and stderr are relayed to yours and the process
+exits with the command's own exit code; `-T/--timeout` (default 30s, max
+5m) bounds how long it may run.
