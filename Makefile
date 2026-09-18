@@ -37,8 +37,7 @@ clean:
 	rm -rf dist
 
 # Build every release target locally into dist/ the way release.yml would,
-# minus publishing and GPG signing (quill runs in --dry-run/--ad-hoc mode on
-# a snapshot, so no Apple credentials are needed). Needs goreleaser + quill.
+# minus publishing and GPG signing. Needs goreleaser.
 release-snapshot:
 	goreleaser release --snapshot --clean --skip=publish,sign
 

@@ -45,7 +45,7 @@ gofmt -l .
 
 `make release-snapshot` runs GoReleaser locally against `.goreleaser.yml`
 (unsigned, nothing published) to check the release config still builds
-every target; it needs `goreleaser` and `quill` on PATH.
+every target; it needs `goreleaser` on PATH.
 
 No test suite yet — this is a thin, mostly-I/O client; rely on `go vet`,
 `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl ...`)
@@ -82,11 +82,12 @@ for changes.
 ## Releases
 
 - `.github/workflows/release.yml` + `.goreleaser.yml` — tagged (`v*`)
-  releases, a copy of onctl's: self-hosted macOS/ARM64 runner, quill
-  sign-and-notarize on the darwin build, GPG-signed checksums, Homebrew
-  cask pushed to `cdalar/homebrew-tap` (needs `GORELEASER_GH_TOKEN`, a
-  PAT that can write to that repo, plus the GPG/Apple secrets listed in
-  the workflow's header comment).
+  releases, a copy of onctl's minus macOS: Linux + Windows binaries with
+  GPG-signed checksums, on the `onctl-4` runner, needing only the
+  `GPG_PRIVATE_KEY` secret. The darwin build (quill sign-and-notarize on
+  a self-hosted Mac), the Homebrew cask, and the Apple/`GORELEASER_GH_TOKEN`
+  secrets are all present but commented out in both files -- re-enable
+  them together, not piecemeal (the cask needs the darwin archives).
 - `.github/workflows/release-self-hosted-test.yml` — the same job with
   `--skip=publish`, run by hand against an existing tag.
 - `.github/workflows/edge.yml` + `.goreleaser.edge.yml` — unsigned

@@ -1,9 +1,9 @@
 name: release (self-hosted test)
 
 # Manual dry run of release.yml against an existing tag: same runner, same
-# signing/notarization steps, but --skip=publish so nothing is pushed to
-# the GitHub release or the Homebrew tap. Mirrors onctl's
-# goreleaser-self-hosted-test.yml.
+# GPG signing step, but --skip=publish so nothing is pushed to the GitHub
+# release. Mirrors onctl's goreleaser-self-hosted-test.yml. The macOS
+# parts are commented out here exactly as in release.yml.
 
 on:
   workflow_dispatch:
@@ -18,7 +18,8 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: onctl-4
+    # runs-on: [self-hosted, macOS, ARM64]   # macOS: needed for quill notarization
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -40,12 +41,13 @@ jobs:
           gpg --list-secret-keys
           fingerprint=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ { print $10; exit }')
           echo "GPG_FINGERPRINT=$fingerprint" >> "$GITHUB_ENV"
-      - name: Install quill
-        run: |
-          curl -sSfL https://get.anchore.io/quill | sh -s -- -b "$RUNNER_TEMP/bin"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Verify quill
-        run: quill version
+      # macOS: quill signs and notarizes the darwin binaries.
+      # - name: Install quill
+      #   run: |
+      #     curl -sSfL https://get.anchore.io/quill | sh -s -- -b "$RUNNER_TEMP/bin"
+      #     echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # - name: Verify quill
+      #   run: quill version
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7.2.3
         with:
@@ -53,9 +55,10 @@ jobs:
           version: "~> v2"
           args: release --timeout 120m --clean --skip=publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GORELEASER_GH_TOKEN }}
-          QUILL_SIGN_P12: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
-          QUILL_SIGN_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
-          QUILL_NOTARY_KEY: ${{ secrets.QUILL_NOTARY_KEY }}
-          QUILL_NOTARY_KEY_ID: ${{ secrets.QUILL_NOTARY_KEY_ID }}
-          QUILL_NOTARY_ISSUER: ${{ secrets.QUILL_NOTARY_ISSUER }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITHUB_TOKEN: ${{ secrets.GORELEASER_GH_TOKEN }}
+          # QUILL_SIGN_P12: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
+          # QUILL_SIGN_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+          # QUILL_NOTARY_KEY: ${{ secrets.QUILL_NOTARY_KEY }}
+          # QUILL_NOTARY_KEY_ID: ${{ secrets.QUILL_NOTARY_KEY_ID }}
+          # QUILL_NOTARY_ISSUER: ${{ secrets.QUILL_NOTARY_ISSUER }}

@@ -1,20 +1,19 @@
 name: release
 
 # Tagged releases (v*), built and published via GoReleaser + .goreleaser.yml.
-# Mirrors onctl's own goreleaser.yml: runs on the self-hosted macOS/ARM64
-# runner because the macOS binaries are Apple-signed and notarized with
-# quill, imports the GPG key that signs checksums.txt, and pushes a
-# Homebrew cask to cdalar/homebrew-tap -- which is why GORELEASER_GH_TOKEN
-# (a PAT with write access to that tap repo) is used instead of the
-# repo-scoped default GITHUB_TOKEN.
+# Mirrors onctl's own goreleaser.yml, minus macOS for now: Linux and
+# Windows binaries, GPG-signed checksums, published to this repo's
+# Releases page with the default GITHUB_TOKEN. Runs on the onctl-4 runner
+# like the rest of this repo's workflows.
 #
-# One-time setup this needs (same as onctl's): the self-hosted runner
-# registered to this repo, and these secrets --
-#   GORELEASER_GH_TOKEN, GPG_PRIVATE_KEY,
-#   APPLE_DEVELOPER_CERTIFICATE_P12_BASE64, APPLE_DEVELOPER_CERTIFICATE_PASSWORD,
-#   QUILL_NOTARY_KEY, QUILL_NOTARY_KEY_ID, QUILL_NOTARY_ISSUER
-# To dry-run the whole thing against an existing tag without publishing,
-# see release-self-hosted-test.yml.
+# The macOS parts (self-hosted Mac runner, quill install, Apple
+# signing/notarization env, GORELEASER_GH_TOKEN for the Homebrew cask) are
+# kept commented out below and in .goreleaser.yml, ready to re-enable
+# once this repo has the Apple secrets and a Mac runner.
+#
+# Needs one secret: GPG_PRIVATE_KEY (the same key onctl signs with).
+# To dry-run against an existing tag without publishing, see
+# release-self-hosted-test.yml.
 
 on:
   push:
@@ -28,7 +27,8 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: onctl-4
+    # runs-on: [self-hosted, macOS, ARM64]   # macOS: needed for quill notarization
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -49,12 +49,13 @@ jobs:
           gpg --list-secret-keys
           fingerprint=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ { print $10; exit }')
           echo "GPG_FINGERPRINT=$fingerprint" >> "$GITHUB_ENV"
-      - name: Install quill
-        run: |
-          curl -sSfL https://get.anchore.io/quill | sh -s -- -b "$RUNNER_TEMP/bin"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Verify quill
-        run: quill version
+      # macOS: quill signs and notarizes the darwin binaries.
+      # - name: Install quill
+      #   run: |
+      #     curl -sSfL https://get.anchore.io/quill | sh -s -- -b "$RUNNER_TEMP/bin"
+      #     echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # - name: Verify quill
+      #   run: quill version
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7.2.3
         with:
@@ -62,9 +63,11 @@ jobs:
           version: "~> v2"
           args: release --timeout 120m
         env:
-          GITHUB_TOKEN: ${{ secrets.GORELEASER_GH_TOKEN }}
-          QUILL_SIGN_P12: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
-          QUILL_SIGN_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
-          QUILL_NOTARY_KEY: ${{ secrets.QUILL_NOTARY_KEY }}
-          QUILL_NOTARY_KEY_ID: ${{ secrets.QUILL_NOTARY_KEY_ID }}
-          QUILL_NOTARY_ISSUER: ${{ secrets.QUILL_NOTARY_ISSUER }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS/Homebrew: a PAT that can also write to cdalar/homebrew-tap.
+          # GITHUB_TOKEN: ${{ secrets.GORELEASER_GH_TOKEN }}
+          # QUILL_SIGN_P12: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
+          # QUILL_SIGN_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+          # QUILL_NOTARY_KEY: ${{ secrets.QUILL_NOTARY_KEY }}
+          # QUILL_NOTARY_KEY_ID: ${{ secrets.QUILL_NOTARY_KEY_ID }}
+          # QUILL_NOTARY_ISSUER: ${{ secrets.QUILL_NOTARY_ISSUER }}
