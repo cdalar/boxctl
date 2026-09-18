@@ -65,7 +65,10 @@ for changes.
   connect and again whenever a 1s poll of the local terminal size
   changes. Polling instead of a `SIGWINCH` handler is deliberate: that
   signal doesn't exist on Windows, and goreleaser (once set up, see
-  README) will need to build for it.
+  README) will need to build for it. `ssh <name> -- command [args...]`
+  bypasses all of that: it joins the words after `--` and runs them via
+  `Client.Exec` (the same no-pty endpoint `exec` uses), relaying
+  stdout/stderr and exiting with the remote exit code.
 - `internal/client/client.go` — the HTTP client: `List`/`Create`/
   `Destroy`/`Pause`/`Resume`/`MintTerminalTicket`, all bearer-token
   authenticated with the personal token from config.
