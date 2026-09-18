@@ -2,23 +2,57 @@ version: 2
 project_name: boxctl
 
 # Real tagged releases (triggered by .github/workflows/release.yml on a
-# `v*` tag push). Deliberately no code-signing/notarization/homebrew-tap
-# publish step, unlike onctl's own .goreleaser.yml -- none of that
-# infrastructure (GPG key, Apple Developer cert, a boxctl homebrew tap)
-# exists yet. Add it here the same way onctl does if/when it does.
+# `v*` tag push). Mirrors onctl's own .goreleaser.yml, minus macOS for
+# now: Linux and Windows binaries only, with GPG-signed checksums. The
+# darwin build (quill sign-and-notarize on a self-hosted Mac) and the
+# Homebrew cask are kept below, commented out, ready to re-enable once
+# the Apple credentials and a Mac runner are wired up for this repo. The
+# unsigned per-push edge build (which does include macOS) is
+# .goreleaser.edge.yml, not this file.
+
+signs:
+  - artifacts: checksum
+    args:
+      - "--batch"
+      - "-u"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
 
 before:
   hooks:
     - go mod tidy
 
 builds:
+  # macOS -- disabled until this repo has the Apple signing/notarization
+  # secrets and a macOS runner (see release.yml). Same shape as onctl's.
+  # - binary: boxctl
+  #   id: boxctl-macos
+  #   env:
+  #     - CGO_ENABLED=0
+  #   goos:
+  #     - darwin
+  #   goarch:
+  #     - amd64
+  #     - arm64
+  #   ldflags:
+  #     - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}'
+  #   hooks:
+  #     post:
+  #       # --dry-run/--ad-hoc on snapshots so `goreleaser release --snapshot`
+  #       # works locally without Apple credentials.
+  #       - cmd: quill sign-and-notarize "{{ .Path }}" --dry-run={{ .IsSnapshot }} --ad-hoc={{ .IsSnapshot }} -vv
+  #         env:
+  #           - QUILL_LOG_FILE=/tmp/quill-{{ .Target }}.log
+
   - binary: boxctl
     id: boxctl
     env:
       - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
       - windows
     goarch:
       - amd64
@@ -55,3 +89,14 @@ release:
     owner: cdalar
     name: boxctl
   prerelease: auto
+
+# Homebrew cask -- disabled along with the macOS build above. Re-enabling
+# it also needs release.yml to publish with GORELEASER_GH_TOKEN (a PAT
+# that can write to cdalar/homebrew-tap) instead of the default
+# GITHUB_TOKEN.
+# homebrew_casks:
+#   - repository:
+#       owner: cdalar
+#       name: homebrew-tap
+#     description: "Command-line client for boxctl.io -- manage your Firecracker microVMs"
+#     homepage: "https://boxctl.io"
