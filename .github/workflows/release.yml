@@ -1,12 +1,12 @@
 name: release
 
 # Tagged releases (v*), built and published via GoReleaser + .goreleaser.yml.
-# Mirrors onctl's own goreleaser.yml, minus macOS for now: Linux and
-# Windows binaries, GPG-signed checksums, published to this repo's
+# Mirrors onctl's own goreleaser.yml, except macOS ships unsigned for now:
+# Linux, Windows and plain darwin binaries, GPG-signed checksums, published to this repo's
 # Releases page with the default GITHUB_TOKEN. Runs on the onctl-4 runner
 # like the rest of this repo's workflows.
 #
-# The macOS parts (self-hosted Mac runner, quill install, Apple
+# The macOS signing parts (self-hosted Mac runner, quill install, Apple
 # signing/notarization env, GORELEASER_GH_TOKEN for the Homebrew cask) are
 # kept commented out below and in .goreleaser.yml, ready to re-enable
 # once this repo has the Apple secrets and a Mac runner.

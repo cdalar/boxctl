@@ -90,12 +90,15 @@ for changes.
 ## Releases
 
 - `.github/workflows/release.yml` + `.goreleaser.yml` — tagged (`v*`)
-  releases, a copy of onctl's minus macOS: Linux + Windows binaries with
-  GPG-signed checksums, on the `onctl-4` runner, needing only the
-  `GPG_PRIVATE_KEY` secret. The darwin build (quill sign-and-notarize on
-  a self-hosted Mac), the Homebrew cask, and the Apple/`GORELEASER_GH_TOKEN`
-  secrets are all present but commented out in both files -- re-enable
-  them together, not piecemeal (the cask needs the darwin archives).
+  releases, a copy of onctl's except macOS ships unsigned: Linux +
+  Windows + plain darwin (`boxctl-darwin` build, not signed/notarized)
+  binaries with GPG-signed checksums, on the `onctl-4` runner, needing
+  only the `GPG_PRIVATE_KEY` secret. The signed darwin build (quill
+  sign-and-notarize on a self-hosted Mac), the Homebrew cask, and the
+  Apple/`GORELEASER_GH_TOKEN` secrets are all present but commented out
+  in both files -- re-enable them together, not piecemeal (the cask needs
+  the darwin archives), and delete the unsigned `boxctl-darwin` build
+  when you do.
 - `.github/workflows/release-self-hosted-test.yml` — the same job with
   `--skip=publish`, run by hand against an existing tag.
 - `.github/workflows/edge.yml` + `.goreleaser.edge.yml` — unsigned

@@ -2,13 +2,15 @@ version: 2
 project_name: boxctl
 
 # Real tagged releases (triggered by .github/workflows/release.yml on a
-# `v*` tag push). Mirrors onctl's own .goreleaser.yml, minus macOS for
-# now: Linux and Windows binaries only, with GPG-signed checksums. The
-# darwin build (quill sign-and-notarize on a self-hosted Mac) and the
-# Homebrew cask are kept below, commented out, ready to re-enable once
-# the Apple credentials and a Mac runner are wired up for this repo. The
-# unsigned per-push edge build (which does include macOS) is
-# .goreleaser.edge.yml, not this file.
+# `v*` tag push). Mirrors onctl's own .goreleaser.yml, except that macOS
+# ships unsigned for now: Linux, Windows, and plain (not signed or
+# notarized) darwin binaries, with GPG-signed checksums -- the same kind
+# of darwin binary the edge build (.goreleaser.edge.yml) already ships,
+# so boxctl.io/get.sh works on a Mac. The signed darwin build (quill
+# sign-and-notarize on a self-hosted Mac) and the Homebrew cask are kept
+# below, commented out, ready to re-enable once the Apple credentials and
+# a Mac runner are wired up for this repo -- at which point the unsigned
+# boxctl-darwin build goes away.
 
 signs:
   - artifacts: checksum
@@ -60,6 +62,22 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
+    ldflags:
+      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}'
+
+  # macOS, unsigned -- stands in for boxctl-macos above until signing is
+  # set up; delete it when that's re-enabled (both would produce the same
+  # darwin archives). A binary fetched with curl isn't quarantined, so
+  # Gatekeeper doesn't block it; one downloaded through a browser is.
+  - binary: boxctl
+    id: boxctl-darwin
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
     ldflags:
       - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}'
 
