@@ -13,7 +13,7 @@ that repo's `AGENTS.md`/`README.md` for the backend architecture, and
 
 ## Install
 
-Linux (install script, latest tagged release):
+Linux and macOS (install script, latest tagged release):
 
 ```bash
 curl -sLS https://boxctl.io/get.sh | bash
@@ -22,8 +22,10 @@ sudo install boxctl /usr/local/bin/
 
 Windows: download the binary from the [releases page](https://github.com/cdalar/boxctl/releases).
 
-macOS: tagged releases don't include macOS binaries yet (signing/notarization
-isn't wired up for this repo); use the edge build below, or build from source.
+macOS: the same install script works. The macOS binaries aren't signed or
+notarized yet, which doesn't matter when installing with `curl` as above; a
+binary downloaded through a browser gets quarantined, so clear it with
+`xattr -d com.apple.quarantine boxctl`.
 
 #### Edge build (latest `main`, Linux and macOS)
 
@@ -44,11 +46,11 @@ go build -o boxctl .
 
 Push a `vX.Y.Z` tag and `.github/workflows/release.yml` does the rest via
 GoReleaser (`.goreleaser.yml`, mirroring onctl's) on the `onctl-4` runner:
-Linux (amd64/arm64) and Windows (amd64) binaries are built,
-`checksums.txt` is GPG-signed, and the GitHub release is created. The
-macOS build (quill signing/notarization) and the Homebrew cask are kept
-commented out in both files until this repo has the Apple credentials
-and a Mac runner. Run the "release (self-hosted test)" workflow against
+Linux (amd64/arm64), macOS (amd64/arm64, unsigned) and Windows (amd64)
+binaries are built, `checksums.txt` is GPG-signed, and the GitHub release
+is created. The signed macOS build (quill signing/notarization) and the
+Homebrew cask are kept commented out in both files until this repo has
+the Apple credentials and a Mac runner. Run the "release (self-hosted test)" workflow against
 an existing tag to dry-run all of that without publishing.
 `make release-snapshot` builds the same artifacts locally (unsigned,
 into `dist/`).
