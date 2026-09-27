@@ -7,9 +7,10 @@ import (
 )
 
 var pauseCmd = &cobra.Command{
-	Use:   "pause <name>",
-	Short: "Pause a box (snapshot and stop; resume later with `boxctl resume`)",
-	Args:  cobra.ExactArgs(1),
+	Use:               "pause <name>",
+	ValidArgsFunction: completeBoxName,
+	Short:             "Pause a box (snapshot and stop; resume later with `boxctl resume`)",
+	Args:              cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		fmt.Printf("Pausing %s (this can take a few minutes for a large box)...\n", name)

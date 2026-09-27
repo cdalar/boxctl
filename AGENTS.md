@@ -73,6 +73,14 @@ for changes.
   bypasses all of that: it joins the words after `--` and runs them via
   `Client.Exec` (the same no-pty endpoint `exec` uses), relaying
   stdout/stderr and exiting with the remote exit code.
+- `cmd/complete.go` — `completeBoxName`, the `ValidArgsFunction` behind
+  box-name tab completion on every `<name>` command (`ssh`/`rm`/`pause`/
+  `resume`/`download`): a `List` call with a short timeout, failing
+  silently to no suggestions. Cobra's hidden `__complete` commands are in
+  `commandsWithoutLogin`, and that gate checks the whole command path so
+  `completion bash` works before login -- `boxctl-web`'s `get.sh`/
+  `get-edge.sh` run it on the freshly downloaded binary to install
+  completion for the user's shell.
 - `internal/client/client.go` — the HTTP client: `List`/`Create`/
   `Destroy`/`Pause`/`Resume`/`MintTerminalTicket`, all bearer-token
   authenticated with the personal token from config.

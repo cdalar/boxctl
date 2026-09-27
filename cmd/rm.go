@@ -12,10 +12,11 @@ import (
 var rmForce bool
 
 var rmCmd = &cobra.Command{
-	Use:     "rm <name>",
-	Aliases: []string{"destroy", "delete"},
-	Short:   "Destroy a box",
-	Args:    cobra.ExactArgs(1),
+	Use:               "rm <name>",
+	ValidArgsFunction: completeBoxName,
+	Aliases:           []string{"destroy", "delete"},
+	Short:             "Destroy a box",
+	Args:              cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		if !rmForce && !confirm(fmt.Sprintf("Destroy %s? This cannot be undone.", name)) {

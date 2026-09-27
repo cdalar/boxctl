@@ -10,8 +10,9 @@ import (
 var downloadOutput string
 
 var downloadCmd = &cobra.Command{
-	Use:   "download <name>",
-	Short: "Download a paused box's snapshot bundle",
+	Use:               "download <name>",
+	ValidArgsFunction: completeBoxName,
+	Short:             "Download a paused box's snapshot bundle",
 	Long: `Download a paused box's snapshot bundle -- rootfs, memory/device
 snapshot, kernel, and manifest, as one .tar.zst file. The box must
 already be paused (see 'boxctl pause').

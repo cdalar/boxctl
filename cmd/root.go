@@ -27,6 +27,10 @@ var commandsWithoutLogin = map[string]bool{
 	"version":    true,
 	"help":       true,
 	"completion": true,
+	// cobra's hidden tab-completion commands: a logged-out user should
+	// just get no suggestions, not an error (see completeBoxName).
+	cobra.ShellCompRequestCmd:       true,
+	cobra.ShellCompNoDescRequestCmd: true,
 }
 
 var (
@@ -68,8 +72,13 @@ list, connect to, and destroy your Firecracker microVMs ("boxes").`,
 			cfg.APIURL = apiURLFlag
 		}
 
-		if commandsWithoutLogin[cmd.Name()] {
-			return nil
+		// Check the whole command path, not just the leaf: `completion
+		// bash` runs a command named "bash", and it must work before
+		// login (get.sh runs it on a freshly downloaded binary).
+		for c := cmd; c != nil; c = c.Parent() {
+			if commandsWithoutLogin[c.Name()] {
+				return nil
+			}
 		}
 		if cfg.Token == "" {
 			return fmt.Errorf("not logged in -- run `boxctl login` first (create one at %s)", dashboardURL)
