@@ -53,9 +53,8 @@ type VM struct {
 
 // Image is a boot image offered by boxctl-vms, as returned by
 // /api/images -- Name is exactly what a caller passes to Create's
-// --image flag. There's no "default" entry: omitting --image entirely
-// boots the host's own default rootfs image instead of picking one of
-// these by name.
+// --image flag. The server has no default image; cmd/create.go's
+// defaultImage is the CLI's own choice when --image isn't given.
 type Image struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -150,12 +149,9 @@ func (c *Client) ListImages(ctx context.Context) ([]Image, error) {
 // this token's owner prefix and returns the box with it already
 // stripped back off, so the caller never has to think about it.
 func (c *Client) Create(ctx context.Context, name, template, image string) (*VM, error) {
-	body := map[string]string{"name": name}
+	body := map[string]string{"name": name, "image": image}
 	if template != "" {
 		body["template"] = template
-	}
-	if image != "" {
-		body["image"] = image
 	}
 	var vm VM
 	if err := c.do(ctx, http.MethodPost, "/api/vms", body, &vm); err != nil {

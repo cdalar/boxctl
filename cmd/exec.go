@@ -58,7 +58,7 @@ command is a single shell string, e.g.:
 }
 
 func init() {
-	execCmd.Flags().StringVarP(&execImage, "image", "i", "", "boot image to use (defaults to boxctl-vms's own default)")
+	execCmd.Flags().StringVarP(&execImage, "image", "i", defaultImage, "boot image to use (list them with boxctl images)")
 	execCmd.Flags().DurationVarP(&execTimeout, "timeout", "T", 30*time.Second, "how long to let the command run before it's killed")
 	rootCmd.AddCommand(execCmd)
 }
