@@ -36,6 +36,7 @@ const maxSSHTimeout = 5 * time.Minute
 
 var sshCmd = &cobra.Command{
 	Use:                   "ssh <name> [-- command [args...]]",
+	ValidArgsFunction:     completeBoxName,
 	Short:                 "Open an interactive terminal on a box, or run one command on it",
 	DisableFlagsInUseLine: true,
 	Long: `Without a command, opens an interactive terminal on the box.

@@ -7,9 +7,10 @@ import (
 )
 
 var resumeCmd = &cobra.Command{
-	Use:   "resume <name>",
-	Short: "Resume a paused box",
-	Args:  cobra.ExactArgs(1),
+	Use:               "resume <name>",
+	ValidArgsFunction: completeBoxName,
+	Short:             "Resume a paused box",
+	Args:              cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		fmt.Printf("Resuming %s (this can take a few minutes for a large box)...\n", name)

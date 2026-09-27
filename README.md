@@ -40,6 +40,20 @@ Or build from source:
 go build -o boxctl .
 ```
 
+#### Shell completion
+
+`get.sh` and `get-edge.sh` also install tab completion for your login
+shell (bash, zsh or fish) -- subcommands, flags, and your own box names
+for `ssh`/`rm`/`pause`/`resume`/`download`, fetched live from the API
+(`boxctl resume mig<TAB>`). Set `BOXCTL_NO_COMPLETION=1` to skip that.
+To set it up by hand instead, e.g. after building from source:
+
+```bash
+echo 'source <(boxctl completion bash)' >> ~/.bashrc   # bash
+echo 'source <(boxctl completion zsh)' >> ~/.zshrc     # zsh (after compinit)
+boxctl completion fish > ~/.config/fish/completions/boxctl.fish
+```
+
 ## Releasing
 
 Push a `vX.Y.Z` tag and `.github/workflows/release.yml` does the rest via
@@ -89,7 +103,8 @@ and is never sent anywhere except the configured API URL.
 
 ```
 main.go                 Entry point, delegates to cmd.Execute()
-cmd/                     Cobra subcommands (login/logout/ls/images/create/rm/pause/resume/ssh/version)
+cmd/                     Cobra subcommands (login/logout/ls/images/create/rm/pause/resume/ssh/version),
+                         plus box-name tab completion (complete.go)
 internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
 internal/config/         ~/.boxctl/config.json read/write
 ```
