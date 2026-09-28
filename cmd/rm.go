@@ -12,19 +12,28 @@ import (
 var rmForce bool
 
 var rmCmd = &cobra.Command{
-	Use:               "rm <name>",
-	ValidArgsFunction: completeBoxName,
+	Use:               "rm <name|all>",
+	ValidArgsFunction: completeBoxNameOrAll,
 	Aliases:           []string{"destroy", "delete"},
 	Short:             "Destroy a box",
 	Args:              cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
+		c := newClient()
+		if name == allBoxes {
+			if !rmForce && !confirm("Destroy ALL your boxes? This cannot be undone.") {
+				fmt.Println("Aborted.")
+				return nil
+			}
+			return forEachBox(cmd.Context(), c, "destroy", nil, c.Destroy)
+		}
+
 		if !rmForce && !confirm(fmt.Sprintf("Destroy %s? This cannot be undone.", name)) {
 			fmt.Println("Aborted.")
 			return nil
 		}
 
-		if err := newClient().Destroy(cmd.Context(), name); err != nil {
+		if err := c.Destroy(cmd.Context(), name); err != nil {
 			return err
 		}
 		fmt.Printf("Destroyed %s\n", name)
