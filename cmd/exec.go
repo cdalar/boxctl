@@ -14,6 +14,7 @@ import (
 
 var (
 	execImage   string
+	execSize    string
 	execTimeout time.Duration
 )
 
@@ -59,6 +60,8 @@ command is a single shell string, e.g.:
 
 func init() {
 	execCmd.Flags().StringVarP(&execImage, "image", "i", defaultImage, "boot image to use (list them with boxctl images)")
+	execCmd.Flags().StringVarP(&execSize, "size", "s", "", "box size: small, medium or large (list them with boxctl sizes; default small)")
+	_ = execCmd.RegisterFlagCompletionFunc("size", completeSize)
 	execCmd.Flags().DurationVarP(&execTimeout, "timeout", "T", 30*time.Second, "how long to let the command run before it's killed")
 	rootCmd.AddCommand(execCmd)
 }
@@ -68,7 +71,7 @@ func runExec(ctx context.Context, command string) (exitCode int, err error) {
 	name := "agent-exec-" + randomHex(8)
 
 	fmt.Fprintf(os.Stderr, "Creating %s...\n", name)
-	if _, err := c.Create(ctx, name, "", execImage); err != nil {
+	if _, err := c.Create(ctx, name, "", execImage, execSize); err != nil {
 		return 0, fmt.Errorf("creating %s: %w", name, err)
 	}
 	defer func() {

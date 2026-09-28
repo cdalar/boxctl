@@ -83,6 +83,10 @@ for changes.
   bearer token on the upgrade) per accepted TCP connection, raw bytes
   in binary messages. A far-end close reason (the agent's dial error) is
   printed per connection; the forward itself keeps running.
+- `cmd/sizes.go` — `sizes` (GET /api/sizes), plus `sizeLabel` for
+  `ls`'s SIZE column and `completeSize` for `create`/`exec`'s
+  `--size`. The size names are the server's; this CLI never hard-codes
+  them, so a new preset needs no CLI change.
 - `cmd/complete.go` — `completeBoxName`, the `ValidArgsFunction` behind
   box-name tab completion on every `<name>` command (`ssh`/`rm`/`pause`/
   `resume`/`download`; `completeBoxNameOrAll` also offers `all` for

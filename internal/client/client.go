@@ -56,6 +56,21 @@ type VM struct {
 	// empty when the server doesn't know it -- e.g. a box created before
 	// images were tracked.
 	Image string `json:"image"`
+	// VCPU/MemMiB are what the box actually runs with; Size is the
+	// matching preset name from /api/sizes, empty for a shape that
+	// isn't one (a Windows box) or from a server that predates sizes.
+	VCPU   int    `json:"vcpu"`
+	MemMiB int    `json:"mem_mib"`
+	Size   string `json:"size"`
+}
+
+// Size is one box size offered by boxctl-vms, as returned by /api/sizes
+// -- Name is exactly what a caller passes to Create's size.
+type Size struct {
+	Name    string `json:"name"`
+	VCPU    int    `json:"vcpu"`
+	MemMiB  int    `json:"mem_mib"`
+	Default bool   `json:"default"`
 }
 
 // Image is a boot image offered by boxctl-vms, as returned by
@@ -152,13 +167,25 @@ func (c *Client) ListImages(ctx context.Context) ([]Image, error) {
 	return images, nil
 }
 
+func (c *Client) ListSizes(ctx context.Context) ([]Size, error) {
+	var sizes []Size
+	if err := c.do(ctx, http.MethodGet, "/api/sizes", nil, &sizes); err != nil {
+		return nil, err
+	}
+	return sizes, nil
+}
+
 // Create sends name as-is (a bare display name); the server prepends
 // this token's owner prefix and returns the box with it already
-// stripped back off, so the caller never has to think about it.
-func (c *Client) Create(ctx context.Context, name, template, image string) (*VM, error) {
+// stripped back off, so the caller never has to think about it. An
+// empty size leaves the choice to the server's default.
+func (c *Client) Create(ctx context.Context, name, template, image, size string) (*VM, error) {
 	body := map[string]string{"name": name, "image": image}
 	if template != "" {
 		body["template"] = template
+	}
+	if size != "" {
+		body["size"] = size
 	}
 	var vm VM
 	if err := c.do(ctx, http.MethodPost, "/api/vms", body, &vm); err != nil {
