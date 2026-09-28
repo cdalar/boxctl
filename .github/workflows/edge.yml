@@ -5,8 +5,8 @@ name: edge
 # for a tagged release (release.yml's job, which this doesn't touch or
 # replace). Mirrors onctl's own edge.yml (github.com/cdalar/onctl):
 # uses GoReleaser's OSS --snapshot flag against a dedicated
-# .goreleaser.edge.yml, then this workflow deletes and recreates a single
-# rolling `edge` prerelease/tag on every run, so there's always exactly
+# .goreleaser.edge.yml, then this workflow updates a single rolling `edge`
+# prerelease/tag in place on every run, so there's always exactly
 # one, always-current release at a fixed URL
 # (github.com/cdalar/boxctl/releases/tag/edge).
 #
@@ -84,15 +84,34 @@ jobs:
           name: edge-dist
           path: dist
 
-      - name: Replace the rolling edge release
+      - name: Update the rolling edge release
+        # Updates the one `edge` release in place rather than deleting and
+        # recreating it: a delete/create left releases/download/edge/*
+        # returning 404 for up to a minute after every push to main
+        # (until GitHub caught up with the new release), which broke
+        # boxctl.io/get-edge.sh for anyone installing in that window.
+        # Now the tag is force-moved and each asset is overwritten with
+        # --clobber, so the previous build stays downloadable until the
+        # new one replaces it.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release delete edge --yes --cleanup-tag --repo cdalar/boxctl 2>/dev/null || true
-          gh release create edge dist/*.tar.gz dist/checksums.txt \
-            --repo cdalar/boxctl \
-            --target "${{ github.sha }}" \
-            --title "edge ($(date -u +%Y-%m-%d))" \
-            --notes "Automated, unsigned build of main @ ${{ github.sha }}. Not a tagged release -- see the Releases page for stable versions." \
-            --prerelease
+          repo=cdalar/boxctl
+          title="edge ($(date -u +%Y-%m-%d))"
+          notes="Automated, unsigned build of main @ ${{ github.sha }}. Not a tagged release -- see the Releases page for stable versions."
+          if gh release view edge --repo "$repo" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$repo/git/refs/tags/edge" \
+              -f sha="${{ github.sha }}" -F force=true >/dev/null
+            gh release upload edge dist/*.tar.gz dist/checksums.txt \
+              --repo "$repo" --clobber
+            gh release edit edge --repo "$repo" \
+              --title "$title" --notes "$notes" --prerelease
+          else
+            gh release create edge dist/*.tar.gz dist/checksums.txt \
+              --repo "$repo" \
+              --target "${{ github.sha }}" \
+              --title "$title" \
+              --notes "$notes" \
+              --prerelease
+          fi
