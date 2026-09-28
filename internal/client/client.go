@@ -15,8 +15,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 type Client struct {
@@ -192,6 +195,35 @@ func (c *Client) MintTerminalTicket(ctx context.Context, name string) (ticket, v
 		return "", "", err
 	}
 	return res.Ticket, res.VMID, nil
+}
+
+// DialPort opens one raw TCP relay to port inside box name, as a
+// WebSocket carrying the bytes verbatim in binary messages -- boxctl-vms's
+// GET /api/vms/{id}/port/{port}. One call per TCP connection: the server
+// asks the box's host agent to dial the port afresh each time. Unlike the
+// terminal there's no ticket; the personal token goes on the upgrade
+// request itself, the same as every other call here.
+func (c *Client) DialPort(ctx context.Context, name string, port int) (*websocket.Conn, error) {
+	wsURL := strings.Replace(c.baseURL, "http", "ws", 1) +
+		"/api/vms/" + url.PathEscape(name) + "/port/" + strconv.Itoa(port)
+	header := http.Header{"Authorization": []string{"Bearer " + c.token}}
+	conn, res, err := websocket.DefaultDialer.DialContext(ctx, wsURL, header)
+	if err != nil {
+		// A refused upgrade (box not running, not found, host
+		// unreachable) comes back as an ordinary HTTP response with the
+		// reason in its body -- surface that, not gorilla's generic
+		// "bad handshake".
+		if res != nil {
+			defer func() { _ = res.Body.Close() }()
+			if res.StatusCode == http.StatusUnauthorized {
+				return nil, fmt.Errorf("unauthorized -- your token may be wrong or revoked; run `boxctl login` again")
+			}
+			data, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+			return nil, &apiError{status: res.StatusCode, body: string(data)}
+		}
+		return nil, fmt.Errorf("contacting %s: %w", c.baseURL, err)
+	}
+	return conn, nil
 }
 
 // streamClient is used for the actual bundle-byte transfers in

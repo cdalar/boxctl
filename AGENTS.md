@@ -78,6 +78,11 @@ for changes.
   bypasses all of that: it joins the words after `--` and runs them via
   `Client.Exec` (the same no-pty endpoint `exec` uses), relaying
   stdout/stderr and exiting with the remote exit code.
+- `cmd/portforward.go` — `port-forward`: a local listener per port spec,
+  one `Client.DialPort` WebSocket (`GET /api/vms/{id}/port/{port}`,
+  bearer token on the upgrade) per accepted TCP connection, raw bytes
+  in binary messages. A far-end close reason (the agent's dial error) is
+  printed per connection; the forward itself keeps running.
 - `cmd/complete.go` — `completeBoxName`, the `ValidArgsFunction` behind
   box-name tab completion on every `<name>` command (`ssh`/`rm`/`pause`/
   `resume`/`download`; `completeBoxNameOrAll` also offers `all` for
