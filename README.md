@@ -79,6 +79,8 @@ boxctl login
 boxctl ls
 boxctl images
 boxctl create my-box
+boxctl sizes                      # small (default) 1 vCPU/4 GiB, medium 2/8, large 4/16
+boxctl create big-box --size large
 boxctl ssh my-box
 boxctl ssh my-box -- ls -al   # run one command instead of a shell
 boxctl port-forward my-box 3000   # localhost:3000 -> port 3000 inside the box
@@ -106,7 +108,7 @@ and is never sent anywhere except the configured API URL.
 
 ```
 main.go                 Entry point, delegates to cmd.Execute()
-cmd/                     Cobra subcommands (login/logout/ls/images/create/rm/pause/resume/ssh/port-forward/version),
+cmd/                     Cobra subcommands (login/logout/ls/images/sizes/create/rm/pause/resume/ssh/port-forward/version),
                          plus box-name tab completion (complete.go)
 internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
 internal/config/         ~/.boxctl/config.json read/write

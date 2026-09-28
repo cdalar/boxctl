@@ -15,6 +15,7 @@ const defaultImage = "debian-slim"
 var (
 	createTemplate string
 	createImage    string
+	createSize     string
 )
 
 var createCmd = &cobra.Command{
@@ -25,11 +26,11 @@ var createCmd = &cobra.Command{
 		name := args[0]
 		fmt.Printf("Creating %s...\n", name)
 
-		vm, err := newClient().Create(cmd.Context(), name, createTemplate, createImage)
+		vm, err := newClient().Create(cmd.Context(), name, createTemplate, createImage, createSize)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Created %s (%s)\n", vm.Name, vm.State)
+		fmt.Printf("Created %s (%s, %s)\n", vm.Name, vm.State, sizeLabel(*vm))
 		return nil
 	},
 }
@@ -37,5 +38,7 @@ var createCmd = &cobra.Command{
 func init() {
 	createCmd.Flags().StringVarP(&createTemplate, "template", "t", "", "onctl-templates config path to apply (e.g. k3s/k3s-server.sh)")
 	createCmd.Flags().StringVarP(&createImage, "image", "i", defaultImage, "boot image to use (list them with boxctl images)")
+	createCmd.Flags().StringVarP(&createSize, "size", "s", "", "box size: small, medium or large (list them with boxctl sizes; default small)")
+	_ = createCmd.RegisterFlagCompletionFunc("size", completeSize)
 	rootCmd.AddCommand(createCmd)
 }
