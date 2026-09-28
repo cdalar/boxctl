@@ -187,12 +187,23 @@ func (c *Client) Create(ctx context.Context, name, template, image, size string)
 	if size != "" {
 		body["size"] = size
 	}
+	// The server answers only once `onctl create` finishes, including any
+	// template (a Rancher install runs for minutes), under its own 5 minute
+	// limit (boxctl-vms's Service.Create) -- c.http's 60s gave up long
+	// before that, reporting a failure for a box that was still being
+	// created. A minute past the server's limit, so its own error arrives
+	// first.
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
 	var vm VM
-	if err := c.do(ctx, http.MethodPost, "/api/vms", body, &vm); err != nil {
+	if err := c.doLong(ctx, http.MethodPost, "/api/vms", body, &vm); err != nil {
 		return nil, err
 	}
 	return &vm, nil
 }
+
+// createTimeout bounds Create -- see the comment there.
+const createTimeout = 6 * time.Minute
 
 func (c *Client) Destroy(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/api/vms/"+url.PathEscape(name), nil, nil)
