@@ -19,9 +19,10 @@ var (
 )
 
 var createCmd = &cobra.Command{
-	Use:   "create <name>",
-	Short: "Create a new box",
-	Args:  cobra.ExactArgs(1),
+	Use:     "create <name>",
+	Aliases: []string{"up"},
+	Short:   "Create a new box",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		fmt.Printf("Creating %s...\n", name)
