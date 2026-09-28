@@ -46,7 +46,7 @@ go build -o boxctl .
 
 `get.sh` and `get-edge.sh` also install tab completion for your login
 shell (bash, zsh or fish) -- subcommands, flags, and your own box names
-for `ssh`/`rm`/`pause`/`resume`/`download`, fetched live from the API
+for `ssh`/`port-forward`/`rm`/`pause`/`resume`/`download`, fetched live from the API
 (`boxctl resume mig<TAB>`). Set `BOXCTL_NO_COMPLETION=1` to skip that.
 To set it up by hand instead, e.g. after building from source:
 
@@ -81,6 +81,7 @@ boxctl images
 boxctl create my-box
 boxctl ssh my-box
 boxctl ssh my-box -- ls -al   # run one command instead of a shell
+boxctl port-forward my-box 3000   # localhost:3000 -> port 3000 inside the box
 boxctl pause my-box
 boxctl resume my-box
 boxctl rm my-box
@@ -105,7 +106,7 @@ and is never sent anywhere except the configured API URL.
 
 ```
 main.go                 Entry point, delegates to cmd.Execute()
-cmd/                     Cobra subcommands (login/logout/ls/images/create/rm/pause/resume/ssh/version),
+cmd/                     Cobra subcommands (login/logout/ls/images/create/rm/pause/resume/ssh/port-forward/version),
                          plus box-name tab completion (complete.go)
 internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
 internal/config/         ~/.boxctl/config.json read/write
@@ -128,3 +129,20 @@ to `POST /api/vms/{name}/exec`, the same no-pty endpoint `boxctl exec`
 uses. The command's stdout and stderr are relayed to yours and the process
 exits with the command's own exit code; `-T/--timeout` (default 30s, max
 5m) bounds how long it may run.
+
+## `port-forward`
+
+`boxctl port-forward <name> [LOCAL:]REMOTE [...]` listens on
+`127.0.0.1:LOCAL` (`--address` to change; `:REMOTE` picks a free local
+port) and, for **each** accepted connection, opens
+`wss://.../api/vms/{name}/port/{REMOTE}` with the personal token on the
+upgrade request -- no ticket, since a browser page load opens dozens of
+connections and a ticket per socket would double the round trips.
+`boxctl-vms` has the box's host agent dial the port and relays raw bytes
+in binary WebSocket messages both ways. Each new connection pays that
+rendezvous (a few round trips to the controller), so it's for your own
+traffic, not for serving the public. If nothing in the box is listening,
+the far end closes with the dial error as its reason and this prints it
+(`my-box:3000: dial tcp ...: connection refused`) -- the connection is
+dropped, the forward keeps running. Traffic through a forward counts as
+using the box for idle auto-pause.
