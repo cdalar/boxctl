@@ -13,9 +13,9 @@ import (
 const defaultImage = "debian-slim"
 
 var (
-	createTemplate string
-	createImage    string
-	createSize     string
+	createApplyFile string
+	createImage     string
+	createSize      string
 )
 
 var createCmd = &cobra.Command{
@@ -26,7 +26,7 @@ var createCmd = &cobra.Command{
 		name := args[0]
 		fmt.Printf("Creating %s...\n", name)
 
-		vm, err := newClient().Create(cmd.Context(), name, createTemplate, createImage, createSize)
+		vm, err := newClient().Create(cmd.Context(), name, createApplyFile, createImage, createSize)
 		if err != nil {
 			return err
 		}
@@ -36,7 +36,11 @@ var createCmd = &cobra.Command{
 }
 
 func init() {
-	createCmd.Flags().StringVarP(&createTemplate, "template", "t", "", "onctl-templates config path to apply (e.g. k3s/k3s-server.sh)")
+	createCmd.Flags().StringVarP(&createApplyFile, "apply-file", "a", "", "onctl-templates script to run on the new box, like onctl up -a (e.g. k3s/k3s-server.sh)")
+	// The flag's original name, kept so existing commands still work.
+	// Deprecated flags are hidden from --help and print a notice when used.
+	createCmd.Flags().StringVarP(&createApplyFile, "template", "t", "", "")
+	_ = createCmd.Flags().MarkDeprecated("template", "use --apply-file/-a instead")
 	createCmd.Flags().StringVarP(&createImage, "image", "i", defaultImage, "boot image to use (list them with boxctl images)")
 	createCmd.Flags().StringVarP(&createSize, "size", "s", "", "box size: small, medium or large (list them with boxctl sizes; default small)")
 	_ = createCmd.RegisterFlagCompletionFunc("size", completeSize)
