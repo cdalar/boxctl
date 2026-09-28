@@ -34,3 +34,13 @@ func completeBoxName(cmd *cobra.Command, args []string, toComplete string) ([]co
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
 }
+
+// completeBoxNameOrAll is completeBoxName plus the `all` keyword, for
+// the commands (rm/pause/resume) that accept it.
+func completeBoxNameOrAll(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	names, directive := completeBoxName(cmd, args, toComplete)
+	if len(args) == 0 {
+		names = append(names, cobra.CompletionWithDesc(allBoxes, "every box"))
+	}
+	return names, directive
+}

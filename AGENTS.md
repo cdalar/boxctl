@@ -60,6 +60,11 @@ for changes.
 - `cmd/login.go`/`logout.go` — save/remove the personal token.
 - `cmd/ls.go`/`create.go`/`rm.go`/`pause.go`/`resume.go` — thin wrappers
   around `internal/client`'s matching methods.
+- `cmd/all.go` — `forEachBox`, behind `rm all`/`pause all`/`resume all`
+  (like `onctl destroy all`): lists the caller's boxes, filters by state
+  (`pause` → running, `resume` → paused, `rm` → every box, after one
+  confirmation unless `--force`), runs the action concurrently, prints a
+  ✔/✘ line per box, and fails if any box failed.
 - `cmd/ssh.go` — the one non-trivial command: mints a terminal ticket,
   dials the same `/ws/terminal/{id}` WebSocket the browser's xterm.js
   terminal uses, puts the local tty in raw mode
@@ -75,7 +80,8 @@ for changes.
   stdout/stderr and exiting with the remote exit code.
 - `cmd/complete.go` — `completeBoxName`, the `ValidArgsFunction` behind
   box-name tab completion on every `<name>` command (`ssh`/`rm`/`pause`/
-  `resume`/`download`): a `List` call with a short timeout, failing
+  `resume`/`download`; `completeBoxNameOrAll` also offers `all` for
+  `rm`/`pause`/`resume`): a `List` call with a short timeout, failing
   silently to no suggestions. Cobra's hidden `__complete` commands are in
   `commandsWithoutLogin`, and that gate checks the whole command path so
   `completion bash` works before login -- `boxctl-web`'s `get.sh`/
