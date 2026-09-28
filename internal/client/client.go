@@ -52,6 +52,10 @@ type VM struct {
 	Ready     bool      `json:"ready"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Image is the boot image's name (as `boxctl images` lists it), or
+	// empty when the server doesn't know it -- e.g. a box created before
+	// images were tracked.
+	Image string `json:"image"`
 }
 
 // Image is a boot image offered by boxctl-vms, as returned by
