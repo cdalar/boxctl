@@ -60,6 +60,11 @@ for changes.
 - `cmd/login.go`/`logout.go` — save/remove the personal token.
 - `cmd/ls.go`/`create.go`/`rm.go`/`pause.go`/`resume.go` — thin wrappers
   around `internal/client`'s matching methods.
+- `cmd/create.go` — `create -a <script>` blocks until the server's
+  `onctl create -a` finishes, so meanwhile `applyLogTail` polls the
+  script's log (`~/.onctl/applyNN/output-<script>.log`, where onctl's
+  `CopyAndRunRemoteFile` redirects it) over `Client.Exec` every 2s and
+  prints the new bytes. If onctl ever moves that log, update the path here.
 - `cmd/all.go` — `forEachBox`, behind `rm all`/`pause all`/`resume all`
   (like `onctl destroy all`): lists the caller's boxes, filters by state
   (`pause` → running, `resume` → paused, `rm` → every box, after one
