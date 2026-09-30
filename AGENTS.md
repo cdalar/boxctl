@@ -87,6 +87,13 @@ for changes.
   `ls`'s SIZE column and `completeSize` for `create`/`exec`'s
   `--size`. The size names are the server's; this CLI never hard-codes
   them, so a new preset needs no CLI change.
+- `examples/openai-agents/` — its own Go module (so the OpenAI SDK
+  never becomes a CLI dependency; it imports `internal/client` through
+  a `replace` to the repo root): an OpenAI Agents API session whose
+  self-hosted environment is a box running `codex exec-server`. The
+  environment key goes in over the terminal, never a command line, and
+  the executor runs as a transient systemd unit -- a backgrounded shell
+  job held `exec`'s SSH channel open until it timed out.
 - `cmd/complete.go` — `completeBoxName`, the `ValidArgsFunction` behind
   box-name tab completion on every `<name>` command (`ssh`/`rm`/`pause`/
   `resume`/`download`; `completeBoxNameOrAll` also offers `all` for
