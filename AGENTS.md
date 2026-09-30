@@ -120,6 +120,12 @@ for changes.
   rolling `edge` prerelease from every push to `main`, on a GitHub-hosted
   runner.
 
+- `.github/dependabot.yml` + `.github/workflows/dependabot-automerge.yml`
+  — daily Go-module and Actions bumps; patch/minor ones get GitHub
+  auto-merge (merge commit), which waits for `main`'s required checks
+  (Build (stable), Lint, Vuln — a repo branch-protection setting, not in
+  this repo's files). Majors stay open for review.
+
 ## Conventions
 
 - Standard library plus `spf13/cobra`, `gorilla/websocket`, and
