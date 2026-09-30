@@ -22,7 +22,7 @@ var sizesCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		if _, err := fmt.Fprintln(w, "NAME\tVCPU\tMEMORY"); err != nil {
+		if _, err := fmt.Fprintln(w, "NAME\tVCPU\tMEMORY\tDISK"); err != nil {
 			return err
 		}
 		for _, s := range sizes {
@@ -30,7 +30,12 @@ var sizesCmd = &cobra.Command{
 			if s.Default {
 				name += " (default)"
 			}
-			if _, err := fmt.Fprintf(w, "%s\t%d\t%s\n", name, s.VCPU, memLabel(s.MemMiB)); err != nil {
+			// "-" only from a server that predates per-size disks.
+			disk := "-"
+			if s.DiskMiB > 0 {
+				disk = memLabel(s.DiskMiB)
+			}
+			if _, err := fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", name, s.VCPU, memLabel(s.MemMiB), disk); err != nil {
 				return err
 			}
 		}
