@@ -133,3 +133,12 @@ for changes.
   boxctl.io's own domain; if that ever moves, it's the only place to
   change (besides `config.DefaultAPIURL`, which points at the API host,
   not the dashboard).
+
+## Workflow
+
+- Don't ask whether to open a pull request. When you consider a task
+  finished, branch off `main` (if needed), commit, push, and open the PR
+  yourself.
+- Once the PR's checks are green, merge it yourself -- unless it's a
+  design or documentation change, which the maintainer needs to review
+  first. Leave those open.
