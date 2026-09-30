@@ -70,8 +70,8 @@ type Size struct {
 	Name   string `json:"name"`
 	VCPU   int    `json:"vcpu"`
 	MemMiB int    `json:"mem_mib"`
-	// DiskMiB is the root disk a box of this size gets; 0 means the boot
-	// image's own size (the server omits it then).
+	// DiskMiB is the root disk a box of this size gets; 0 from a server
+	// that predates per-size disks.
 	DiskMiB int  `json:"disk_mib"`
 	Default bool `json:"default"`
 }

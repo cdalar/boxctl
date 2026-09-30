@@ -30,7 +30,8 @@ var sizesCmd = &cobra.Command{
 			if s.Default {
 				name += " (default)"
 			}
-			disk := "image size"
+			// "-" only from a server that predates per-size disks.
+			disk := "-"
 			if s.DiskMiB > 0 {
 				disk = memLabel(s.DiskMiB)
 			}
