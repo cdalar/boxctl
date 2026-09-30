@@ -40,9 +40,6 @@ const workspace = "/workspace"
 // terminal (see storeKey), read only by the executor's unit.
 const keyFile = "/root/.codex-env"
 
-// executorLog is the executor's output inside the box.
-const executorLog = "/root/exec-server.log"
-
 func main() {
 	name := flag.String("name", fmt.Sprintf("agents-demo-%04d", rand.IntN(10000)), "box name")
 	size := flag.String("size", "small", "box size (boxctl sizes)")
@@ -50,14 +47,15 @@ func main() {
 	model := flag.String("model", "gpt-6-astra", "agent model")
 	task := flag.String("task", "Create fib.py that prints the first 10 Fibonacci numbers, run it, and report its exact output.", "what to ask the agent")
 	keep := flag.Bool("keep", false, "keep the box and session afterwards instead of cleaning up")
+	box := flag.String("box", "", "use this existing box, prepared with the onctl template openai-agents/codex-executor.sh, instead of creating one (never destroyed)")
 	flag.Parse()
 
-	if err := run(*name, *size, *image, *model, *task, *keep); err != nil {
+	if err := run(*name, *box, *size, *image, *model, *task, *keep); err != nil {
 		log.Fatalf("error: %v", err)
 	}
 }
 
-func run(name, size, image, model, task string, keep bool) error {
+func run(name, box, size, image, model, task string, keep bool) error {
 	if os.Getenv("OPENAI_API_KEY") == "" {
 		return errors.New("OPENAI_API_KEY is not set")
 	}
@@ -78,28 +76,24 @@ func run(name, size, image, model, task string, keep bool) error {
 	bc := client.New(cfg.APIURL, cfg.Token)
 	oc := openai.NewClient()
 
-	// 1. A box, with the Codex CLI in it.
-	log.Printf("creating box %s (%s, %s)", name, size, image)
-	if _, err := bc.Create(ctx, name, "", image, size); err != nil {
-		return fmt.Errorf("creating box: %w", err)
-	}
-	if !keep {
-		defer func() {
-			log.Printf("destroying box %s", name)
-			if err := bc.Destroy(context.Background(), name); err != nil {
-				log.Printf("destroying box %s: %v", name, err)
-			}
-		}()
-	}
-	if _, err := bc.WaitReady(ctx, name, 3*time.Minute); err != nil {
-		return fmt.Errorf("waiting for box: %w", err)
-	}
-	log.Printf("installing the Codex CLI in %s (a minute or two)", name)
-	if err := execOK(ctx, bc, name, 5*time.Minute,
-		"export DEBIAN_FRONTEND=noninteractive; "+
-			"apt-get update -qq && apt-get install -y -qq nodejs npm >/dev/null && "+
-			"npm install -g --silent @openai/codex@alpha && mkdir -p "+workspace+" && codex --version"); err != nil {
-		return fmt.Errorf("installing codex: %w", err)
+	// 1. A box, with the Codex CLI in it: the one given, or a new one.
+	if box != "" {
+		name = box
+		log.Printf("using box %s", name)
+	} else {
+		// Only a box this run creates is destroyed -- registered before
+		// newBox so a failed install doesn't leave it behind.
+		if !keep {
+			defer func() {
+				log.Printf("destroying box %s", name)
+				if err := bc.Destroy(context.Background(), name); err != nil {
+					log.Printf("destroying box %s: %v", name, err)
+				}
+			}()
+		}
+		if err := newBox(ctx, bc, name, size, image); err != nil {
+			return err
+		}
 	}
 
 	// 2. The environment key, typed into the box rather than put on any
@@ -138,15 +132,18 @@ func run(name, size, image, model, task string, keep bool) error {
 		return fmt.Errorf("opening the event stream: %w", err)
 	}
 
-	// 5. The executor: dials out to OpenAI and stays running. A
-	// transient systemd unit rather than a backgrounded shell job, which
-	// kept the exec's SSH channel open until it timed out; the unit also
-	// takes the key from keyFile, so it's never on a command line.
-	start := fmt.Sprintf("systemd-run --quiet --unit=codex-exec-server --working-directory=%s "+
-		"--property=EnvironmentFile=%s --property=StandardOutput=append:%s --property=StandardError=append:%s "+
-		"\"$(command -v codex)\" exec-server --remote %s --environment-id %s",
-		workspace, keyFile, executorLog, executorLog,
+	// 5. The executor: dials out to OpenAI and stays running, as the
+	// transient systemd unit codex-exec-server -- a backgrounded shell job
+	// kept exec's SSH channel open until it timed out. The unit takes the
+	// key from keyFile, so it's never on a command line. A template-
+	// prepared box has codex-connect for exactly this.
+	start := fmt.Sprintf("codex-connect %s %s",
 		shellQuote(session.Environment.RemoteURL), shellQuote(session.Environment.ID))
+	if box == "" {
+		start = fmt.Sprintf("systemd-run --quiet --unit=codex-exec-server --working-directory=%s "+
+			"--property=EnvironmentFile=%s \"$(command -v codex)\" exec-server --remote %s --environment-id %s",
+			workspace, keyFile, shellQuote(session.Environment.RemoteURL), shellQuote(session.Environment.ID))
+	}
 	if err := execOK(ctx, bc, name, time.Minute, start); err != nil {
 		return fmt.Errorf("starting the executor: %w", err)
 	}
@@ -182,6 +179,27 @@ func run(name, size, image, model, task string, keep bool) error {
 	fmt.Printf("\n--- %s in box %s ---\n%s", workspace, name, res.Stdout)
 	if keep {
 		fmt.Printf("\nkept box %s and session %s\n", name, session.ID)
+	}
+	return nil
+}
+
+// newBox creates a box and installs the Codex CLI in it -- what the
+// onctl template openai-agents/codex-executor.sh does for a box given
+// with -box.
+func newBox(ctx context.Context, bc *client.Client, name, size, image string) error {
+	log.Printf("creating box %s (%s, %s)", name, size, image)
+	if _, err := bc.Create(ctx, name, "", image, size); err != nil {
+		return fmt.Errorf("creating box: %w", err)
+	}
+	if _, err := bc.WaitReady(ctx, name, 3*time.Minute); err != nil {
+		return fmt.Errorf("waiting for box: %w", err)
+	}
+	log.Printf("installing the Codex CLI in %s (a minute or two)", name)
+	if err := execOK(ctx, bc, name, 5*time.Minute,
+		"export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8; "+
+			"apt-get update -qq && apt-get install -y -qq nodejs npm >/dev/null && "+
+			"npm install -g --silent @openai/codex@alpha && mkdir -p "+workspace+" && codex --version"); err != nil {
+		return fmt.Errorf("installing codex: %w", err)
 	}
 	return nil
 }
@@ -301,7 +319,7 @@ func execOK(ctx context.Context, bc *client.Client, name string, timeout time.Du
 // logTail prints the end of the executor's log after a failure -- the
 // first place to look when the environment never connects.
 func logTail(ctx context.Context, bc *client.Client, name string) {
-	if res, err := bc.Exec(ctx, name, "systemctl status --no-pager codex-exec-server 2>&1 | head -5; tail -n 20 "+executorLog, 30*time.Second); err == nil {
+	if res, err := bc.Exec(ctx, name, "systemctl status --no-pager codex-exec-server 2>&1 | head -5; journalctl -u codex-exec-server -n 20 --no-pager", 30*time.Second); err == nil {
 		fmt.Fprintf(os.Stderr, "--- executor log ---\n%s", res.Stdout)
 	}
 }

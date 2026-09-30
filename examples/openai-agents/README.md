@@ -53,13 +53,28 @@ go run . -task "Create fib.py that prints the first 10 Fibonacci numbers, run it
 ```
 
 Flags: `-name`, `-size` (`boxctl sizes`), `-image` (`boxctl images`),
-`-model` (default `gpt-6-astra`), `-task`, `-keep`.
+`-model` (default `gpt-6-astra`), `-task`, `-keep`, `-box`.
+
+### Use a box prepared by the onctl template
+
+The onctl template `openai-agents/codex-executor.sh` does this
+example's box setup (Node, the Codex CLI, `/workspace`) and adds
+`codex-set-key` and `codex-connect` helpers. Point the example at such
+a box with `-box`; it then skips creating and installing, starts the
+executor with `codex-connect`, and never destroys the box:
+
+```bash
+boxctl create my-agent -a openai-agents/codex-executor.sh
+go run . -box my-agent -task "..."
+```
+
+Reuse the box for further runs: each one creates a new session, and
+`codex-connect` replaces the previous executor.
 
 If the environment never connects, the example prints the executor
-unit's status and the tail of `/root/exec-server.log` from the box. With
-`-keep`, inspect them yourself with
-`boxctl ssh <name> -- systemctl status codex-exec-server` and
-`boxctl ssh <name> -- cat /root/exec-server.log`.
+unit's status and its last journal lines from the box. With `-keep`
+(or `-box`), inspect them yourself with
+`boxctl ssh <name> -- journalctl -u codex-exec-server`.
 
 ## Not covered yet
 
