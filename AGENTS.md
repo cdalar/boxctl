@@ -139,3 +139,6 @@ for changes.
 - Don't ask whether to open a pull request. When you consider a task
   finished, branch off `main` (if needed), commit, push, and open the PR
   yourself.
+- Once the PR's checks are green, merge it yourself -- unless it's a
+  design or documentation change, which the maintainer needs to review
+  first. Leave those open.
