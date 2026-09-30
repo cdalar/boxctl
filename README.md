@@ -79,7 +79,7 @@ boxctl login
 boxctl ls
 boxctl images
 boxctl create my-box
-boxctl sizes                      # small (default) 1 vCPU/4 GiB, medium 2/8, large 4/16
+boxctl sizes                      # vCPU, memory and disk of small (default), medium, large
 boxctl create big-box --size large
 boxctl ssh my-box
 boxctl ssh my-box -- ls -al   # run one command instead of a shell

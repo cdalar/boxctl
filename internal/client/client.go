@@ -67,10 +67,13 @@ type VM struct {
 // Size is one box size offered by boxctl-vms, as returned by /api/sizes
 // -- Name is exactly what a caller passes to Create's size.
 type Size struct {
-	Name    string `json:"name"`
-	VCPU    int    `json:"vcpu"`
-	MemMiB  int    `json:"mem_mib"`
-	Default bool   `json:"default"`
+	Name   string `json:"name"`
+	VCPU   int    `json:"vcpu"`
+	MemMiB int    `json:"mem_mib"`
+	// DiskMiB is the root disk a box of this size gets; 0 means the boot
+	// image's own size (the server omits it then).
+	DiskMiB int  `json:"disk_mib"`
+	Default bool `json:"default"`
 }
 
 // Image is a boot image offered by boxctl-vms, as returned by
