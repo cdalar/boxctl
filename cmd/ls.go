@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"sort"
 	"text/tabwriter"
 	"time"
 
@@ -23,6 +24,23 @@ var lsCmd = &cobra.Command{
 			fmt.Println("No boxes yet. Create one with `boxctl create <name>`.")
 			return nil
 		}
+
+		// Running boxes first, then everything else; within each group
+		// newest first (created_at is set once at creation -- pause/resume
+		// don't touch it), with id breaking ties since created_at is only
+		// second-precision and the server doesn't keep row order stable.
+		// boxctl.io's dashboard (boxctl-web's byCreatedAt) uses the same
+		// age order but doesn't group running boxes first.
+		sort.Slice(vms, func(i, j int) bool {
+			ri, rj := vms[i].State == "running", vms[j].State == "running"
+			if ri != rj {
+				return ri
+			}
+			if !vms[i].CreatedAt.Equal(vms[j].CreatedAt) {
+				return vms[i].CreatedAt.After(vms[j].CreatedAt)
+			}
+			return vms[i].ID < vms[j].ID
+		})
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 		if _, err := fmt.Fprintln(w, "NAME\tSTATE\tIP\tIMAGE\tSIZE\tPROVIDER\tREADY\tAGE"); err != nil {
