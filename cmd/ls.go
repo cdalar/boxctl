@@ -25,16 +25,10 @@ var lsCmd = &cobra.Command{
 			return nil
 		}
 
-		// Running boxes first, then everything else; within each group
-		// newest first (created_at is set once at creation -- pause/resume
-		// don't touch it), with id breaking ties since created_at is only
-		// second-precision and the server doesn't keep row order stable.
-		// boxctl.io's dashboard (boxctl-web's byCreatedAt) uses the same
-		// age order but doesn't group running boxes first.
 		sort.Slice(vms, func(i, j int) bool {
-			ri, rj := vms[i].State == "running", vms[j].State == "running"
+			ri, rj := stateRank(vms[i].State), stateRank(vms[j].State)
 			if ri != rj {
-				return ri
+				return ri < rj
 			}
 			if !vms[i].CreatedAt.Equal(vms[j].CreatedAt) {
 				return vms[i].CreatedAt.After(vms[j].CreatedAt)
@@ -65,6 +59,26 @@ var lsCmd = &cobra.Command{
 		}
 		return w.Flush()
 	},
+}
+
+// stateRank groups `ls` the same way boxctl.io's dashboard does
+// (boxctl-web's STATE_RANK): live boxes -- usable, or on their way there
+// -- first, then paused ones (one resume away), then anything else
+// (stopped, or a state this CLI doesn't know yet). Within a group, ls
+// sorts newest first by created_at, which pause/resume never touch, with
+// id breaking ties since created_at is only second-precision and the
+// server doesn't keep row order stable. Unlike the dashboard, paused
+// boxes aren't ordered by last activity: ls has no column showing it, so
+// the order would look random next to AGE.
+func stateRank(state string) int {
+	switch state {
+	case "provisioning", "running", "stopping":
+		return 0
+	case "paused":
+		return 1
+	default:
+		return 2
+	}
 }
 
 // age renders a rough, human-sized duration ("3h12m", "2d") -- good
