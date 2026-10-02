@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# PreToolUse hook for Bash: when this project has a box (boxctl-claude
+# on), rewrite the command to run there through `boxctl-claude run`
+# instead of on this machine. Prints nothing -- leaving the call alone --
+# when remote bash is off, or for commands that must stay local.
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+helper="$root/bin/boxctl-claude"
+
+[[ -n "$("$helper" box)" ]] || exit 0
+
+input="$(cat)"
+command="$(jq -r '.tool_input.command // empty' <<<"$input")"
+[[ -n "$command" ]] || exit 0
+
+# Stays local: boxctl itself and this plugin's own helper (they drive the
+# box from here), and anything Claude explicitly marks with `# local`.
+case "$command" in
+"# local"* | boxctl\ * | *boxctl-claude*) exit 0 ;;
+esac
+
+# The box's exec endpoint caps a command at 5 minutes. Give the local
+# wrapper headroom past that for the round trip, so Bash's own timeout
+# never cuts off a result the box already produced.
+local_ms="$(jq -r '.tool_input.timeout // 120000' <<<"$input")"
+remote_s=$((local_ms / 1000))
+((remote_s > 300)) && remote_s=300
+((remote_s < 5)) && remote_s=5
+wrapper_ms=$(((remote_s + 60) * 1000))
+((wrapper_ms > 600000)) && wrapper_ms=600000
+
+cwd="$(jq -r '.cwd // empty' <<<"$input")"
+b64="$(printf '%s' "$command" | base64 | tr -d '\n')"
+q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+wrapped="$(q "$helper") run $remote_s $(q "${cwd:-$PWD}") $b64"
+
+jq -c --arg cmd "$wrapped" --argjson ms "$wrapper_ms" '{
+  hookSpecificOutput: {
+    hookEventName: "PreToolUse",
+    updatedInput: (.tool_input + {command: $cmd, timeout: $ms})
+  }
+}' <<<"$input"

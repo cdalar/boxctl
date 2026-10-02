@@ -148,3 +148,16 @@ for changes.
 - Once the PR's checks are green, merge it yourself -- unless it's a
   design or documentation change, which the maintainer needs to review
   first. Leave those open.
+
+## Claude Code plugin (`claude-plugin/`)
+
+Bash + `jq`, no Go: a `PreToolUse` hook (`hooks/route-bash`) rewrites
+Bash commands into `bin/boxctl-claude run`, which shells out to
+`boxctl ssh <box> -- ...`. It depends only on that command's documented
+behavior (no stdin, 5-minute cap, exit code passthrough, and the
+"must be running and ready" error it resumes on) -- changing any of
+those in `cmd/ssh.go` or boxctl-vms's exec endpoint needs a matching
+change here. `CLAUDE_PROJECT_DIR` isn't set in the Bash tool's
+environment, which is why `commands/*.md` pass it explicitly. Check it
+with `shellcheck claude-plugin/bin/* claude-plugin/hooks/route-bash` and
+`claude plugin validate .`.

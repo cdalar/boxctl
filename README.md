@@ -95,6 +95,36 @@ Every command talks to `https://vms-backend.boxctl.io` by default; override
 with `--api-url` (or by passing a different one to `boxctl login`) for a
 local/dev `boxctl-vms` instance.
 
+## Claude Code plugin
+
+`claude-plugin/` is a Claude Code plugin that runs Claude's Bash commands in
+one of your boxes instead of on your machine. Install it from this repo:
+
+```
+/plugin marketplace add cdalar/boxctl
+/plugin install boxctl@boxctl
+```
+
+It needs `boxctl` (logged in) and `jq` on your `PATH`. Then, in a project:
+
+```
+/boxctl:on [box-name] [--size medium]   # create (or resume) a box and send Bash there
+/boxctl:status
+/boxctl:off                             # back to local bash; the box is left as-is
+```
+
+A `PreToolUse` hook (`claude-plugin/hooks/route-bash`) rewrites each Bash
+command to `boxctl-claude run`, which sends it base64-encoded through
+`boxctl ssh <box> --` and relays stdout, stderr and the exit code. The
+working directory carries over between commands (kept on the box), the box
+starts in the same absolute path as the local project, and a box the idle
+reaper paused is resumed on the next command. Files are **not** synced:
+Read/Edit/Write stay local, so get code onto the box with `git clone`.
+Each command is capped at 5 minutes and has no stdin, like `boxctl ssh --`.
+Commands that start with a `# local` line, or with `boxctl `, run locally.
+Which box a project uses is kept in `~/.boxctl/claude/`, one file per
+project directory.
+
 ## How auth works
 
 A personal token is scoped to your own boxes only — `boxctl-vms` resolves
@@ -112,6 +142,8 @@ cmd/                     Cobra subcommands (login/logout/ls/images/sizes/create/
                          plus box-name tab completion (complete.go)
 internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
 internal/config/         ~/.boxctl/config.json read/write
+claude-plugin/           Claude Code plugin: route Bash to a box (see "Claude Code plugin")
+.claude-plugin/          Marketplace manifest listing that plugin
 ```
 
 ## `ssh` / terminal protocol
