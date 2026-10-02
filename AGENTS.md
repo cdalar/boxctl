@@ -155,7 +155,10 @@ Bash + `jq`, no Go: a `PreToolUse` hook (`hooks/route-bash`) rewrites
 Bash commands into `bin/boxctl-claude run` (shells out to
 `boxctl ssh <box> -- ...`) or, in exec mode, `bin/boxctl-claude exec`
 (`boxctl exec`, unpacking its JSON). A `SessionEnd` hook destroys
-session-mode boxes. It depends only on those commands' documented
+session-mode boxes, and a `SessionStart` hook implements the `autostart`
+option (`userConfig` in `plugin.json`, read as
+`CLAUDE_PLUGIN_OPTION_AUTOSTART`/`_SIZE`/`_IMAGE`) -- it must never fail
+a session, only fall back to local bash and say so. It depends only on those commands' documented
 behavior (no stdin, 5-minute cap, exit code passthrough, and the
 "must be running and ready" error it resumes on) -- changing any of
 those in `cmd/ssh.go` or boxctl-vms's exec endpoint needs a matching

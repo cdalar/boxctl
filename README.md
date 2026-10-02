@@ -119,6 +119,15 @@ It needs `boxctl` (logged in) and `jq` on your `PATH`. Then:
 | `project` | One box for this project directory, reused by every session there | leaves it running |
 | `exec` | A fresh, disposable box for every command (`boxctl exec`); nothing persists | -- |
 
+To skip `/boxctl:on`, set the plugin's **Auto-on at session start**
+option (`autostart` in `/config`, or when the plugin is enabled) to a
+mode: every new session then turns remote bash on by itself, using the
+plugin's **Box size** and **Boot image** options for any box it creates,
+and tells Claude where its Bash runs. It defaults to `off`. If the box
+can't be had (not logged in, API down), the session starts with local
+bash and a message saying why. Resumed sessions keep what they have, and
+`/boxctl:off` still works for the rest of a session.
+
 A session's own routing wins over its project's, so `/boxctl:on` in one
 session doesn't touch others in the same project unless you ask for
 `--mode project`.
