@@ -1,6 +1,6 @@
 {
   "name": "boxctl",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Run Claude Code's Bash commands in a boxctl.io microVM instead of on your machine.",
   "author": {
     "name": "Cemal Y. Dalar"
@@ -20,16 +20,28 @@
         "exec"
       ]
     },
+    "workspace": {
+      "type": "string",
+      "title": "Workspace",
+      "description": "How the project gets onto a session or project box. sync: copied there before every command and back after, so the box and Claude's file edits always match. copy: copied once, when the box is turned on. git: git clone of its origin at the local commit. none: an empty directory. .gitignore'd files are never copied either way.",
+      "default": "sync",
+      "options": [
+        "sync",
+        "copy",
+        "git",
+        "none"
+      ]
+    },
     "size": {
       "type": "string",
       "title": "Box size",
-      "description": "Size of boxes auto-on creates (boxctl sizes). Empty uses boxctl's default.",
+      "description": "Size of boxes the plugin creates (boxctl sizes). Empty uses boxctl's default.",
       "default": ""
     },
     "image": {
       "type": "string",
       "title": "Boot image",
-      "description": "Image of boxes auto-on creates (boxctl images). Empty uses boxctl's default.",
+      "description": "Image of boxes the plugin creates (boxctl images). Empty uses boxctl's default.",
       "default": ""
     }
   }

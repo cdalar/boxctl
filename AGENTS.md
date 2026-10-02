@@ -158,7 +158,16 @@ Bash commands into `bin/boxctl-claude run` (shells out to
 session-mode boxes, and a `SessionStart` hook implements the `autostart`
 option (`userConfig` in `plugin.json`, read as
 `CLAUDE_PLUGIN_OPTION_AUTOSTART`/`_SIZE`/`_IMAGE`) -- it must never fail
-a session, only fall back to local bash and say so. It depends only on those commands' documented
+a session, only fall back to local bash and say so.
+Workspaces (`sync`/`copy`/`git`) move files with `rsync` over `ssh`
+through a background `boxctl port-forward <box> :22`; the exec endpoint
+has no stdin or upload to carry them. Two traps, both hit while building
+it: macOS's `rsync` is openrsync, which ignores `--filter=':- .gitignore'`
+for `--delete` -- a sync back deleted the local `node_modules` -- so
+`ignore_rules` translates `.gitignore` files into explicit rules instead
+(test any change with openrsync, not Homebrew's rsync); and the plugin's
+`ssh` runs with `-F /dev/null`, since macOS's default config sends `LC_*`
+and the box has no locales for it. It depends only on those commands' documented
 behavior (no stdin, 5-minute cap, exit code passthrough, and the
 "must be running and ready" error it resumes on) -- changing any of
 those in `cmd/ssh.go` or boxctl-vms's exec endpoint needs a matching

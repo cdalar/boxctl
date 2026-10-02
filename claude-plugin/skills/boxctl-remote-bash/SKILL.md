@@ -16,16 +16,26 @@ that is expected, not an error. `/boxctl:status` says which mode is on:
 
 What's different:
 
-- **Files are not synced.** Read, Edit and Write still act on local files;
-  Bash sees the box's filesystem. The box starts with an empty directory at
-  the same absolute path as the local project. To get the project there,
-  `git clone` it in Bash (public repos, or ones the box has credentials for),
-  or write the files you need with a heredoc.
+- **Files depend on the workspace** (`/boxctl:status` doesn't show it; the
+  `/boxctl:on` output and session-start note do). The project lives on the
+  box at the same absolute path as here.
+  - `sync` (default): the project is copied to the box before every Bash
+    command and back after it, so Read/Edit/Write here and Bash there see
+    the same files. A file deleted by a command on the box is deleted here
+    too, just as if it ran locally.
+  - `copy`: copied once when the box was turned on; later edits made with
+    Read/Edit/Write here are **not** on the box.
+  - `git`: a clone of the origin at the local commit; uncommitted local
+    changes are **not** there.
+  - `none`: the box starts with an empty directory.
+  - `.gitignore`'d files (node_modules, build output, .env) are never
+    copied either way: install dependencies and build on the box itself.
 - **The working directory carries over** between commands on a session or
   project box (kept on the box),
   but environment variables and shell functions do not: each command is a
   fresh non-interactive shell.
-- **No stdin, no TTY**, and a hard **5-minute limit** per command. Split long
+- **No stdin, no TTY**, and a hard **5-minute limit** per command (sync
+  time not included). Split long
   builds into steps, or start them with `nohup ... &` and poll a log file.
 - `run_in_background` still works -- it backgrounds the local wrapper.
 - A paused session or project box is resumed automatically on the next command.
