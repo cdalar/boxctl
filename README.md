@@ -105,25 +105,38 @@ one of your boxes instead of on your machine. Install it from this repo:
 /plugin install boxctl@boxctl
 ```
 
-It needs `boxctl` (logged in) and `jq` on your `PATH`. Then, in a project:
+It needs `boxctl` (logged in) and `jq` on your `PATH`. Then:
 
 ```
-/boxctl:on [box-name] [--size medium]   # create (or resume) a box and send Bash there
+/boxctl:on [--mode session|project|exec] [box-name] [--size medium] [--image name]
 /boxctl:status
-/boxctl:off                             # back to local bash; the box is left as-is
+/boxctl:off
 ```
+
+| `--mode` | Box | `/boxctl:off` |
+|---|---|---|
+| `session` (default) | One box for this Claude Code session, destroyed when the session ends (a `SessionEnd` hook) | destroys it |
+| `project` | One box for this project directory, reused by every session there | leaves it running |
+| `exec` | A fresh, disposable box for every command (`boxctl exec`); nothing persists | -- |
+
+A session's own routing wins over its project's, so `/boxctl:on` in one
+session doesn't touch others in the same project unless you ask for
+`--mode project`.
 
 A `PreToolUse` hook (`claude-plugin/hooks/route-bash`) rewrites each Bash
-command to `boxctl-claude run`, which sends it base64-encoded through
-`boxctl ssh <box> --` and relays stdout, stderr and the exit code. The
-working directory carries over between commands (kept on the box), the box
-starts in the same absolute path as the local project, and a box the idle
-reaper paused is resumed on the next command. Files are **not** synced:
-Read/Edit/Write stay local, so get code onto the box with `git clone`.
-Each command is capped at 5 minutes and has no stdin, like `boxctl ssh --`.
-Commands that start with a `# local` line, or with `boxctl `, run locally.
-Which box a project uses is kept in `~/.boxctl/claude/`, one file per
-project directory.
+command to `boxctl-claude run` (or `exec`), which sends it base64-encoded
+through `boxctl ssh <box> --` (or `boxctl exec`) and relays stdout, stderr
+and the exit code. On a session or project box the working directory
+carries over between commands (kept on the box), the box starts in the
+same absolute path as the local project, and a box the idle reaper paused
+is resumed on the next command. Files are **not** synced: Read/Edit/Write
+stay local, so get code onto the box with `git clone`. Each command is
+capped at 5 minutes and has no stdin, like `boxctl ssh --`. Commands that
+start with a `# local` line, or with `boxctl `, run locally. Routing is
+kept in `~/.boxctl/claude/` (`sessions/<id>`, `projects/<hash>`). If
+Claude Code is killed rather than exited, `SessionEnd` never runs and a
+session box is left behind; the idle reaper pauses it, and `boxctl ls`
+shows it as `claude-<session id prefix>`.
 
 ## How auth works
 

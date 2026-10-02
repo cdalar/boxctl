@@ -7,6 +7,13 @@
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/route-bash\"" }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/session-end\"", "timeout": 60 }
+        ]
+      }
     ]
   }
 }

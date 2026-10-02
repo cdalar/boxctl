@@ -5,8 +5,14 @@ description: How Bash behaves while the boxctl plugin routes commands to a micro
 
 While remote bash is on (`/boxctl:on`), every Bash command runs as root in a
 Firecracker microVM ("box") on boxctl.io, not on the user's machine. A hook
-rewrites the command to `boxctl-claude run <timeout> <cwd> <base64>`; that is
-expected, not an error.
+rewrites the command to `boxctl-claude run ...` or `boxctl-claude exec ...`;
+that is expected, not an error. `/boxctl:status` says which mode is on:
+
+- `session`: one box for this session, destroyed when the session ends.
+- `project`: one box for this project, kept across sessions.
+- `exec`: every command gets a brand-new box, so **nothing** carries over
+  between commands -- not files, not the working directory. Put dependent
+  steps in one command (`git clone ... && cd repo && make`).
 
 What's different:
 
@@ -15,13 +21,14 @@ What's different:
   the same absolute path as the local project. To get the project there,
   `git clone` it in Bash (public repos, or ones the box has credentials for),
   or write the files you need with a heredoc.
-- **The working directory carries over** between commands (kept on the box),
+- **The working directory carries over** between commands on a session or
+  project box (kept on the box),
   but environment variables and shell functions do not: each command is a
   fresh non-interactive shell.
 - **No stdin, no TTY**, and a hard **5-minute limit** per command. Split long
   builds into steps, or start them with `nohup ... &` and poll a log file.
 - `run_in_background` still works -- it backgrounds the local wrapper.
-- A paused box is resumed automatically on the next command.
+- A paused session or project box is resumed automatically on the next command.
 
 To run one command locally anyway, start it with a `# local` comment line:
 

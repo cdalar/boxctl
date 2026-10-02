@@ -1,6 +1,6 @@
 {
   "name": "boxctl",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Run Claude Code's Bash commands in a boxctl.io microVM instead of on your machine.",
   "author": { "name": "Cemal Y. Dalar" },
   "homepage": "https://boxctl.io",
