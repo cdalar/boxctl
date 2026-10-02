@@ -1,0 +1,36 @@
+{
+  "name": "boxctl",
+  "version": "0.3.0",
+  "description": "Run Claude Code's Bash commands in a boxctl.io microVM instead of on your machine.",
+  "author": {
+    "name": "Cemal Y. Dalar"
+  },
+  "homepage": "https://boxctl.io",
+  "repository": "https://github.com/cdalar/boxctl",
+  "userConfig": {
+    "autostart": {
+      "type": "string",
+      "title": "Auto-on at session start",
+      "description": "Turn remote bash on by itself whenever a session starts, without /boxctl:on. session: a new box for each session, destroyed when it ends. project: the project's box, kept across sessions. exec: a fresh box per command. off: Bash stays local until you run /boxctl:on.",
+      "default": "off",
+      "options": [
+        "off",
+        "session",
+        "project",
+        "exec"
+      ]
+    },
+    "size": {
+      "type": "string",
+      "title": "Box size",
+      "description": "Size of boxes auto-on creates (boxctl sizes). Empty uses boxctl's default.",
+      "default": ""
+    },
+    "image": {
+      "type": "string",
+      "title": "Boot image",
+      "description": "Image of boxes auto-on creates (boxctl images). Empty uses boxctl's default.",
+      "default": ""
+    }
+  }
+}

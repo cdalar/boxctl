@@ -95,6 +95,58 @@ Every command talks to `https://vms-backend.boxctl.io` by default; override
 with `--api-url` (or by passing a different one to `boxctl login`) for a
 local/dev `boxctl-vms` instance.
 
+## Claude Code plugin
+
+`claude-plugin/` is a Claude Code plugin that runs Claude's Bash commands in
+one of your boxes instead of on your machine. Install it from this repo:
+
+```
+/plugin marketplace add cdalar/boxctl
+/plugin install boxctl@boxctl
+```
+
+It needs `boxctl` (logged in) and `jq` on your `PATH`. Then:
+
+```
+/boxctl:on [--mode session|project|exec] [box-name] [--size medium] [--image name]
+/boxctl:status
+/boxctl:off
+```
+
+| `--mode` | Box | `/boxctl:off` |
+|---|---|---|
+| `session` (default) | One box for this Claude Code session, destroyed when the session ends (a `SessionEnd` hook) | destroys it |
+| `project` | One box for this project directory, reused by every session there | leaves it running |
+| `exec` | A fresh, disposable box for every command (`boxctl exec`); nothing persists | -- |
+
+To skip `/boxctl:on`, set the plugin's **Auto-on at session start**
+option (`autostart` in `/config`, or when the plugin is enabled) to a
+mode: every new session then turns remote bash on by itself, using the
+plugin's **Box size** and **Boot image** options for any box it creates,
+and tells Claude where its Bash runs. It defaults to `off`. If the box
+can't be had (not logged in, API down), the session starts with local
+bash and a message saying why. Resumed sessions keep what they have, and
+`/boxctl:off` still works for the rest of a session.
+
+A session's own routing wins over its project's, so `/boxctl:on` in one
+session doesn't touch others in the same project unless you ask for
+`--mode project`.
+
+A `PreToolUse` hook (`claude-plugin/hooks/route-bash`) rewrites each Bash
+command to `boxctl-claude run` (or `exec`), which sends it base64-encoded
+through `boxctl ssh <box> --` (or `boxctl exec`) and relays stdout, stderr
+and the exit code. On a session or project box the working directory
+carries over between commands (kept on the box), the box starts in the
+same absolute path as the local project, and a box the idle reaper paused
+is resumed on the next command. Files are **not** synced: Read/Edit/Write
+stay local, so get code onto the box with `git clone`. Each command is
+capped at 5 minutes and has no stdin, like `boxctl ssh --`. Commands that
+start with a `# local` line, or with `boxctl `, run locally. Routing is
+kept in `~/.boxctl/claude/` (`sessions/<id>`, `projects/<hash>`). If
+Claude Code is killed rather than exited, `SessionEnd` never runs and a
+session box is left behind; the idle reaper pauses it, and `boxctl ls`
+shows it as `claude-<session id prefix>`.
+
 ## How auth works
 
 A personal token is scoped to your own boxes only — `boxctl-vms` resolves
@@ -112,6 +164,8 @@ cmd/                     Cobra subcommands (login/logout/ls/images/sizes/create/
                          plus box-name tab completion (complete.go)
 internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
 internal/config/         ~/.boxctl/config.json read/write
+claude-plugin/           Claude Code plugin: route Bash to a box (see "Claude Code plugin")
+.claude-plugin/          Marketplace manifest listing that plugin
 ```
 
 ## `ssh` / terminal protocol

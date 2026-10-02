@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+# boxctl-claude -- the Claude Code plugin's one helper. Remembers where
+# Bash commands go, and runs them there.
+#
+#   boxctl-claude on [--mode session|project|exec] [box] [--size S] [--image I]
+#                                route Bash to a box (default mode: session)
+#   boxctl-claude off            back to local bash (destroys a session box)
+#   boxctl-claude status         where Bash runs now
+#   boxctl-claude state          the routing in effect, as JSON (no network)
+#   boxctl-claude run <box> <timeout-s> <cwd> <base64-command>
+#   boxctl-claude exec <timeout-s> <cwd> <base64-command> [boxctl exec flags]
+#   boxctl-claude end            (SessionEnd hook) destroy this session's box
+#
+# Modes:
+#   session  one box for this Claude Code session, destroyed when it ends
+#   project  one box for this project directory, kept across sessions
+#   exec     a fresh, disposable box for every command (boxctl exec)
+#
+# State lives in ~/.boxctl/claude/, one JSON file per session
+# (sessions/<id>) and per project (projects/<hash of dir>). A session's
+# own routing wins over its project's. CLAUDE_SESSION_ID and
+# CLAUDE_PROJECT_DIR say which apply; the hooks and slash commands pass
+# them, since the Bash tool's environment has neither.
+set -euo pipefail
+
+state_dir="${HOME}/.boxctl/claude"
+
+project_dir() {
+	printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}"
+}
+
+session_file() {
+	[[ -n "${CLAUDE_SESSION_ID:-}" ]] || return 1
+	printf '%s/sessions/%s' "$state_dir" "$CLAUDE_SESSION_ID"
+}
+
+project_file() {
+	printf '%s/projects/%s' "$state_dir" "$(project_dir | shasum -a 256 | cut -c1-16)"
+}
+
+# cmd_state prints the routing in effect -- {"mode","box","args"} -- or
+# nothing when Bash runs locally.
+cmd_state() {
+	local f
+	for f in "$(session_file || true)" "$(project_file)"; do
+		if [[ -n "$f" && -f "$f" ]]; then
+			cat "$f"
+			return 0
+		fi
+	done
+}
+
+box_state() {
+	boxctl ls 2>/dev/null | awk -v n="$1" 'NR > 1 && $1 == n { print $2 }'
+}
+
+# ensure_running resumes a paused box; boxctl's exec endpoint refuses
+# anything that isn't running and ready.
+ensure_running() {
+	local box="$1" state
+	state="$(box_state "$box")"
+	case "$state" in
+	running) ;;
+	paused)
+		echo "boxctl: resuming paused box $box..." >&2
+		boxctl resume "$box" >&2
+		;;
+	"")
+		echo "boxctl: box $box not found (boxctl ls); run /boxctl:on again" >&2
+		return 1
+		;;
+	*)
+		echo "boxctl: box $box is $state" >&2
+		;;
+	esac
+}
+
+slug() {
+	tr -c 'a-zA-Z0-9-' '-' | tr '[:upper:]' '[:lower:]' | cut -c1-20 | sed 's/-*$//'
+}
+
+# destroy_session_box removes this session's routing, and its box if it
+# was a session box -- a session box never outlives its session.
+destroy_session_box() {
+	local f mode box
+	f="$(session_file)" || return 0
+	[[ -f "$f" ]] || return 0
+	mode="$(jq -r .mode "$f")" box="$(jq -r '.box // empty' "$f")"
+	rm -f "$f"
+	if [[ "$mode" == session && -n "$box" ]]; then
+		boxctl rm "$box" --force >&2 || echo "boxctl: couldn't destroy $box; boxctl rm $box" >&2
+	fi
+}
+
+cmd_on() {
+	local mode=session box="" args=()
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--mode | -m) mode="$2"; shift 2 ;;
+		--mode=*) mode="${1#*=}"; shift ;;
+		-*=*) args+=("$1"); shift ;;
+		-*) args+=("$1" "$2"); shift 2 ;;
+		*) box="$1"; shift ;;
+		esac
+	done
+
+	local file
+	case "$mode" in
+	session)
+		file="$(session_file)" || { echo "session mode needs CLAUDE_SESSION_ID" >&2; return 1; }
+		[[ -n "$box" ]] || box="claude-${CLAUDE_SESSION_ID:0:8}"
+		;;
+	project)
+		file="$(project_file)"
+		[[ -n "$box" ]] || box="claude-$(basename "$(project_dir)" | slug)"
+		;;
+	exec)
+		file="$(session_file)" || file="$(project_file)"
+		[[ -z "$box" ]] || { echo "exec mode takes no box name: every command gets a fresh box" >&2; return 1; }
+		;;
+	*)
+		echo "unknown mode $mode (session, project or exec)" >&2
+		return 2
+		;;
+	esac
+
+	# Turning on again replaces this session's routing, and a session box
+	# being replaced would have nobody left to destroy it.
+	if [[ "$(cmd_state | jq -r '.box // empty')" != "$box" || -z "$box" ]]; then
+		destroy_session_box
+	fi
+	# Project and exec routing for the project would otherwise shadow
+	# nothing and linger; session routing sits on top of it instead.
+	[[ "$mode" == session ]] || rm -f "$(project_file)"
+
+	if [[ -n "$box" ]]; then
+		if [[ -z "$(box_state "$box")" ]]; then
+			echo "Creating box $box..."
+			boxctl create "$box" ${args[@]+"${args[@]}"}
+		else
+			ensure_running "$box"
+		fi
+	fi
+
+	mkdir -p "$(dirname "$file")"
+	# args as a JSON array, built outside jq's own option parsing (it
+	# would take a --size of ours for one of its own).
+	{ [[ ${#args[@]} -eq 0 ]] || printf '%s\n' "${args[@]}"; } | jq -R . | jq -s \
+		--arg mode "$mode" --arg box "$box" \
+		'{mode: $mode, box: (if $box == "" then null else $box end), args: .}' >"$file"
+
+	case "$mode" in
+	session) echo "Bash commands in this session now run on box $box; it's destroyed when the session ends." ;;
+	project) echo "Bash commands in $(project_dir) now run on box $box, across sessions." ;;
+	exec) echo "Bash commands now each run in a fresh, disposable box (nothing persists between commands)." ;;
+	esac
+	[[ "$mode" == exec ]] || echo "Local files are not copied there; the box starts in an empty $(project_dir)."
+}
+
+cmd_off() {
+	local state mode box f
+	state="$(cmd_state)"
+	if [[ -z "$state" ]]; then
+		echo "Bash commands already run locally."
+		return 0
+	fi
+	mode="$(jq -r .mode <<<"$state")" box="$(jq -r '.box // empty' <<<"$state")"
+	f="$(session_file || true)"
+	if [[ -n "$f" && -f "$f" ]]; then
+		destroy_session_box
+	else
+		rm -f "$(project_file)"
+	fi
+	case "$mode" in
+	session) echo "Bash commands run locally again. Destroyed session box $box." ;;
+	project) echo "Bash commands run locally again. Box $box is still there (boxctl rm $box to destroy it)." ;;
+	*) echo "Bash commands run locally again." ;;
+	esac
+}
+
+cmd_status() {
+	local state mode box
+	state="$(cmd_state)"
+	if [[ -z "$state" ]]; then
+		echo "off: Bash commands run locally."
+		return 0
+	fi
+	mode="$(jq -r .mode <<<"$state")" box="$(jq -r '.box // empty' <<<"$state")"
+	case "$mode" in
+	exec) echo "on (exec): every Bash command runs in a fresh, disposable box." ;;
+	*) echo "on ($mode): Bash commands run on box $box ($(box_state "$box"))." ;;
+	esac
+}
+
+sq() {
+	printf "'%s'" "${1//\'/\'\\\'\'}"
+}
+
+# remote_script wraps the user's command for a persistent box. Each exec
+# is a fresh, non-interactive shell, so the working directory is carried
+# over in a file on the box (written on exit, so `exit 3` keeps it too);
+# the first command starts in the same absolute path as the local
+# project, so paths Claude already knows mean the same thing on both sides.
+remote_script() {
+	local cwd="$1" b64="$2"
+	cat <<EOF
+__f=\$HOME/.claude-boxctl-cwd
+__d=\$(cat "\$__f" 2>/dev/null) || __d=$(sq "$cwd")
+mkdir -p "\$__d" && cd "\$__d" || exit 1
+trap 'pwd >"\$__f"' EXIT
+eval "\$(printf %s '$b64' | base64 -d)"
+EOF
+}
+
+cmd_run() {
+	local box="$1" timeout="$2" cwd="$3" b64="$4" out err rc
+	out="$(mktemp)" err="$(mktemp)"
+	for attempt in 1 2; do
+		rc=0
+		boxctl ssh "$box" -T "${timeout}s" -- "$(remote_script "$cwd" "$b64")" >"$out" 2>"$err" || rc=$?
+		# The idle reaper may have paused the box since the last command.
+		if [[ $attempt -eq 1 && $rc -ne 0 ]] && grep -q 'must be running and ready' "$err"; then
+			ensure_running "$box"
+			continue
+		fi
+		break
+	done
+	cat "$out"
+	cat "$err" >&2
+	rm -f "$out" "$err"
+	return "$rc"
+}
+
+# cmd_exec runs one command in a box of its own (boxctl exec creates it
+# and destroys it afterwards), unpacking exec's one-JSON-object result
+# back into stdout, stderr and an exit code.
+cmd_exec() {
+	local timeout="$1" cwd="$2" b64="$3" result rc=0
+	shift 3
+	result="$(boxctl exec -T "${timeout}s" "$@" "mkdir -p $(sq "$cwd") && cd $(sq "$cwd") || exit 1
+eval \"\$(printf %s '$b64' | base64 -d)\"")" || rc=$?
+	# Anything but exec's JSON is a failure boxctl already reported on stderr.
+	jq -e . >/dev/null 2>&1 <<<"$result" || return $((rc ? rc : 1))
+	jq -j '.stdout' <<<"$result"
+	jq -j '.stderr, (if (.error // "") != "" then "boxctl: " + .error + "\n" else empty end)' <<<"$result" >&2
+	return "$(jq -r 'if (.error // "") != "" then 1 else .exit_code end' <<<"$result")"
+}
+
+case "${1:-}" in
+on) shift; cmd_on "$@" ;;
+off) cmd_off ;;
+status) cmd_status ;;
+state) cmd_state ;;
+run) shift; cmd_run "$@" ;;
+exec) shift; cmd_exec "$@" ;;
+end) destroy_session_box ;;
+*)
+	sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' >&2
+	exit 2
+	;;
+esac
