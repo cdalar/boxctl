@@ -47,7 +47,7 @@ if [[ "$(jq -r .mode <<<"$state")" == exec ]]; then
 		wrapped+=" $(q "$arg")"
 	done < <(jq -r '.args[]?' <<<"$state")
 else
-	wrapped="$(q "$helper") run $(q "$(jq -r .box <<<"$state")") $remote_s $(q "$cwd") $b64"
+	wrapped="$(q "$helper") run $(q "$(jq -r .box <<<"$state")") $remote_s $(q "$cwd") $b64 $(jq -r '.workspace // "none"' <<<"$state")"
 fi
 
 jq -c --arg cmd "$wrapped" --argjson ms "$wrapper_ms" '{

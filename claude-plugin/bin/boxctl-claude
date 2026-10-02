@@ -2,12 +2,13 @@
 # boxctl-claude -- the Claude Code plugin's one helper. Remembers where
 # Bash commands go, and runs them there.
 #
-#   boxctl-claude on [--mode session|project|exec] [box] [--size S] [--image I]
-#                                route Bash to a box (default mode: session)
+#   boxctl-claude on [--mode session|project|exec] [--workspace sync|copy|git|none]
+#                    [box] [--size S] [--image I]
+#                                route Bash to a box (default: session, sync)
 #   boxctl-claude off            back to local bash (destroys a session box)
 #   boxctl-claude status         where Bash runs now
 #   boxctl-claude state          the routing in effect, as JSON (no network)
-#   boxctl-claude run <box> <timeout-s> <cwd> <base64-command>
+#   boxctl-claude run <box> <timeout-s> <cwd> <base64-command> [workspace]
 #   boxctl-claude exec <timeout-s> <cwd> <base64-command> [boxctl exec flags]
 #   boxctl-claude end            (SessionEnd hook) destroy this session's box
 #
@@ -15,6 +16,17 @@
 #   session  one box for this Claude Code session, destroyed when it ends
 #   project  one box for this project directory, kept across sessions
 #   exec     a fresh, disposable box for every command (boxctl exec)
+#
+# Workspaces (session and project boxes; the box gets the project at the
+# same absolute path it has here):
+#   sync     copy it there before every command and back after, so the
+#            box and Claude's own file tools always see the same files
+#   copy     copy it there once, when the box is turned on
+#   git      git clone its origin there and check out the local commit
+#   none     an empty directory
+# All but none go over ssh through `boxctl port-forward <box> :22`, with
+# a key of the plugin's own (authorized on the box over boxctl ssh), and
+# leave .gitignore'd files alone in both directions.
 #
 # State lives in ~/.boxctl/claude/, one JSON file per session
 # (sessions/<id>) and per project (projects/<hash of dir>). A session's
@@ -75,6 +87,198 @@ ensure_running() {
 	esac
 }
 
+self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+key="$state_dir/id_ed25519"
+fwd_dir="$state_dir/forwards"
+
+sq() {
+	printf "'%s'" "${1//\'/\'\\\'\'}"
+}
+
+# opt drops a userConfig value that was never substituted, so an unset
+# option reads as empty rather than as its own placeholder.
+opt() {
+	# shellcheck disable=SC2016 # the literal placeholder text
+	case "$1" in
+	'${'*) ;;
+	*) printf '%s' "$1" ;;
+	esac
+}
+
+# ensure_forward prints a local port forwarded to box's sshd, starting a
+# background `boxctl port-forward` if there's no live one already.
+ensure_forward() {
+	local box="$1" pidf="$fwd_dir/$1.pid" portf="$fwd_dir/$1.port" log="$fwd_dir/$1.log" pid port
+	if [[ -f "$pidf" && -f "$portf" ]] && kill -0 "$(cat "$pidf")" 2>/dev/null; then
+		cat "$portf"
+		return 0
+	fi
+	mkdir -p "$fwd_dir"
+	nohup boxctl port-forward "$box" :22 >"$log" 2>&1 </dev/null &
+	pid=$!
+	echo "$pid" >"$pidf"
+	for _ in $(seq 100); do
+		port="$(sed -n 's/^Forwarding 127\.0\.0\.1:\([0-9]*\) .*/\1/p' "$log")"
+		if [[ -n "$port" ]]; then
+			echo "$port" >"$portf"
+			echo "$port"
+			return 0
+		fi
+		kill -0 "$pid" 2>/dev/null || break
+		sleep 0.1
+	done
+	echo "boxctl: couldn't forward to $box's ssh: $(tail -n1 "$log")" >&2
+	return 1
+}
+
+stop_forward() {
+	local pidf="$fwd_dir/$1.pid"
+	[[ -f "$pidf" ]] && kill "$(cat "$pidf")" 2>/dev/null
+	rm -f "$pidf" "$fwd_dir/$1.port" "$fwd_dir/$1.log"
+}
+
+# box_ssh <box> [ssh args...] -- ssh to the box as root through its
+# forward. One master connection per forward carries every call after
+# the first, so a sync costs a round trip, not a handshake.
+box_ssh() {
+	local box="$1" port
+	shift
+	port="$(ensure_forward "$box")" || return 1
+	# -F /dev/null: none of the user's ssh config applies here, least of
+	# all macOS's SendEnv LC_*, which the box has no locales for.
+	ssh -F /dev/null -p "$port" -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes \
+		-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+		-o ControlMaster=auto -o "ControlPath=$state_dir/cm-%p" -o ControlPersist=10m \
+		root@127.0.0.1 "$@"
+}
+
+# ws_prepare authorizes the plugin's key on box (over boxctl ssh, the one
+# way in that needs no key) and installs what the workspace needs.
+ws_prepare() {
+	local box="$1" ws="$2" pub pkgs
+	[[ -f "$key" ]] || { mkdir -p "$state_dir" && ssh-keygen -q -t ed25519 -N '' -C boxctl-claude -f "$key"; }
+	pub="$(cat "$key.pub")"
+	boxctl ssh "$box" -- "mkdir -p ~/.ssh && chmod 700 ~/.ssh && { grep -qxF $(sq "$pub") ~/.ssh/authorized_keys 2>/dev/null || echo $(sq "$pub") >>~/.ssh/authorized_keys; }" >&2
+	case "$ws" in
+	git) pkgs="git" ;;
+	*) pkgs="rsync" ;;
+	esac
+	box_ssh "$box" "command -v $pkgs >/dev/null || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $pkgs >/dev/null; }" >&2
+}
+
+# ignore_rules prints the project's .gitignore files as rsync filter
+# rules. rsync could read them itself (--filter=':- .gitignore'), but
+# macOS's rsync is openrsync, which ignores those for --delete -- so a
+# sync back from the box would delete node_modules and the like here.
+# Git lets a later rule override an earlier one and rsync takes the first
+# match, so the rules come out deepest file first, last line first.
+ignore_rules() {
+	local dir f rel prefix line kind pat
+	dir="$(project_dir)"
+	{
+		if git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+			git -C "$dir" ls-files --cached --others --exclude-standard -- .gitignore '**/.gitignore'
+		elif [[ -f "$dir/.gitignore" ]]; then
+			echo .gitignore
+		fi
+	} | awk -F/ '{ print NF "\t" $0 }' | sort -n | cut -f2- | while IFS= read -r f; do
+		rel="${f%.gitignore}"
+		prefix="/$rel"
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			line="${line%$'\r'}"
+			[[ -n "$line" && "$line" != \#* ]] || continue
+			kind="-"
+			if [[ "$line" == !* ]]; then
+				kind="+" line="${line:1}"
+			fi
+			# A slash anywhere but the end anchors a pattern to its
+			# .gitignore's directory; otherwise it matches at any depth.
+			if [[ "${line%/}" == */* ]]; then
+				pat="$prefix${line#/}"
+				echo "$kind $pat"
+			elif [[ -z "$rel" ]]; then
+				echo "$kind $line"
+			else
+				echo "$kind $prefix$line"
+				echo "$kind $prefix**/$line"
+			fi
+		done <"$dir/$f"
+	done | sed '1!G;h;$!d'
+	echo "- .DS_Store"
+}
+
+rsync_box() { # rsync_box <box> <rsync args...>
+	local box="$1" rules rc=0
+	shift
+	ensure_forward "$box" >/dev/null || return 1
+	rules="$(mktemp)"
+	ignore_rules >"$rules"
+	# --no-owner/--no-group: files on the box are root's, as git there
+	# insists; files here stay the user's.
+	rsync -az --no-owner --no-group --delete --exclude-from="$rules" -e "$(sq "$self") _ssh" "$@" || rc=$?
+	rm -f "$rules"
+	return "$rc"
+}
+
+# ws_push/ws_pull mirror the project between here and the box, deleting
+# what the other side no longer has -- but never .gitignore'd files (see
+# ignore_rules), so each side keeps its own build output and dependencies.
+ws_push() {
+	local box="$1" dir
+	dir="$(project_dir)"
+	rsync_box "$box" --rsync-path="mkdir -p $(sq "$dir") && rsync" "$dir/" "$box:$dir/"
+}
+
+ws_pull() {
+	local box="$1" dir
+	dir="$(project_dir)"
+	rsync_box "$box" "$box:$dir/" "$dir/"
+}
+
+# ws_clone clones the project's origin on the box and checks out the
+# local commit -- or the branch, if that commit isn't pushed. A GitHub
+# origin is cloned over https with the local `gh` token when there is
+# one: it goes in on ssh's stdin to a file the clone reads and deletes,
+# never onto a command line or into the clone's config. Anything else
+# clones as-is with the local ssh agent forwarded.
+ws_clone() {
+	local box="$1" dir url sha branch token="" helper=""
+	dir="$(project_dir)"
+	url="$(git -C "$dir" remote get-url origin 2>/dev/null)" || {
+		echo "boxctl: $dir has no git origin to clone; use --workspace copy" >&2
+		return 1
+	}
+	sha="$(git -C "$dir" rev-parse HEAD)"
+	branch="$(git -C "$dir" rev-parse --abbrev-ref HEAD)"
+	case "$url" in
+	git@github.com:* | ssh://git@github.com/* | https://github.com/*)
+		if token="$(gh auth token 2>/dev/null)" && [[ -n "$token" ]]; then
+			url="https://github.com/$(sed -E 's#^(git@github\.com:|ssh://git@github\.com/|https://github\.com/)##' <<<"$url")"
+			helper="-c credential.helper= -c 'credential.helper=!f() { echo username=x-access-token; echo password=\$(cat ~/.boxctl-git-token); }; f'"
+		fi
+		;;
+	esac
+	printf '%s' "$token" | box_ssh "$box" -A "umask 077; cat >~/.boxctl-git-token
+trap 'rm -f ~/.boxctl-git-token' EXIT
+export GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=accept-new'
+[ -d $(sq "$dir/.git") ] || git $helper clone -q $(sq "$url") $(sq "$dir") || exit 1
+cd $(sq "$dir") && git $helper fetch -q origin
+git checkout -q $(sq "$sha") 2>/dev/null && { [ $(sq "$branch") = HEAD ] || git checkout -q -B $(sq "$branch"); } ||
+	{ echo 'boxctl: local commit $sha is not pushed; checked out origin/$branch instead' >&2; git checkout -q $(sq "$branch"); }" >&2
+}
+
+# ws_setup gets the project onto a freshly turned-on box.
+ws_setup() {
+	local box="$1" ws="$2"
+	[[ "$ws" != none ]] || return 0
+	echo "Setting up the $ws workspace on $box..."
+	ws_prepare "$box" "$ws"
+	case "$ws" in
+	sync | copy) ws_push "$box" ;;
+	git) ws_clone "$box" ;;
+	esac
+}
+
 slug() {
 	tr -c 'a-zA-Z0-9-' '-' | tr '[:upper:]' '[:lower:]' | cut -c1-20 | sed 's/-*$//'
 }
@@ -87,22 +291,30 @@ destroy_session_box() {
 	[[ -f "$f" ]] || return 0
 	mode="$(jq -r .mode "$f")" box="$(jq -r '.box // empty' "$f")"
 	rm -f "$f"
+	[[ -z "$box" ]] || stop_forward "$box"
 	if [[ "$mode" == session && -n "$box" ]]; then
 		boxctl rm "$box" --force >&2 || echo "boxctl: couldn't destroy $box; boxctl rm $box" >&2
 	fi
 }
 
 cmd_on() {
-	local mode=session box="" args=()
+	local mode=session ws=sync box="" args=() v
+	# A later flag wins, so the slash command can put the plugin's own
+	# options first and let the user's arguments override them; an empty
+	# value (an unset option) leaves the default alone.
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--mode | -m) mode="$2"; shift 2 ;;
-		--mode=*) mode="${1#*=}"; shift ;;
+		--mode | -m) v="$(opt "$2")"; mode="${v:-$mode}"; shift 2 ;;
+		--workspace | -w) v="$(opt "$2")"; ws="${v:-$ws}"; shift 2 ;;
 		-*=*) args+=("$1"); shift ;;
-		-*) args+=("$1" "$2"); shift 2 ;;
+		-*) v="$(opt "$2")"; [[ -z "$v" ]] || args+=("$1" "$v"); shift 2 ;;
 		*) box="$1"; shift ;;
 		esac
 	done
+	case "$ws" in
+	sync | copy | git | none) ;;
+	*) echo "unknown workspace $ws (sync, copy, git or none)" >&2; return 2 ;;
+	esac
 
 	local file
 	case "$mode" in
@@ -117,6 +329,7 @@ cmd_on() {
 	exec)
 		file="$(session_file)" || file="$(project_file)"
 		[[ -z "$box" ]] || { echo "exec mode takes no box name: every command gets a fresh box" >&2; return 1; }
+		ws=none
 		;;
 	*)
 		echo "unknown mode $mode (session, project or exec)" >&2
@@ -140,21 +353,27 @@ cmd_on() {
 		else
 			ensure_running "$box"
 		fi
+		ws_setup "$box" "$ws"
 	fi
 
 	mkdir -p "$(dirname "$file")"
 	# args as a JSON array, built outside jq's own option parsing (it
 	# would take a --size of ours for one of its own).
 	{ [[ ${#args[@]} -eq 0 ]] || printf '%s\n' "${args[@]}"; } | jq -R . | jq -s \
-		--arg mode "$mode" --arg box "$box" \
-		'{mode: $mode, box: (if $box == "" then null else $box end), args: .}' >"$file"
+		--arg mode "$mode" --arg box "$box" --arg ws "$ws" \
+		'{mode: $mode, box: (if $box == "" then null else $box end), workspace: $ws, args: .}' >"$file"
 
 	case "$mode" in
 	session) echo "Bash commands in this session now run on box $box; it's destroyed when the session ends." ;;
 	project) echo "Bash commands in $(project_dir) now run on box $box, across sessions." ;;
 	exec) echo "Bash commands now each run in a fresh, disposable box (nothing persists between commands)." ;;
 	esac
-	[[ "$mode" == exec ]] || echo "Local files are not copied there; the box starts in an empty $(project_dir)."
+	case "$ws" in
+	sync) echo "$(project_dir) is synced to the box before every command and back after it." ;;
+	copy) echo "$(project_dir) was copied to the box once; later local edits aren't." ;;
+	git) echo "The box has a git clone of this project at $(project_dir); uncommitted local changes aren't there." ;;
+	none) [[ "$mode" == exec ]] || echo "Local files are not on the box; it starts in an empty $(project_dir)." ;;
+	esac
 }
 
 cmd_off() {
@@ -170,6 +389,7 @@ cmd_off() {
 		destroy_session_box
 	else
 		rm -f "$(project_file)"
+		[[ -z "$box" ]] || stop_forward "$box"
 	fi
 	case "$mode" in
 	session) echo "Bash commands run locally again. Destroyed session box $box." ;;
@@ -192,10 +412,6 @@ cmd_status() {
 	esac
 }
 
-sq() {
-	printf "'%s'" "${1//\'/\'\\\'\'}"
-}
-
 # remote_script wraps the user's command for a persistent box. Each exec
 # is a fresh, non-interactive shell, so the working directory is carried
 # over in a file on the box (written on exit, so `exit 3` keeps it too);
@@ -213,7 +429,14 @@ EOF
 }
 
 cmd_run() {
-	local box="$1" timeout="$2" cwd="$3" b64="$4" out err rc
+	local box="$1" timeout="$2" cwd="$3" b64="$4" ws="${5:-none}" out err rc
+	# Sync: the box gets Claude's latest edits first. If that fails the
+	# command doesn't run at all -- running it on stale files, then
+	# syncing the result back, could undo those edits.
+	if [[ "$ws" == sync ]] && ! ws_push "$box" 2>/dev/null; then
+		ensure_running "$box" && stop_forward "$box"
+		ws_push "$box" || { echo "boxctl: couldn't sync $(project_dir) to $box; command not run" >&2; return 1; }
+	fi
 	out="$(mktemp)" err="$(mktemp)"
 	for attempt in 1 2; do
 		rc=0
@@ -228,6 +451,10 @@ cmd_run() {
 	cat "$out"
 	cat "$err" >&2
 	rm -f "$out" "$err"
+	if [[ "$ws" == sync ]] && ! ws_pull "$box"; then
+		echo "boxctl: couldn't sync $(project_dir) back from $box" >&2
+		[[ $rc -ne 0 ]] || rc=1
+	fi
 	return "$rc"
 }
 
@@ -254,8 +481,9 @@ state) cmd_state ;;
 run) shift; cmd_run "$@" ;;
 exec) shift; cmd_exec "$@" ;;
 end) destroy_session_box ;;
+_ssh) shift; box_ssh "$@" ;; # rsync's -e: _ssh <box> <remote command...>
 *)
-	sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//' >&2
+	sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//' >&2
 	exit 2
 	;;
 esac

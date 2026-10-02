@@ -26,7 +26,7 @@ say() { # say <context for Claude> [message for the user]
 # keep what they have; a /boxctl:off earlier in this session isn't undone
 # by a compaction, since that leaves no state to find and source says so.
 if [[ -z "$("$helper" state)" && "$(jq -r '.source // "startup"' <<<"$input")" != compact ]]; then
-	args=(--mode "$mode")
+	args=(--mode "$mode" --workspace "${CLAUDE_PLUGIN_OPTION_WORKSPACE:-}")
 	[[ -z "${CLAUDE_PLUGIN_OPTION_SIZE:-}" ]] || args+=(--size "$CLAUDE_PLUGIN_OPTION_SIZE")
 	[[ -z "${CLAUDE_PLUGIN_OPTION_IMAGE:-}" ]] || args+=(--image "$CLAUDE_PLUGIN_OPTION_IMAGE")
 	if ! out="$("$helper" on "${args[@]}" 2>&1)"; then
@@ -38,5 +38,5 @@ fi
 
 status="$("$helper" status)"
 case "$status" in
-on*) say "boxctl plugin: $status Local files are not on the box; see the boxctl-remote-bash skill." "boxctl: $status" ;;
+on*) say "boxctl plugin: $status See the boxctl-remote-bash skill for how files reach the box." "boxctl: $status" ;;
 esac

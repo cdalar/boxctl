@@ -108,7 +108,7 @@ one of your boxes instead of on your machine. Install it from this repo:
 It needs `boxctl` (logged in) and `jq` on your `PATH`. Then:
 
 ```
-/boxctl:on [--mode session|project|exec] [box-name] [--size medium] [--image name]
+/boxctl:on [--mode session|project|exec] [--workspace sync|copy|git|none] [box-name] [--size medium] [--image name]
 /boxctl:status
 /boxctl:off
 ```
@@ -119,10 +119,28 @@ It needs `boxctl` (logged in) and `jq` on your `PATH`. Then:
 | `project` | One box for this project directory, reused by every session there | leaves it running |
 | `exec` | A fresh, disposable box for every command (`boxctl exec`); nothing persists | -- |
 
+`--workspace` is how the project gets onto a session or project box,
+always at the same absolute path it has locally:
+
+| `--workspace` | The box has |
+|---|---|
+| `sync` (default) | The project, copied there before every command and back after, so Claude's Read/Edit/Write and the box's Bash always see the same files (about a second per command) |
+| `copy` | The project as it was when the box was turned on |
+| `git` | A clone of `origin` at the local commit. A GitHub origin clones over https with the local `gh auth token` (passed on stdin, deleted afterwards); anything else clones with the local ssh agent forwarded |
+| `none` | An empty directory |
+
+`.gitignore`'d files are never copied in either direction, so
+`node_modules`, build output and `.env` stay on whichever side made them.
+The copying is `rsync` over `ssh` through a background
+`boxctl port-forward <box> :22`, with a key the plugin generates
+(`~/.boxctl/claude/id_ed25519`) and authorizes on the box over
+`boxctl ssh`; `rsync`/`git` are installed on the box if missing.
+
 To skip `/boxctl:on`, set the plugin's **Auto-on at session start**
 option (`autostart` in `/config`, or when the plugin is enabled) to a
 mode: every new session then turns remote bash on by itself, using the
-plugin's **Box size** and **Boot image** options for any box it creates,
+plugin's **Workspace**, **Box size** and **Boot image** options (which
+`/boxctl:on` uses too, unless its own flags override them),
 and tells Claude where its Bash runs. It defaults to `off`. If the box
 can't be had (not logged in, API down), the session starts with local
 bash and a message saying why. Resumed sessions keep what they have, and
@@ -138,9 +156,7 @@ through `boxctl ssh <box> --` (or `boxctl exec`) and relays stdout, stderr
 and the exit code. On a session or project box the working directory
 carries over between commands (kept on the box), the box starts in the
 same absolute path as the local project, and a box the idle reaper paused
-is resumed on the next command. Files are **not** synced: Read/Edit/Write
-stay local, so get code onto the box with `git clone`. Each command is
-capped at 5 minutes and has no stdin, like `boxctl ssh --`. Commands that
+is resumed on the next command. Each command is capped at 5 minutes and has no stdin, like `boxctl ssh --`. Commands that
 start with a `# local` line, or with `boxctl `, run locally. Routing is
 kept in `~/.boxctl/claude/` (`sessions/<id>`, `projects/<hash>`). If
 Claude Code is killed rather than exited, `SessionEnd` never runs and a
