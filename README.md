@@ -136,6 +136,11 @@ The copying is `rsync` over `ssh` through a background
 (`~/.boxctl/claude/id_ed25519`) and authorizes on the box over
 `boxctl ssh`; `rsync`/`git` are installed on the box if missing.
 
+Boxes boot the `claude-agent` image unless the **Boot image** option or
+`--image` says otherwise: `debian-slim` plus git, openssh-client, rsync,
+jq, ripgrep and make, so neither a workspace nor Claude's first command
+starts with an `apt-get install`.
+
 To skip `/boxctl:on`, set the plugin's **Auto-on at session start**
 option (`autostart` in `/config`, or when the plugin is enabled) to a
 mode: every new session then turns remote bash on by itself, using the
