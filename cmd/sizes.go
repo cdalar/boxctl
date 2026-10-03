@@ -16,9 +16,16 @@ var sizesCmd = &cobra.Command{
 	Short:   "List available box sizes",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		asJSON, err := wantJSON(cmd)
+		if err != nil {
+			return err
+		}
 		sizes, err := newClient().ListSizes(cmd.Context())
 		if err != nil {
 			return err
+		}
+		if asJSON {
+			return printJSON(sizes)
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
@@ -44,6 +51,7 @@ var sizesCmd = &cobra.Command{
 }
 
 func init() {
+	addOutputFlag(sizesCmd)
 	rootCmd.AddCommand(sizesCmd)
 }
 

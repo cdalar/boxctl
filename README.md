@@ -77,6 +77,7 @@ into `dist/`).
 boxctl login
 
 boxctl ls
+boxctl ls -o json                 # for scripts; images and sizes take -o json too
 boxctl images
 boxctl create my-box
 boxctl sizes                      # vCPU, memory and disk of small (default), medium, large
