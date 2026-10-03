@@ -130,6 +130,14 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   every non-alphanumeric character turned into `-` (`claudeProjectKey`);
   it only matches because the project has the same absolute path on the
   box. The transcript is found before any box is touched.
+  `cmd/claudesession.go`: a `taskSession` is the main checkout or a
+  `--task` worktree (`<dir>@<task>`, tmux `claude-<task>`, GitHub socket
+  `gh-<task>.sock` via `BOXCTL_GH_SOCKET` in its environment). Claude's
+  credentials (`cmd/claudeauth.go`: a `claude setup-token` token in the
+  Keychain) go to the box over ssh stdin into `/run/boxctl/<tmux>.env`
+  (tmpfs), which the session's command sources and deletes -- never
+  argv, never disk. Always `tmux ... -t =<name>`: a bare `-t claude`
+  prefix-matches `claude-auth`.
 - `cmd/sizes.go` — `sizes` (GET /api/sizes), plus `sizeLabel` for
   `ls`'s SIZE column and `completeSize` for `create`/`exec`'s
   `--size`. The size names are the server's; this CLI never hard-codes
