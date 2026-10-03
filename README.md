@@ -98,7 +98,8 @@ local/dev `boxctl-vms` instance.
 ## Claude Code plugin
 
 `claude-plugin/` is a Claude Code plugin that runs Claude's Bash commands in
-one of your boxes instead of on your machine. Install it from this repo:
+one of your boxes instead of on your machine. The full usage guide is
+[`claude-plugin/README.md`](claude-plugin/README.md). Install it from this repo:
 
 ```
 /plugin marketplace add cdalar/boxctl
