@@ -111,6 +111,7 @@ boxctl claude                           # create or reattach to claude-myproject
 boxctl claude --prompt "fix the flaky auth test"
 boxctl claude --detach --prompt "..."   # start it without attaching
 boxctl claude -- --model opus           # arguments for claude itself
+boxctl claude --handoff <session-id>    # carry on a local session on the box
 boxctl claude fetch                     # the box's branches and uncommitted work, as box/*
 boxctl claude push                      # this branch to the box
 ```
@@ -140,6 +141,19 @@ repository. `--github off` gives the box nothing. Your git `user.name`
 and `user.email` are set on the box either way, so its commits are yours.
 Forwarding needs the `claude-agent` image's credential helper and `gh`
 wrapper (boxctl-vms `images/claude-agent/`).
+
+**Handing off a session.** `--handoff <session-id>` (what the plugin's
+`/boxctl:handoff` runs) moves a local Claude Code session to the box:
+its transcript -- `~/.claude/projects/<key>/<id>.jsonl`, plus the
+session's directory of subagent transcripts if it has one -- goes into
+the box's `~/.claude/projects/<key>/`, and Claude starts there with
+`claude --resume <id>`. The project has the same absolute path on the
+box, so its key (that path with every non-alphanumeric character turned
+into `-`) is the same too. It refuses while another Claude is running
+on the box. A box that already had the project keeps its own copy, so
+local changes since then aren't on it: commit them and `boxctl claude
+push`, or hand off to a fresh `--box`. `--project <dir>` picks the
+project when you're not in it.
 
 **Getting work back, and sending it there.** The box is a git remote
 named `box` (`root@<box>.box:<project dir>`). `boxctl claude fetch`
@@ -207,7 +221,16 @@ It needs `boxctl` (logged in) and `jq` on your `PATH`. Then:
 /boxctl:on [--mode session|project|exec] [--workspace sync|copy|git|none] [box-name] [--size medium] [--image name]
 /boxctl:status
 /boxctl:off
+/boxctl:handoff [note]
 ```
+
+`/boxctl:handoff` is different from the rest: rather than routing this
+session's Bash, it moves the whole session to a box. It runs `boxctl claude
+--handoff <this session>` (see "Claude Code on a box"): the project goes
+to its box as usual, this conversation's transcript goes with it, and
+Claude starts there resuming it -- with the note, if you gave one, as its
+first message. Attach with `boxctl claude` in a terminal; this local
+session should stop there, since the box now has its own copy.
 
 | `--mode` | Box | `/boxctl:off` |
 |---|---|---|
