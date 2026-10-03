@@ -111,6 +111,17 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `images/claude-agent/git-credential-boxctl` and `gh`); change both
   sides together. `--github store` logs a pasted token into the box's gh
   instead -- never `gh auth token` itself, which would sit on the box.
+  `cmd/claudegit.go` is `claude fetch`/`push`: the box as a git remote
+  named `box` (`root@<box>.box:<dir>`, so the README's `Host *.box`
+  ssh config reaches it too) with `GIT_SSH_COMMAND` set to boxctl's ssh.
+  `fetch` first runs `wipSnapshotScript` on the box -- `git add -A` into a
+  throwaway index, `commit-tree` onto HEAD, `refs/boxctl/wip` -- then one
+  `fetch --prune` with the heads and wip refspecs together (separately,
+  prune would delete `box/wip` every time). `push` relies on
+  `receive.denyCurrentBranch=updateInstead` on the box. `openClaudeBox`
+  is the shared start of all three: box, TTL, key, ssh, and the project
+  check -- `/root/.boxctl/project` on the box records which directory it
+  holds, so `--box` from another project is refused.
 - `cmd/sizes.go` — `sizes` (GET /api/sizes), plus `sizeLabel` for
   `ls`'s SIZE column and `completeSize` for `create`/`exec`'s
   `--size`. The size names are the server's; this CLI never hard-codes
