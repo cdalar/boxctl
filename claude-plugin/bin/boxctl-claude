@@ -28,6 +28,10 @@
 # a key of the plugin's own (authorized on the box over boxctl ssh), and
 # leave .gitignore'd files alone in both directions.
 #
+# Boxes boot the claude-agent image unless --image says otherwise:
+# debian-slim plus git, rsync, jq, ripgrep and make, so neither a
+# workspace nor Claude's first command starts with an apt-get install.
+#
 # State lives in ~/.boxctl/claude/, one JSON file per session
 # (sessions/<id>) and per project (projects/<hash of dir>). A session's
 # own routing wins over its project's. CLAUDE_SESSION_ID and
@@ -36,6 +40,7 @@
 set -euo pipefail
 
 state_dir="${HOME}/.boxctl/claude"
+default_image="claude-agent"
 
 project_dir() {
 	printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}"
@@ -315,6 +320,12 @@ cmd_on() {
 	sync | copy | git | none) ;;
 	*) echo "unknown workspace $ws (sync, copy, git or none)" >&2; return 2 ;;
 	esac
+	# Stored with the routing, so exec mode's boxes get it too.
+	local has_image=0
+	for v in ${args[@]+"${args[@]}"}; do
+		case "$v" in --image | -i | --image=* | -i=*) has_image=1 ;; esac
+	done
+	[[ $has_image -eq 1 ]] || args+=(--image "$default_image")
 
 	local file
 	case "$mode" in
