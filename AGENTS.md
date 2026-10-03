@@ -47,9 +47,11 @@ gofmt -l .
 (unsigned, nothing published) to check the release config still builds
 every target; it needs `goreleaser` on PATH.
 
-No test suite yet — this is a thin, mostly-I/O client; rely on `go vet`,
-`gofmt`, and manual verification (`go build -o boxctl . && ./boxctl ...`)
-for changes.
+Tests are few -- this is a thin, mostly-I/O client -- and cover the
+pure parts (`go test ./...`: `boxctl claude`'s file selection, tar
+stream, settings filtering and shell quoting). Otherwise rely on `go
+vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
+...`) for changes.
 
 ## Code layout
 
@@ -83,6 +85,21 @@ for changes.
   bearer token on the upgrade) per accepted TCP connection, raw bytes
   in binary messages. A far-end close reason (the agent's dial error) is
   printed per connection; the forward itself keeps running.
+- `cmd/sshproxy.go` — `ssh-proxy <name> [port]`: stdin/stdout relayed
+  to a box port (22 by default) over the same `Client.DialPort` tunnel as
+  `port-forward`, for ssh's `ProxyCommand` -- real ssh to a box with
+  nothing listening locally. Resumes a paused box first.
+- `cmd/claude.go`, `cmd/claudecopy.go` — `claude`: Claude Code run *on* a
+  box (boxctl-vms's `docs/plans/claude-on-the-box.md`). Creates or
+  resumes `claude-<dir>`, authorizes `~/.boxctl/claude/id_ed25519` (the
+  plugin's key) over `Exec`, then does everything else over real ssh via
+  `ssh-proxy` with a ControlMaster: a one-time gzipped tar of the project
+  to the same absolute path (`git ls-files --cached --others
+  --exclude-standard` plus `.git`, so git's own ignore rules -- never
+  translate them), the user-level Claude config (settings.json minus
+  keys that point at this machine), the Claude Code install, and `tmux
+  new-session -A` running `claude`. It never syncs: once the project is
+  on the box, the box's copy is the one Claude works on.
 - `cmd/sizes.go` — `sizes` (GET /api/sizes), plus `sizeLabel` for
   `ls`'s SIZE column and `completeSize` for `create`/`exec`'s
   `--size`. The size names are the server's; this CLI never hard-codes
