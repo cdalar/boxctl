@@ -1,9 +1,9 @@
 package cmd
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -44,9 +44,8 @@ var lsCmd = &cobra.Command{
 		// sections, and the section labels are slotted in afterwards: a
 		// label written through the tabwriter would end the column block
 		// and each section would realign on its own.
-		var buf bytes.Buffer
-		w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tSTATE\tIP\tIMAGE\tSIZE\tPROVIDER\tREADY\tAGE")
+		var table strings.Builder
+		fmt.Fprintln(&table, "NAME\tSTATE\tIP\tIMAGE\tSIZE\tPROVIDER\tREADY\tAGE")
 		counts := make([]int, len(lsSections))
 		for _, vm := range vms {
 			counts[stateRank(vm.State)]++
@@ -62,7 +61,12 @@ var lsCmd = &cobra.Command{
 			if vm.Ready {
 				ready = "yes"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, ip, image, sizeLabel(vm), vm.Provider, ready, age(vm.CreatedAt))
+			fmt.Fprintf(&table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, ip, image, sizeLabel(vm), vm.Provider, ready, age(vm.CreatedAt))
+		}
+		var buf bytes.Buffer
+		w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
+		if _, err := io.WriteString(w, table.String()); err != nil {
+			return err
 		}
 		if err := w.Flush(); err != nil {
 			return err
@@ -79,13 +83,14 @@ var lsCmd = &cobra.Command{
 				groups++
 			}
 		}
-		out := bufio.NewWriter(os.Stdout)
+		var out strings.Builder
 		if groups < 2 {
-			fmt.Fprintln(out, header)
+			fmt.Fprintln(&out, header)
 			for _, row := range rows {
-				fmt.Fprintln(out, row)
+				fmt.Fprintln(&out, row)
 			}
-			return out.Flush()
+			_, err := os.Stdout.WriteString(out.String())
+			return err
 		}
 		color := useColor()
 		first := true
@@ -94,21 +99,22 @@ var lsCmd = &cobra.Command{
 				continue
 			}
 			if !first {
-				fmt.Fprintln(out)
+				fmt.Fprintln(&out)
 			}
 			first = false
 			label := fmt.Sprintf("● %s (%d)", lsSections[rank].label, n)
 			if color {
 				label = lsSections[rank].color + label + "\033[0m"
 			}
-			fmt.Fprintln(out, label)
-			fmt.Fprintln(out, header)
+			fmt.Fprintln(&out, label)
+			fmt.Fprintln(&out, header)
 			for _, row := range rows[:n] {
-				fmt.Fprintln(out, row)
+				fmt.Fprintln(&out, row)
 			}
 			rows = rows[n:]
 		}
-		return out.Flush()
+		_, err = os.Stdout.WriteString(out.String())
+		return err
 	},
 }
 
