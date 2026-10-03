@@ -160,3 +160,62 @@ func TestClaudeSubcommands(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeProjectKey(t *testing.T) {
+	for dir, want := range map[string]string{
+		"/Users/cd/cdalar/boxctl-vms":                  "-Users-cd-cdalar-boxctl-vms",
+		"/Users/cd/.herdr/worktrees/boxctl-vms/wt-1a2": "-Users-cd--herdr-worktrees-boxctl-vms-wt-1a2",
+		"/home/me/my_proj v2":                          "-home-me-my-proj-v2",
+	} {
+		if got := claudeProjectKey(dir); got != want {
+			t.Errorf("claudeProjectKey(%q) = %q, want %q", dir, got, want)
+		}
+	}
+}
+
+func TestFindTranscript(t *testing.T) {
+	projects := t.TempDir()
+	id := "e62ceefd-b2d9-4e12-8261-b114765d7977"
+	write(t, filepath.Join(projects, "-Users-me-app", id+".jsonl"), "{}\n")
+	write(t, filepath.Join(projects, "-Users-me-app-sub", "other.jsonl"), "{}\n")
+	got, err := findTranscript(projects, id)
+	if err != nil || got != filepath.Join(projects, "-Users-me-app", id+".jsonl") {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	if _, err := findTranscript(projects, "11111111-2222-3333-4444-555555555555"); err == nil {
+		t.Error("found a session that doesn't exist")
+	}
+	for _, bad := range []string{"", "../../etc/passwd", "*", "a/b", "short"} {
+		if _, err := findTranscript(projects, bad); err == nil || !strings.Contains(err.Error(), "isn't a Claude Code session ID") {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+}
+
+func TestProjectDirFlag(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	repo := t.TempDir()
+	run(t, repo, "git", "init", "-q")
+	sub := filepath.Join(repo, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prev := claudeProject
+	t.Cleanup(func() { claudeProject = prev })
+
+	claudeProject = sub
+	got, err := projectDir()
+	want, _ := filepath.EvalSymlinks(repo)
+	if gotReal, _ := filepath.EvalSymlinks(got); err != nil || gotReal != want {
+		t.Fatalf("--project in a subdirectory: got %q, %v; want the repository, %q", got, err, want)
+	}
+	plain := t.TempDir()
+	claudeProject = plain
+	if got, err := projectDir(); err != nil || got != plain {
+		t.Fatalf("outside git: got %q, %v", got, err)
+	}
+	claudeProject = filepath.Join(plain, "missing")
+	if _, err := projectDir(); err == nil {
+		t.Fatal("a missing --project was accepted")
+	}
+}

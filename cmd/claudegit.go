@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -138,8 +137,12 @@ type claudeGitTarget struct {
 }
 
 func openClaudeGit(ctx context.Context) (*claudeGitTarget, error) {
-	if err := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir").Run(); err != nil {
-		return nil, errors.New("not in a git repository")
+	dir, err := projectDir()
+	if err != nil {
+		return nil, err
+	}
+	if err := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--git-dir").Run(); err != nil {
+		return nil, fmt.Errorf("%s isn't a git repository", dir)
 	}
 	t, err := openClaudeBox(ctx, false, false)
 	if err != nil {

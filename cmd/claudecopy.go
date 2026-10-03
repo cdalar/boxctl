@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -251,4 +252,63 @@ func boxSettings(p string) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// sessionIDPattern is what a Claude Code session ID looks like (a UUID),
+// checked before it goes into a path or a glob.
+var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{7,63}$`)
+
+// claudeProjectKey is the directory name Claude Code keeps a project's
+// sessions under in ~/.claude/projects: its absolute path with every
+// character but letters and digits turned into "-"
+// (/Users/me/.src/app -> -Users-me--src-app). The project has the same
+// path on the box, so the box's Claude looks for its sessions under the
+// same key.
+func claudeProjectKey(dir string) string {
+	return projectKeyUnsafe.ReplaceAllString(dir, "-")
+}
+
+var projectKeyUnsafe = regexp.MustCompile(`[^A-Za-z0-9]`)
+
+// findTranscript locates session id's transcript under projects (the
+// local ~/.claude/projects), whichever project key it's under -- a
+// session started in a subdirectory has its own -- the newest if more
+// than one.
+func findTranscript(projects, id string) (string, error) {
+	if !sessionIDPattern.MatchString(id) {
+		return "", fmt.Errorf("%q isn't a Claude Code session ID", id)
+	}
+	matches, err := filepath.Glob(filepath.Join(projects, "*", id+".jsonl"))
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("no transcript for session %s under %s", id, projects)
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		a, _ := os.Stat(matches[i])
+		b, _ := os.Stat(matches[j])
+		return a != nil && b != nil && a.ModTime().After(b.ModTime())
+	})
+	return matches[0], nil
+}
+
+// copyTranscript copies session id's transcript (jsonl, from
+// findTranscript) -- and its directory of
+// subagent transcripts and saved tool results, when it has one -- into
+// the box's ~/.claude/projects under the project's key there, so
+// `claude --resume <id>` on the box picks the conversation up. The
+// session's local rewind checkpoints don't come along.
+func copyTranscript(ctx context.Context, box *boxSSH, dir, jsonl, id string) error {
+	src := filepath.Dir(jsonl)
+	files := []string{id + ".jsonl"}
+	sub, err := walkFiles(src, id)
+	if err != nil {
+		return err
+	}
+	files = append(files, sub...)
+	key := claudeProjectKey(dir)
+	fmt.Fprintf(os.Stderr, "Copying this session (%s) to %s...\n", id, box.name)
+	return streamTar(ctx, box, "mkdir -p ~/.claude/projects/"+shellQuote(key)+" && tar -xzf - -C ~/.claude/projects/"+shellQuote(key),
+		func(tw *tar.Writer) error { return addFiles(tw, src, files) })
 }

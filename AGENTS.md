@@ -122,6 +122,14 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   is the shared start of all three: box, TTL, key, ssh, and the project
   check -- `/root/.boxctl/project` on the box records which directory it
   holds, so `--box` from another project is refused.
+  `--handoff <session-id>` (the plugin's `/boxctl:handoff`, which must
+  start its command with `boxctl` so `route-bash` keeps it local -- hence
+  `--project`) copies `~/.claude/projects/<key>/<id>.jsonl` (and the
+  session's directory, if any) into the box's same key and starts
+  `claude --resume <id>`. The key is Claude Code's: the project path with
+  every non-alphanumeric character turned into `-` (`claudeProjectKey`);
+  it only matches because the project has the same absolute path on the
+  box. The transcript is found before any box is touched.
 - `cmd/sizes.go` — `sizes` (GET /api/sizes), plus `sizeLabel` for
   `ls`'s SIZE column and `completeSize` for `create`/`exec`'s
   `--size`. The size names are the server's; this CLI never hard-codes

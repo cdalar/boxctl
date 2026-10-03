@@ -52,13 +52,15 @@ const (
 )
 
 var (
-	claudeBox    string
-	claudeSize   string
-	claudeImage  string
-	claudePrompt string
-	claudeDetach bool
-	claudeGitHub string
-	claudeIdle   time.Duration
+	claudeBox     string
+	claudeSize    string
+	claudeImage   string
+	claudePrompt  string
+	claudeDetach  bool
+	claudeGitHub  string
+	claudeIdle    time.Duration
+	claudeProject string
+	claudeHandoff string
 )
 
 var claudeCmd = &cobra.Command{
@@ -97,6 +99,8 @@ on the box either way.`,
 
 func init() {
 	claudeCmd.PersistentFlags().StringVar(&claudeBox, "box", "", "box to use (default: claude-<project directory name>)")
+	claudeCmd.PersistentFlags().StringVar(&claudeProject, "project", "", "project directory (default: the git repository, or directory, you're in)")
+	claudeCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Claude Code session (its ID) on the box")
 	claudeCmd.Flags().StringVarP(&claudeSize, "size", "s", claudeDefaultSize, "size of a box created for this")
 	_ = claudeCmd.RegisterFlagCompletionFunc("size", completeSize)
 	claudeCmd.Flags().StringVarP(&claudeImage, "image", "i", claudeDefaultImage, "image of a box created for this")
@@ -115,6 +119,18 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	default:
 		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
 	}
+	// A handoff's transcript is found first, so a wrong session ID fails
+	// before any box is created or touched.
+	transcript := ""
+	if claudeHandoff != "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		if transcript, err = findTranscript(filepath.Join(home, ".claude", "projects"), claudeHandoff); err != nil {
+			return err
+		}
+	}
 	t, err := openClaudeBox(ctx, true, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {
 		return err
@@ -131,6 +147,9 @@ func runClaude(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		fmt.Fprintf(os.Stderr, "%s is already on %s; working with the box's copy (it isn't copied again).\n", dir, name)
+		if claudeHandoff != "" {
+			fmt.Fprintf(os.Stderr, "Your local changes since then aren't on the box: commit them and run boxctl claude push, or hand off to a fresh box with --box.\n")
+		}
 	}
 	if err := copyClaudeConfig(ctx, box); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't copy your Claude configuration: %v\n", err)
@@ -148,6 +167,15 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	}
 
 	running := box.run(ctx, "tmux has-session -t "+claudeSession+" 2>/dev/null", nil) == nil
+	if claudeHandoff != "" {
+		if running {
+			return fmt.Errorf("a Claude session is already running on %s -- attach with boxctl claude --box %s and quit it, then hand off again", name, name)
+		}
+		if err := copyTranscript(ctx, box, dir, transcript, claudeHandoff); err != nil {
+			return err
+		}
+		args = append([]string{"--resume", claudeHandoff}, args...)
+	}
 	if running && (claudePrompt != "" || len(args) > 0) {
 		fmt.Fprintf(os.Stderr, "Claude is already running on %s; attaching to it (--prompt and claude arguments only apply to a new session).\n", name)
 	}
@@ -325,15 +353,31 @@ func claudeCommandLine(prompt string, args []string) string {
 	return strings.Join(words, " ")
 }
 
-// projectDir is the git repository's top level, or the current directory
-// outside one -- the project goes to the same absolute path on the box.
+// projectDir is the git repository's top level, or the directory itself
+// outside one, for --project or else the current directory -- the
+// project goes to the same absolute path on the box.
 func projectDir() (string, error) {
-	if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
+	start := claudeProject
+	if start == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		start = wd
+	}
+	start, err := filepath.Abs(start)
+	if err != nil {
+		return "", err
+	}
+	if st, err := os.Stat(start); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("%s isn't a directory", start)
+	}
+	if out, err := exec.Command("git", "-C", start, "rev-parse", "--show-toplevel").Output(); err == nil {
 		if dir := strings.TrimSpace(string(out)); dir != "" {
 			return dir, nil
 		}
 	}
-	return os.Getwd()
+	return start, nil
 }
 
 var slugUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)
