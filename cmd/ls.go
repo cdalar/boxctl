@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var lsCmd = &cobra.Command{
@@ -36,11 +40,16 @@ var lsCmd = &cobra.Command{
 			return vms[i].ID < vms[j].ID
 		})
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		if _, err := fmt.Fprintln(w, "NAME\tSTATE\tIP\tIMAGE\tSIZE\tPROVIDER\tREADY\tAGE"); err != nil {
-			return err
-		}
+		// Every row goes through one tabwriter, so columns line up across
+		// sections, and the section labels are slotted in afterwards: a
+		// label written through the tabwriter would end the column block
+		// and each section would realign on its own.
+		var buf bytes.Buffer
+		w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tSTATE\tIP\tIMAGE\tSIZE\tPROVIDER\tREADY\tAGE")
+		counts := make([]int, len(lsSections))
 		for _, vm := range vms {
+			counts[stateRank(vm.State)]++
 			ip := vm.IP
 			if ip == "" {
 				ip = "-"
@@ -53,16 +62,72 @@ var lsCmd = &cobra.Command{
 			if vm.Ready {
 				ready = "yes"
 			}
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, ip, image, sizeLabel(vm), vm.Provider, ready, age(vm.CreatedAt)); err != nil {
-				return err
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, ip, image, sizeLabel(vm), vm.Provider, ready, age(vm.CreatedAt))
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
+		lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+		header, rows := lines[0], lines[1:]
+
+		// Like `onctl ls`: with boxes in one state only, a plain table;
+		// otherwise a labelled section per state, each under its own
+		// header row.
+		groups := 0
+		for _, n := range counts {
+			if n > 0 {
+				groups++
 			}
 		}
-		return w.Flush()
+		out := bufio.NewWriter(os.Stdout)
+		if groups < 2 {
+			fmt.Fprintln(out, header)
+			for _, row := range rows {
+				fmt.Fprintln(out, row)
+			}
+			return out.Flush()
+		}
+		color := useColor()
+		first := true
+		for rank, n := range counts {
+			if n == 0 {
+				continue
+			}
+			if !first {
+				fmt.Fprintln(out)
+			}
+			first = false
+			label := fmt.Sprintf("● %s (%d)", lsSections[rank].label, n)
+			if color {
+				label = lsSections[rank].color + label + "\033[0m"
+			}
+			fmt.Fprintln(out, label)
+			fmt.Fprintln(out, header)
+			for _, row := range rows[:n] {
+				fmt.Fprintln(out, row)
+			}
+			rows = rows[n:]
+		}
+		return out.Flush()
 	},
 }
 
-// stateRank groups `ls` the same way boxctl.io's dashboard does
-// (boxctl-web's STATE_RANK): live boxes -- usable, or on their way there
+// lsSections are `ls`'s sections, indexed by stateRank.
+var lsSections = []struct{ label, color string }{
+	{"RUNNING", "\033[1;32m"},
+	{"PAUSED", "\033[1;33m"},
+	{"OTHER", "\033[1;90m"},
+}
+
+// useColor reports whether `ls` should colour its section labels: only
+// on a terminal, and not when NO_COLOR (https://no-color.org) is set.
+func useColor() bool {
+	return os.Getenv("NO_COLOR") == "" && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// stateRank is a box's section in `ls` (an index into lsSections),
+// grouped the same way boxctl.io's dashboard does (boxctl-web's
+// STATE_RANK): live boxes -- usable, or on their way there
 // -- first, then paused ones (one resume away), then anything else
 // (stopped, or a state this CLI doesn't know yet). Within a group, ls
 // sorts newest first by created_at, which pause/resume never touch, with
