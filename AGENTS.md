@@ -100,6 +100,17 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   keys that point at this machine), the Claude Code install, and `tmux
   new-session -A` running `claude`. It never syncs: once the project is
   on the box, the box's copy is the one Claude works on.
+  `cmd/claudegithub.go` is its GitHub side: by default a token server
+  on a local Unix socket answers the box's `GET /token?host=&for=` with
+  `gh auth token`, forwarded by the attach's ssh (`-R
+  /root/.boxctl/gh.sock:...`, on a connection of its own -- `ControlPath=none`
+  must come before the shared ControlPath, since ssh takes an option's
+  first value) for exactly as long as you're attached, logging each use
+  to `~/.boxctl/claude/github.log` -- never to the terminal, which is
+  Claude's. That protocol is the image's contract (boxctl-vms
+  `images/claude-agent/git-credential-boxctl` and `gh`); change both
+  sides together. `--github store` logs a pasted token into the box's gh
+  instead -- never `gh auth token` itself, which would sit on the box.
 - `cmd/sizes.go` — `sizes` (GET /api/sizes), plus `sizeLabel` for
   `ls`'s SIZE column and `completeSize` for `create`/`exec`'s
   `--size`. The size names are the server's; this CLI never hard-codes
