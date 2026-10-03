@@ -48,6 +48,7 @@ var (
 	claudeImage  string
 	claudePrompt string
 	claudeDetach bool
+	claudeGitHub string
 )
 
 var claudeCmd = &cobra.Command{
@@ -71,7 +72,16 @@ box.
   boxctl claude -- --model opus           # arguments for claude itself
 
 The first time, log Claude in on the box with /login: it prints a URL to
-open here and a code to paste back. That login stays on the box.`,
+open here and a code to paste back. That login stays on the box.
+
+GitHub: while you're attached, the box borrows your gh token for git
+push and gh pr ... -- it asks this machine per use, over the ssh
+connection, and keeps nothing (--github forward, the default; each use is
+logged to ~/.boxctl/claude/github.log). Detached, it has none. For work
+that must reach GitHub while you're away, --github store keeps a token
+you paste on the box -- make it a fine-grained one for this repository.
+--github off gives it nothing. Your git user.name and user.email are set
+on the box either way.`,
 	RunE: runClaude,
 }
 
@@ -82,11 +92,18 @@ func init() {
 	claudeCmd.Flags().StringVarP(&claudeImage, "image", "i", claudeDefaultImage, "image of a box created for this")
 	claudeCmd.Flags().StringVarP(&claudePrompt, "prompt", "p", "", "first message for a newly started Claude")
 	claudeCmd.Flags().BoolVarP(&claudeDetach, "detach", "d", false, "start Claude on the box without attaching to it")
+	claudeCmd.Flags().StringVar(&claudeGitHub, "github", githubForward, "GitHub credentials for the box: forward (lent while attached), store (a token kept on the box) or off")
+	_ = claudeCmd.RegisterFlagCompletionFunc("github", cobra.FixedCompletions([]string{githubForward, githubStore, githubOff}, cobra.ShellCompDirectiveNoFileComp))
 	rootCmd.AddCommand(claudeCmd)
 }
 
 func runClaude(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
+	switch claudeGitHub {
+	case githubForward, githubStore, githubOff:
+	default:
+		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
+	}
 	dir, err := projectDir()
 	if err != nil {
 		return err
@@ -126,6 +143,14 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	if err := copyClaudeConfig(ctx, box); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't copy your Claude configuration: %v\n", err)
 	}
+	if err := copyGitIdentity(ctx, box, dir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: couldn't set your git identity on %s: %v\n", name, err)
+	}
+	if claudeGitHub == githubStore {
+		if err := storeGitHubToken(ctx, box, githubRepo(dir)); err != nil {
+			return err
+		}
+	}
 	if err := box.run(ctx, claudeSetupScript, nil); err != nil {
 		return fmt.Errorf("installing Claude Code on %s: %w", name, err)
 	}
@@ -145,7 +170,39 @@ func runClaude(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Claude is running on %s; attach with: boxctl claude --box %s\n", name, name)
 		return nil
 	}
-	return box.attach(ctx, tmuxCommand(dir, claudeCommandLine(claudePrompt, args), false))
+	return attachClaude(ctx, box, tmuxCommand(dir, claudeCommandLine(claudePrompt, args), false))
+}
+
+// attachClaude attaches to Claude on the box, lending it GitHub
+// credentials for as long as the attach lasts unless --github says not to.
+func attachClaude(ctx context.Context, box *boxSSH, command string) error {
+	if claudeGitHub != githubForward {
+		return box.attach(ctx, command, nil)
+	}
+	logPath := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		logPath = filepath.Join(home, ".boxctl", "claude", "github.log")
+	}
+	srv, err := startTokenServer(box.name, logPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: not forwarding GitHub credentials: %v\n", err)
+		return box.attach(ctx, command, nil)
+	}
+	// A socket a dropped connection left behind would stop sshd binding
+	// the new one on an image without StreamLocalBindUnlink.
+	_ = box.run(ctx, "rm -f "+boxGitHubSocket, nil)
+	err = box.attach(ctx, command, []string{"-R", boxGitHubSocket + ":" + srv.socket})
+	// Without the socket the box's helpers say "attach to forward", rather
+	// than failing to reach a stale one.
+	_ = box.run(context.Background(), "rm -f "+boxGitHubSocket, nil)
+	if given, refused := srv.close(); given+refused > 0 {
+		fmt.Fprintf(os.Stderr, "%s used your GitHub token %d time(s)", box.name, given)
+		if refused > 0 {
+			fmt.Fprintf(os.Stderr, ", %d refused", refused)
+		}
+		fmt.Fprintf(os.Stderr, " (%s).\n", logPath)
+	}
+	return err
 }
 
 // claudeSetupScript makes sure the box can run Claude in tmux. On the
@@ -311,9 +368,13 @@ func (b *boxSSH) run(ctx context.Context, command string, in io.Reader) error {
 	return cmd.Run()
 }
 
-// attach runs command on the box with a terminal, returning when it ends.
-func (b *boxSSH) attach(ctx context.Context, command string) error {
-	cmd := exec.CommandContext(ctx, "ssh", append(append([]string{"-t"}, b.args...), command)...)
+// attach runs command on the box with a terminal, returning when it ends,
+// with extra ssh arguments (a socket forward). It gets a connection of its
+// own rather than sharing the control master, so a forward lives exactly
+// as long as the attach: ssh takes the first value of an option it's
+// given, so ControlPath=none here beats the shared one in b.args.
+func (b *boxSSH) attach(ctx context.Context, command string, extra []string) error {
+	cmd := exec.CommandContext(ctx, "ssh", b.attachArgs(command, extra)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	// The box has terminfo for the common terminals, not for every one
 	// (xterm-ghostty, xterm-kitty), and tmux won't start without it.
@@ -326,6 +387,11 @@ func (b *boxSSH) attach(ctx context.Context, command string) error {
 		return nil
 	}
 	return err
+}
+
+func (b *boxSSH) attachArgs(command string, extra []string) []string {
+	argv := append([]string{"-t", "-o", "ControlPath=none", "-o", "ExitOnForwardFailure=no"}, extra...)
+	return append(append(argv, b.args...), command)
 }
 
 // close ends the shared ssh connection.

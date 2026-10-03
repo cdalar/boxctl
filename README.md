@@ -124,13 +124,26 @@ machine), and starts `claude` in tmux. Log it in once with `/login`: it
 prints a URL to open here and a code to paste back, and the login stays
 on the box.
 
+**GitHub.** While you're attached, Claude on the box can `git push` and
+`gh pr create`/`merge` as you: the box asks this machine for your `gh`
+token each time it needs one, over the ssh connection, and keeps nothing
+(`--github forward`, the default). Each use is logged to
+`~/.boxctl/claude/github.log`, and detaching prints a count. Detached,
+the box has no GitHub access. For work that has to reach GitHub while
+you're away, `--github store` keeps a token on the box until it's
+destroyed -- it asks you for one (or reads `BOXCTL_GITHUB_TOKEN`) rather
+than using your gh token, so make it a fine-grained token for just that
+repository. `--github off` gives the box nothing. Your git `user.name`
+and `user.email` are set on the box either way, so its commits are yours.
+Forwarding needs the `claude-agent` image's credential helper and `gh`
+wrapper (boxctl-vms `images/claude-agent/`).
+
 Claude keeps running when you detach (`Ctrl-b d`) or the connection
 drops; `boxctl claude` again attaches to it. Later runs don't copy the
 project again -- the box's copy is the one Claude works on, so get its
 work back the git way (Claude commits and pushes from the box). Plan and
-what's next (GitHub credential forwarding, fetching the box's branches,
-handing off a running session): boxctl-vms's
-`docs/plans/claude-on-the-box.md`.
+what's next (fetching the box's branches, handing off a running
+session): boxctl-vms's `docs/plans/claude-on-the-box.md`.
 
 It all runs over real ssh to the box's sshd, as root, with the key in
 `~/.boxctl/claude/id_ed25519` (authorized on the box over `boxctl ssh`),
