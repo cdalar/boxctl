@@ -20,8 +20,10 @@ import (
 // boxRemote is the name of the git remote for the project's box.
 const boxRemote = "box"
 
-// wipRef is where fetch snapshots the box's uncommitted work, on the box,
-// before fetching it as box/wip.
+// wipRef is where fetch snapshots the main checkout's uncommitted work, on
+// the box, before fetching it as box/wip; a task's goes to wipRef-<task>,
+// fetched as box/wip-<task>. (Not wip/<task>: git can't have both a ref
+// and a directory of refs by one name.)
 const wipRef = "refs/boxctl/wip"
 
 var claudeFetchCmd = &cobra.Command{
@@ -77,17 +79,27 @@ func claudeFetch(ctx context.Context) error {
 	}
 	defer t.box.close()
 
-	wip, err := t.box.output(ctx, wipSnapshotScript(t.dir))
+	// Snapshot the uncommitted work of the main checkout and of every
+	// task's worktree: box/wip, box/wip-<task>.
+	worktrees, err := boxWorktrees(ctx, t.box, t.dir)
 	if err != nil {
-		return fmt.Errorf("snapshotting the uncommitted work on %s: %w", t.name, err)
+		return err
 	}
-	// One fetch, so --prune sees box/wip as the snapshot's destination and
-	// keeps it while there is one -- and drops it, along with branches
-	// deleted on the box, once there isn't.
 	refspecs := []string{"+refs/heads/*:refs/remotes/" + boxRemote + "/*"}
-	if strings.TrimSpace(string(wip)) != "none" {
-		refspecs = append(refspecs, "+"+wipRef+":refs/remotes/"+boxRemote+"/wip")
+	var withWip []string
+	for _, w := range worktrees {
+		out, err := t.box.output(ctx, wipSnapshotScript(w.dir, w.wipRef()))
+		if err != nil {
+			return fmt.Errorf("snapshotting the uncommitted work in %s on %s: %w", w.dir, t.name, err)
+		}
+		if strings.TrimSpace(string(out)) != "none" {
+			refspecs = append(refspecs, "+"+w.wipRef()+":refs/remotes/"+boxRemote+"/"+w.wipName())
+			withWip = append(withWip, boxRemote+"/"+w.wipName())
+		}
 	}
+	// One fetch, so --prune sees each box/wip* as a snapshot's destination
+	// and keeps it while there is one -- and drops it, along with branches
+	// deleted on the box, once there isn't.
 	if err := t.git(ctx, append([]string{"fetch", "--prune", boxRemote}, refspecs...)...); err != nil {
 		return err
 	}
@@ -103,10 +115,10 @@ func claudeFetch(ctx context.Context) error {
 			fmt.Fprintf(os.Stderr, "  %s\n", strings.ReplaceAll(line, "\t", "  "))
 		}
 	}
-	if strings.TrimSpace(string(wip)) == "none" {
+	if len(withWip) == 0 {
 		fmt.Fprintln(os.Stderr, "No uncommitted work on the box.")
 	} else {
-		fmt.Fprintf(os.Stderr, "Uncommitted work on the box: git show --stat %s/wip\n", boxRemote)
+		fmt.Fprintf(os.Stderr, "Uncommitted work on the box: git show --stat %s\n", strings.Join(withWip, ", "))
 	}
 	return nil
 }
@@ -188,12 +200,59 @@ func (g *claudeGitTarget) git(ctx context.Context, args ...string) error {
 	return cmd.Run()
 }
 
-// wipSnapshotScript commits the box's working tree -- tracked changes and
-// untracked files that aren't ignored, as `git add -A` sees them -- to
-// wipRef on top of HEAD, through a throwaway index so neither the real
+// boxWorktree is the main checkout ("" task) or a task's worktree.
+type boxWorktree struct {
+	task, dir string
+}
+
+func (w boxWorktree) wipRef() string {
+	if w.task == "" {
+		return wipRef
+	}
+	return wipRef + "-" + w.task
+}
+
+func (w boxWorktree) wipName() string {
+	if w.task == "" {
+		return "wip"
+	}
+	return "wip-" + w.task
+}
+
+// boxWorktrees lists the project's main checkout and its tasks' worktrees
+// on the box.
+func boxWorktrees(ctx context.Context, box *boxSSH, project string) ([]boxWorktree, error) {
+	out, err := box.output(ctx, "git -C "+shellQuote(project)+" worktree list --porcelain")
+	if err != nil {
+		return nil, fmt.Errorf("listing worktrees on %s: %w", box.name, err)
+	}
+	return parseWorktrees(string(out), project), nil
+}
+
+// parseWorktrees picks the main checkout and the tasks out of `git
+// worktree list --porcelain`: worktrees at <project>@<task>, the only
+// ones boxctl makes.
+func parseWorktrees(porcelain, project string) []boxWorktree {
+	worktrees := []boxWorktree{{dir: project}}
+	for _, line := range strings.Split(porcelain, "\n") {
+		path, ok := strings.CutPrefix(line, "worktree ")
+		if !ok {
+			continue
+		}
+		task, ok := strings.CutPrefix(path, project+"@")
+		if ok && taskNamePattern.MatchString(task) {
+			worktrees = append(worktrees, boxWorktree{task: task, dir: path})
+		}
+	}
+	return worktrees
+}
+
+// wipSnapshotScript commits a working tree on the box -- tracked changes
+// and untracked files that aren't ignored, as `git add -A` sees them -- to
+// ref on top of its HEAD, through a throwaway index so neither the real
 // index nor the files change. Prints the commit, or "none" (and drops
 // wipRef) when the tree matches HEAD.
-func wipSnapshotScript(dir string) string {
+func wipSnapshotScript(dir, ref string) string {
 	return `set -e
 cd ` + shellQuote(dir) + `
 idx=$(mktemp); trap 'rm -f "$idx"' EXIT
@@ -208,11 +267,11 @@ export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-$(git config user.name || echo boxctl
 export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-$(git config user.email || echo boxctl@localhost)}"
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 if head=$(git rev-parse -q --verify 'HEAD^{commit}'); then
-  if [ "$tree" = "$(git rev-parse 'HEAD^{tree}')" ]; then git update-ref -d ` + wipRef + ` 2>/dev/null || true; echo none; exit 0; fi
+  if [ "$tree" = "$(git rev-parse 'HEAD^{tree}')" ]; then git update-ref -d ` + ref + ` 2>/dev/null || true; echo none; exit 0; fi
   c=$(git commit-tree "$tree" -p "$head" -m "Uncommitted work on the box")
 else
   c=$(git commit-tree "$tree" -m "Uncommitted work on the box")
 fi
-git update-ref ` + wipRef + ` "$c"
+git update-ref ` + ref + ` "$c"
 echo "$c"`
 }

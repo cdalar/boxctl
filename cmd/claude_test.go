@@ -36,26 +36,32 @@ func TestSSHProxyHost(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandQuoting runs the generated command line through a real
-// shell, so a prompt with quotes or $ reaches claude intact.
-func TestTmuxCommandQuoting(t *testing.T) {
+// TestSessionCommandQuoting runs the generated command line through a
+// real shell, so a prompt with quotes or $ reaches claude intact.
+func TestSessionCommandQuoting(t *testing.T) {
+	s := newTaskSession("/Users/me/my proj", "")
 	prompt := `fix "it" -- don't touch $HOME`
-	line := claudeCommandLine(prompt, []string{"--model", "opus"})
-	cmd := tmuxCommand("/Users/me/my proj", line, false)
+	line := s.commandLine(prompt, []string{"--model", "opus"})
+	cmd := s.tmuxCommand(line, false)
 	if !strings.HasPrefix(cmd, "tmux -u new-session -A -s claude -c '/Users/me/my proj' ") {
 		t.Fatalf("got %q", cmd)
 	}
-	if !strings.Contains(tmuxCommand("/d", line, true), " -d -s claude ") {
+	if !strings.Contains(s.tmuxCommand(line, true), " -d -s claude ") {
 		t.Fatal("detached mode doesn't use -d")
 	}
-	// tmux hands the last argument to sh -c; replay that with claude
-	// replaced by printf to see the words it would get.
-	out, err := exec.Command("sh", "-c", strings.Replace(line, " claude ", " printf '[%s]' ", 1)).Output()
+	// Replay what tmux hands sh -c, with a claude that prints its words.
+	bin := t.TempDir()
+	write(t, filepath.Join(bin, "claude"), "#!/bin/sh\nprintf '[%s]' \"$@\"\n")
+	if err := os.Chmod(filepath.Join(bin, "claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command("sh", "-c", line)
+	c.Env = append(os.Environ(), "HOME="+t.TempDir(), "PATH="+bin+":/usr/bin:/bin")
+	out, err := c.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `[--model][opus][` + prompt + `]`
-	if string(out) != want {
+	if want := `[--model][opus][` + prompt + `]`; string(out) != want {
 		t.Fatalf("claude would get %s, want %s", out, want)
 	}
 }

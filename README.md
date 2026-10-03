@@ -111,10 +111,39 @@ boxctl claude                           # create or reattach to claude-myproject
 boxctl claude --prompt "fix the flaky auth test"
 boxctl claude --detach --prompt "..."   # start it without attaching
 boxctl claude -- --model opus           # arguments for claude itself
+boxctl claude login                     # once: every box's Claude is logged in (below)
+boxctl claude --task auth               # a second Claude, in parallel, on its own branch
+boxctl claude ls                        # this project's Claude sessions
 boxctl claude --handoff <session-id>    # carry on a local session on the box
 boxctl claude fetch                     # the box's branches and uncommitted work, as box/*
 boxctl claude push                      # this branch to the box
 ```
+
+**Logging Claude in, once.** `boxctl claude login` runs `claude
+setup-token` here (one browser approval; Pro, Max, Team or Enterprise)
+and saves the long-lived token it makes -- in the macOS Keychain, or
+`~/.boxctl/claude/oauth-token` (0600) elsewhere. Every Claude `boxctl
+claude` then starts, on any box or task, gets it as
+`CLAUDE_CODE_OAUTH_TOKEN`: sent over ssh's stdin into a 0600 file in the
+box's `/run` (memory, not disk), which the session reads and deletes as
+it starts -- never on a command line, never on the box's disk. The
+box's first-run screens (onboarding, trusting the project) are marked
+done, with your theme. No `/login` anywhere. The token only makes model
+requests, so Remote Control and claude.ai connectors need
+`--claude-auth login` (the box's own `/login`) instead; `--claude-auth
+api-key` passes `ANTHROPIC_API_KEY` the same way. `boxctl claude logout`
+forgets it. Without a saved token, it falls back to `/login` on the box.
+
+**Several things at once.** `--task <name>` runs another Claude on the
+same box, in a git worktree of its own -- `<dir>@<name>`, on branch
+`<name>`, made from what the box's main checkout has -- in its own tmux
+session, so the two never touch each other's files. Starting one takes
+seconds: no copy, no install, no login. `boxctl claude --task auth`
+again attaches to it; `boxctl claude ls` lists them all, running or
+not. They share the box's CPU, memory and ports -- `--task <name>
+--own-box` gives a task a box of its own (`claude-<project>-<name>`)
+instead. `fetch` brings each task's branch back, and its uncommitted
+work as `box/wip-<name>`.
 
 The first run creates the project's box (`claude-<directory>`, from the
 `claude-agent` image, `medium`), copies the project to the **same

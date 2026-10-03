@@ -40,7 +40,7 @@ func TestWipSnapshot(t *testing.T) {
 	head := gitOut(t, dir, "rev-parse", "HEAD")
 
 	// Clean: nothing to snapshot.
-	if got := sh(t, wipSnapshotScript(dir)); got != "none" {
+	if got := sh(t, wipSnapshotScript(dir, wipRef)); got != "none" {
 		t.Fatalf("clean tree: got %q", got)
 	}
 
@@ -50,7 +50,7 @@ func TestWipSnapshot(t *testing.T) {
 	run(t, dir, "git", "add", "a.txt") // a staged change, to check the real index survives
 	indexBefore, _ := os.ReadFile(filepath.Join(dir, ".git", "index"))
 
-	c := sh(t, wipSnapshotScript(dir))
+	c := sh(t, wipSnapshotScript(dir, wipRef))
 	if gitOut(t, dir, "rev-parse", wipRef) != c {
 		t.Fatalf("%s doesn't point at %s", wipRef, c)
 	}
@@ -82,7 +82,7 @@ func TestWipSnapshot(t *testing.T) {
 	// Committing everything makes the snapshot go away again.
 	run(t, dir, "git", "add", "-A")
 	run(t, dir, "git", "commit", "-qm", "more")
-	if got := sh(t, wipSnapshotScript(dir)); got != "none" {
+	if got := sh(t, wipSnapshotScript(dir, wipRef)); got != "none" {
 		t.Fatalf("after commit: %q", got)
 	}
 	if exec.Command("git", "-C", dir, "rev-parse", "-q", "--verify", wipRef).Run() == nil {
@@ -95,7 +95,7 @@ func TestWipSnapshotWithoutCommits(t *testing.T) {
 	dir := t.TempDir()
 	run(t, dir, "git", "init", "-q")
 	write(t, filepath.Join(dir, "first.txt"), "x")
-	c := sh(t, wipSnapshotScript(dir))
+	c := sh(t, wipSnapshotScript(dir, wipRef))
 	if n := gitOut(t, dir, "rev-list", "--count", c); n != "1" {
 		t.Fatalf("got %s commits", n)
 	}

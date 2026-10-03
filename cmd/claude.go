@@ -61,6 +61,9 @@ var (
 	claudeIdle    time.Duration
 	claudeProject string
 	claudeHandoff string
+	claudeTask    string
+	claudeOwnBox  bool
+	claudeAuth    string
 )
 
 var claudeCmd = &cobra.Command{
@@ -101,6 +104,10 @@ func init() {
 	claudeCmd.PersistentFlags().StringVar(&claudeBox, "box", "", "box to use (default: claude-<project directory name>)")
 	claudeCmd.PersistentFlags().StringVar(&claudeProject, "project", "", "project directory (default: the git repository, or directory, you're in)")
 	claudeCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Claude Code session (its ID) on the box")
+	claudeCmd.PersistentFlags().StringVarP(&claudeTask, "task", "t", "", "work on a task in parallel: its own worktree (<dir>@<task>, branch <task>) and Claude on the box")
+	claudeCmd.PersistentFlags().BoolVar(&claudeOwnBox, "own-box", false, "with --task: give the task a box of its own (claude-<project>-<task>) instead of a worktree")
+	claudeCmd.Flags().StringVar(&claudeAuth, "claude-auth", claudeAuthAuto, "how Claude on the box logs in: auto (the token boxctl claude login saved, else /login), token, login or api-key")
+	_ = claudeCmd.RegisterFlagCompletionFunc("claude-auth", cobra.FixedCompletions([]string{claudeAuthAuto, claudeAuthToken, claudeAuthLogin, claudeAuthAPIKey}, cobra.ShellCompDirectiveNoFileComp))
 	claudeCmd.Flags().StringVarP(&claudeSize, "size", "s", claudeDefaultSize, "size of a box created for this")
 	_ = claudeCmd.RegisterFlagCompletionFunc("size", completeSize)
 	claudeCmd.Flags().StringVarP(&claudeImage, "image", "i", claudeDefaultImage, "image of a box created for this")
@@ -119,8 +126,11 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	default:
 		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
 	}
-	// A handoff's transcript is found first, so a wrong session ID fails
-	// before any box is created or touched.
+	if err := resolveTask(); err != nil {
+		return err
+	}
+	// Everything that can fail here fails before any box is created or
+	// touched: a handoff's transcript, the Claude credentials.
 	transcript := ""
 	if claudeHandoff != "" {
 		home, err := os.UserHomeDir()
@@ -131,6 +141,11 @@ func runClaude(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+	env, apiKey, err := claudeEnv(claudeAuth)
+	if err != nil {
+		return err
+	}
+
 	t, err := openClaudeBox(ctx, true, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {
 		return err
@@ -145,10 +160,16 @@ func runClaude(cmd *cobra.Command, args []string) error {
 		if err := markProject(ctx, box, dir); err != nil {
 			return err
 		}
-	} else {
+	} else if claudeTask == "" {
 		fmt.Fprintf(os.Stderr, "%s is already on %s; working with the box's copy (it isn't copied again).\n", dir, name)
 		if claudeHandoff != "" {
 			fmt.Fprintf(os.Stderr, "Your local changes since then aren't on the box: commit them and run boxctl claude push, or hand off to a fresh box with --box.\n")
+		}
+	}
+	sess := newTaskSession(dir, claudeTask)
+	if sess.task != "" {
+		if err := box.run(ctx, worktreeScript(dir, sess.task), nil); err != nil {
+			return fmt.Errorf("making the %s worktree on %s: %w", sess.task, name, err)
 		}
 	}
 	if err := copyClaudeConfig(ctx, box); err != nil {
@@ -165,37 +186,73 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	if err := box.run(ctx, claudeSetupScript, nil); err != nil {
 		return fmt.Errorf("installing Claude Code on %s: %w", name, err)
 	}
+	if err := box.run(ctx, claudeStateScript([]string{sess.dir}, localClaudeTheme(), apiKey), nil); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: couldn't skip Claude's first-run setup on %s: %v\n", name, err)
+	}
 
-	running := box.run(ctx, "tmux has-session -t "+claudeSession+" 2>/dev/null", nil) == nil
+	// =name: exact. A bare -t name falls back to a prefix match, so "claude"
+	// would find "claude-auth" and take the main session for running.
+	running := box.run(ctx, "tmux has-session -t ="+sess.tmux+" 2>/dev/null", nil) == nil
 	if claudeHandoff != "" {
 		if running {
-			return fmt.Errorf("a Claude session is already running on %s -- attach with boxctl claude --box %s and quit it, then hand off again", name, name)
+			return fmt.Errorf("a Claude session is already running there -- attach with %s and quit it, then hand off again", sess.attachHint(name))
 		}
-		if err := copyTranscript(ctx, box, dir, transcript, claudeHandoff); err != nil {
+		if err := copyTranscript(ctx, box, sess.dir, transcript, claudeHandoff); err != nil {
 			return err
 		}
 		args = append([]string{"--resume", claudeHandoff}, args...)
 	}
-	if running && (claudePrompt != "" || len(args) > 0) {
-		fmt.Fprintf(os.Stderr, "Claude is already running on %s; attaching to it (--prompt and claude arguments only apply to a new session).\n", name)
+	if running {
+		if claudePrompt != "" || len(args) > 0 {
+			fmt.Fprintf(os.Stderr, "Claude is already running there; attaching to it (--prompt and claude arguments only apply to a new session).\n")
+		}
+	} else {
+		if env == "" && claudeAuth == claudeAuthAuto {
+			fmt.Fprintln(os.Stderr, "Log Claude in on the box with /login -- or run boxctl claude login once, and every box's Claude is logged in.")
+		}
+		if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
+			return fmt.Errorf("passing Claude its credentials: %w", err)
+		}
 	}
+	line := sess.commandLine(claudePrompt, args)
 	if claudeDetach {
-		if running {
-			fmt.Fprintf(os.Stderr, "Claude is already running on %s; attach with: boxctl claude --box %s\n", name, name)
-			return nil
+		if !running {
+			if err := box.run(ctx, sess.tmuxCommand(line, true), nil); err != nil {
+				return fmt.Errorf("starting Claude on %s: %w", name, err)
+			}
 		}
-		if err := box.run(ctx, tmuxCommand(dir, claudeCommandLine(claudePrompt, args), true), nil); err != nil {
-			return fmt.Errorf("starting Claude on %s: %w", name, err)
-		}
-		fmt.Fprintf(os.Stderr, "Claude is running on %s; attach with: boxctl claude --box %s\n", name, name)
+		fmt.Fprintf(os.Stderr, "Claude is running on %s; attach with: %s\n", name, sess.attachHint(name))
 		return nil
 	}
-	return attachClaude(ctx, box, tmuxCommand(dir, claudeCommandLine(claudePrompt, args), false))
+	return attachClaude(ctx, box, sess, sess.tmuxCommand(line, false))
+}
+
+// resolveTask checks --task and --own-box, and turns --own-box into the
+// task's own box: claude-<project>-<task>, where it's the main session.
+func resolveTask() error {
+	if claudeTask != "" && !taskNamePattern.MatchString(claudeTask) {
+		return fmt.Errorf("--task %q: use lowercase letters, digits and dashes, at most 30", claudeTask)
+	}
+	if !claudeOwnBox {
+		return nil
+	}
+	if claudeTask == "" {
+		return fmt.Errorf("--own-box needs --task")
+	}
+	if claudeBox == "" {
+		dir, err := projectDir()
+		if err != nil {
+			return err
+		}
+		claudeBox = claudeBoxName(dir) + "-" + claudeTask
+	}
+	claudeTask = ""
+	return nil
 }
 
 // attachClaude attaches to Claude on the box, lending it GitHub
 // credentials for as long as the attach lasts unless --github says not to.
-func attachClaude(ctx context.Context, box *boxSSH, command string) error {
+func attachClaude(ctx context.Context, box *boxSSH, sess taskSession, command string) error {
 	if claudeGitHub != githubForward {
 		return box.attach(ctx, command, nil)
 	}
@@ -210,11 +267,11 @@ func attachClaude(ctx context.Context, box *boxSSH, command string) error {
 	}
 	// A socket a dropped connection left behind would stop sshd binding
 	// the new one on an image without StreamLocalBindUnlink.
-	_ = box.run(ctx, "rm -f "+boxGitHubSocket, nil)
-	err = box.attach(ctx, command, []string{"-R", boxGitHubSocket + ":" + srv.socket})
+	_ = box.run(ctx, "rm -f "+shellQuote(sess.ghSocket), nil)
+	err = box.attach(ctx, command, []string{"-R", sess.ghSocket + ":" + srv.socket})
 	// Without the socket the box's helpers say "attach to forward", rather
 	// than failing to reach a stale one.
-	_ = box.run(context.Background(), "rm -f "+boxGitHubSocket, nil)
+	_ = box.run(context.Background(), "rm -f "+shellQuote(sess.ghSocket), nil)
 	if given, refused := srv.close(); given+refused > 0 {
 		fmt.Fprintf(os.Stderr, "%s used your GitHub token %d time(s)", box.name, given)
 		if refused > 0 {
@@ -327,31 +384,6 @@ const claudeSetupScript = `set -e
 export PATH="$HOME/.local/bin:$PATH"
 command -v tmux >/dev/null || { echo "Installing tmux..." >&2; apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux >/dev/null; }
 command -v claude >/dev/null || { echo "Installing Claude Code..." >&2; ` + claudeInstall + ` >&2; }`
-
-// tmuxCommand starts Claude in the project directory in tmux, or with
-// -A attaches to the session already there. -u: the box has no locale
-// set, and Claude's interface is Unicode.
-func tmuxCommand(dir, claudeLine string, detached bool) string {
-	mode := "-A"
-	if detached {
-		mode = "-d"
-	}
-	return fmt.Sprintf("tmux -u new-session %s -s %s -c %s %s",
-		mode, claudeSession, shellQuote(dir), shellQuote(claudeLine))
-}
-
-// claudeCommandLine is the shell command tmux runs: claude, with the
-// prompt and any extra arguments, from where the installer puts it.
-func claudeCommandLine(prompt string, args []string) string {
-	words := []string{`PATH="$HOME/.local/bin:$PATH"`, "claude"}
-	for _, a := range args {
-		words = append(words, shellQuote(a))
-	}
-	if prompt != "" {
-		words = append(words, shellQuote(prompt))
-	}
-	return strings.Join(words, " ")
-}
 
 // projectDir is the git repository's top level, or the directory itself
 // outside one, for --project or else the current directory -- the
