@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -16,6 +17,7 @@ var (
 	createApplyFile string
 	createImage     string
 	createSize      string
+	createIdleTTL   time.Duration
 )
 
 var createCmd = &cobra.Command{
@@ -27,11 +29,18 @@ var createCmd = &cobra.Command{
 		name := args[0]
 		fmt.Printf("Creating %s...\n", name)
 
-		vm, err := newClient().Create(cmd.Context(), name, createApplyFile, createImage, createSize)
+		c := newClient()
+		vm, err := c.Create(cmd.Context(), name, createApplyFile, createImage, createSize)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("Created %s (%s, %s)\n", vm.Name, vm.State, sizeLabel(*vm))
+		if cmd.Flags().Changed("idle-ttl") {
+			if _, err := c.SetIdleTTL(cmd.Context(), name, createIdleTTL); err != nil {
+				return fmt.Errorf("setting %s's idle TTL: %w", name, err)
+			}
+			fmt.Printf("%s pauses after %s unused\n", name, createIdleTTL)
+		}
 		return nil
 	},
 }
@@ -45,5 +54,6 @@ func init() {
 	createCmd.Flags().StringVarP(&createImage, "image", "i", defaultImage, "boot image to use (list them with boxctl images)")
 	createCmd.Flags().StringVarP(&createSize, "size", "s", "", "box size: small, medium or large (list them with boxctl sizes; default small)")
 	_ = createCmd.RegisterFlagCompletionFunc("size", completeSize)
+	createCmd.Flags().DurationVar(&createIdleTTL, "idle-ttl", 0, "pause the box after this long unused, 10m to 720h (default: the server's, 6h; 0 never)")
 	rootCmd.AddCommand(createCmd)
 }

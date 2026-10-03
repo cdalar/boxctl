@@ -220,6 +220,18 @@ func (c *Client) Pause(ctx context.Context, name string) (*VM, error) {
 	return &vm, nil
 }
 
+// SetIdleTTL sets how long name may go unused before the idle reaper
+// pauses it -- boxctl-vms's per-box TTL, between 10 minutes and 30 days.
+// Zero means never pause it.
+func (c *Client) SetIdleTTL(ctx context.Context, name string, ttl time.Duration) (*VM, error) {
+	body := map[string]int64{"idle_ttl_seconds": int64(ttl.Seconds())}
+	var vm VM
+	if err := c.do(ctx, http.MethodPut, "/api/vms/"+url.PathEscape(name)+"/idle-ttl", body, &vm); err != nil {
+		return nil, err
+	}
+	return &vm, nil
+}
+
 func (c *Client) Resume(ctx context.Context, name string) (*VM, error) {
 	var vm VM
 	if err := c.do(ctx, http.MethodPost, "/api/vms/"+url.PathEscape(name)+"/resume", nil, &vm); err != nil {

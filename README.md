@@ -82,6 +82,7 @@ boxctl images
 boxctl create my-box
 boxctl sizes                      # vCPU, memory and disk of small (default), medium, large
 boxctl create big-box --size large
+boxctl create long-job --idle-ttl 48h   # pause after 48h unused (default 6h)
 boxctl ssh my-box
 boxctl ssh my-box -- ls -al   # run one command instead of a shell
 boxctl port-forward my-box 3000   # localhost:3000 -> port 3000 inside the box
@@ -110,6 +111,8 @@ boxctl claude                           # create or reattach to claude-myproject
 boxctl claude --prompt "fix the flaky auth test"
 boxctl claude --detach --prompt "..."   # start it without attaching
 boxctl claude -- --model opus           # arguments for claude itself
+boxctl claude fetch                     # the box's branches and uncommitted work, as box/*
+boxctl claude push                      # this branch to the box
 ```
 
 The first run creates the project's box (`claude-<directory>`, from the
@@ -138,8 +141,27 @@ and `user.email` are set on the box either way, so its commits are yours.
 Forwarding needs the `claude-agent` image's credential helper and `gh`
 wrapper (boxctl-vms `images/claude-agent/`).
 
+**Getting work back, and sending it there.** The box is a git remote
+named `box` (`root@<box>.box:<project dir>`). `boxctl claude fetch`
+brings every branch on the box back as `box/<branch>` -- pushed to GitHub
+or not -- plus `box/wip`: a commit of the box's uncommitted work (tracked
+changes and untracked files that aren't ignored) on top of what it has
+checked out, made with a throwaway index so nothing on the box changes.
+Then it's plain git: `git log box/fix-auth`, `git show --stat box/wip`,
+`git checkout -b fix-auth box/fix-auth`. `boxctl claude push
+[refspec...]` sends local commits the other way; pushing to the branch
+the box has checked out updates its files too, unless Claude has
+uncommitted changes there, in which case git refuses rather than
+overwrite them. Both supply the ssh themselves; with the `Host *.box`
+config below, plain `git fetch box` works as well.
+
 Claude keeps running when you detach (`Ctrl-b d`) or the connection
-drops; `boxctl claude` again attaches to it. Later runs don't copy the
+drops; `boxctl claude` again attaches to it. Boxes it creates pause after
+`--idle-ttl` unused (default `24h`, not the server's 6h): a detached
+Claude working on its own makes no traffic the idle reaper counts. Pass
+`--idle-ttl` to change an existing box's. A box holds one project -- the
+directory it was started from -- and `boxctl claude --box` from another
+directory is refused rather than copying a second one there. Later runs don't copy the
 project again -- the box's copy is the one Claude works on, so get its
 work back the git way (Claude commits and pushes from the box). Plan and
 what's next (fetching the box's branches, handing off a running

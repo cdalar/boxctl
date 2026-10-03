@@ -40,6 +40,15 @@ const (
 	claudeInstall = "curl -fsSL https://claude.ai/install.sh | bash"
 	// claudeReadyTimeout bounds waiting for a new or resumed box to boot.
 	claudeReadyTimeout = 3 * time.Minute
+	// claudeDefaultIdleTTL is the idle TTL of a box created for Claude.
+	// The reaper counts relayed traffic as use, and a detached Claude
+	// working on its own makes none, so the server's 6h would pause it
+	// mid-task.
+	claudeDefaultIdleTTL = 24 * time.Hour
+	// projectMarker on the box records which project it holds, so a box
+	// is never handed a second one by running boxctl claude --box from
+	// another directory.
+	projectMarker = "/root/.boxctl/project"
 )
 
 var (
@@ -49,6 +58,7 @@ var (
 	claudePrompt string
 	claudeDetach bool
 	claudeGitHub string
+	claudeIdle   time.Duration
 )
 
 var claudeCmd = &cobra.Command{
@@ -86,7 +96,7 @@ on the box either way.`,
 }
 
 func init() {
-	claudeCmd.Flags().StringVar(&claudeBox, "box", "", "box to use (default: claude-<project directory name>)")
+	claudeCmd.PersistentFlags().StringVar(&claudeBox, "box", "", "box to use (default: claude-<project directory name>)")
 	claudeCmd.Flags().StringVarP(&claudeSize, "size", "s", claudeDefaultSize, "size of a box created for this")
 	_ = claudeCmd.RegisterFlagCompletionFunc("size", completeSize)
 	claudeCmd.Flags().StringVarP(&claudeImage, "image", "i", claudeDefaultImage, "image of a box created for this")
@@ -94,6 +104,7 @@ func init() {
 	claudeCmd.Flags().BoolVarP(&claudeDetach, "detach", "d", false, "start Claude on the box without attaching to it")
 	claudeCmd.Flags().StringVar(&claudeGitHub, "github", githubForward, "GitHub credentials for the box: forward (lent while attached), store (a token kept on the box) or off")
 	_ = claudeCmd.RegisterFlagCompletionFunc("github", cobra.FixedCompletions([]string{githubForward, githubStore, githubOff}, cobra.ShellCompDirectiveNoFileComp))
+	claudeCmd.Flags().DurationVar(&claudeIdle, "idle-ttl", claudeDefaultIdleTTL, "pause the box after this long unused, 10m to 720h (set on a new box, or on an existing one when given)")
 	rootCmd.AddCommand(claudeCmd)
 }
 
@@ -104,37 +115,18 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	default:
 		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
 	}
-	dir, err := projectDir()
+	t, err := openClaudeBox(ctx, true, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {
 		return err
 	}
-	name := claudeBox
-	if name == "" {
-		name = claudeBoxName(dir)
-	}
+	defer t.box.close()
+	dir, name, box := t.dir, t.name, t.box
 
-	c := newClient()
-	if err := ensureClaudeBox(ctx, c, name); err != nil {
-		return err
-	}
-	key, err := ensureClaudeKey()
-	if err != nil {
-		return err
-	}
-	if err := authorizeKey(ctx, c, name, key); err != nil {
-		return err
-	}
-	box, err := newBoxSSH(name, key)
-	if err != nil {
-		return err
-	}
-	defer box.close()
-
-	if err := box.run(ctx, "true", nil); err != nil {
-		return fmt.Errorf("can't ssh into %s: %w", name, err)
-	}
-	if box.run(ctx, "test -e "+shellQuote(dir), nil) != nil {
+	if t.needsCopy {
 		if err := copyProject(ctx, box, dir); err != nil {
+			return err
+		}
+		if err := markProject(ctx, box, dir); err != nil {
 			return err
 		}
 	} else {
@@ -205,6 +197,101 @@ func attachClaude(ctx context.Context, box *boxSSH, command string) error {
 	return err
 }
 
+// claudeTarget is the project here and its box, reachable over ssh.
+type claudeTarget struct {
+	dir, name string
+	box       *boxSSH
+	// needsCopy: the project isn't on the box yet.
+	needsCopy bool
+}
+
+// openClaudeBox resolves the project and its box (--box, or
+// claude-<dir>), makes sure it's running and reachable with boxctl's
+// key, and checks it holds this project and no other. create says
+// whether a missing box is created (boxctl claude) or an error (fetch,
+// push); setTTL applies --idle-ttl to a box that already exists.
+func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, error) {
+	dir, err := projectDir()
+	if err != nil {
+		return nil, err
+	}
+	name := claudeBox
+	if name == "" {
+		name = claudeBoxName(dir)
+	}
+	c := newClient()
+	created, err := ensureClaudeBox(ctx, c, name, create)
+	if err != nil {
+		return nil, err
+	}
+	if created || setTTL {
+		if _, err := c.SetIdleTTL(ctx, name, claudeIdle); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: couldn't set %s's idle TTL: %v\n", name, err)
+		}
+	}
+	key, err := ensureClaudeKey()
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeKey(ctx, c, name, key); err != nil {
+		return nil, err
+	}
+	box, err := newBoxSSH(name, key)
+	if err != nil {
+		return nil, err
+	}
+	if err := box.run(ctx, "true", nil); err != nil {
+		box.close()
+		return nil, fmt.Errorf("can't ssh into %s: %w", name, err)
+	}
+	needsCopy, err := checkProject(ctx, box, dir)
+	if err != nil {
+		box.close()
+		return nil, err
+	}
+	return &claudeTarget{dir: dir, name: name, box: box, needsCopy: needsCopy}, nil
+}
+
+// checkProject reports whether dir still has to be copied to the box,
+// refusing a box that holds a different project. A box from before the
+// marker existed is taken to hold whichever project it has at dir.
+func checkProject(ctx context.Context, box *boxSSH, dir string) (needsCopy bool, err error) {
+	out, err := box.output(ctx, projectCheckScript(dir))
+	switch status := strings.TrimSpace(string(out)); {
+	case err != nil:
+		return false, fmt.Errorf("checking %s's project: %w", box.name, err)
+	case status == "copy":
+		return true, nil
+	case status == "ok":
+		return false, nil
+	case strings.HasPrefix(status, "other "):
+		other := strings.TrimPrefix(status, "other ")
+		return false, fmt.Errorf("%s holds %s, not %s -- run boxctl claude from there, or pick another box with --box", box.name, other, dir)
+	default:
+		return false, fmt.Errorf("checking %s's project: unexpected %q", box.name, status)
+	}
+}
+
+func projectCheckScript(dir string) string { return projectCheckScriptAt(projectMarker, dir) }
+
+func projectCheckScriptAt(marker, dir string) string {
+	d := shellQuote(dir)
+	return `m=` + shellQuote(marker) + `
+if [ -s "$m" ] && [ "$(cat "$m")" != ` + d + ` ]; then printf 'other %s' "$(cat "$m")"; exit 0; fi
+if [ -e ` + d + ` ]; then mkdir -p "$(dirname "$m")" && printf '%s' ` + d + ` >"$m"; echo ok; exit 0; fi
+echo copy`
+}
+
+// markProject records dir as the box's project, and lets boxctl claude
+// push update the branch checked out there (receive.denyCurrentBranch
+// updateInstead: the working tree follows the push, and git refuses it if
+// Claude has uncommitted changes, rather than overwriting them).
+func markProject(ctx context.Context, box *boxSSH, dir string) error {
+	d := shellQuote(dir)
+	return box.run(ctx, `mkdir -p "$(dirname `+projectMarker+`)" && printf '%s' `+d+` >`+projectMarker+`
+[ ! -d `+d+`/.git ] || git -C `+d+` config receive.denyCurrentBranch updateInstead`, nil)
+}
+
 // claudeSetupScript makes sure the box can run Claude in tmux. On the
 // claude-agent image only the Claude Code install does anything, once;
 // other images get tmux from apt.
@@ -265,23 +352,27 @@ func claudeBoxName(dir string) string {
 	return "claude-" + slug
 }
 
-// ensureClaudeBox creates name if there's no such box, or resumes it.
-func ensureClaudeBox(ctx context.Context, c *client.Client, name string) error {
+// ensureClaudeBox resumes name if it exists, or creates it when create
+// is set, reporting whether it did.
+func ensureClaudeBox(ctx context.Context, c *client.Client, name string, create bool) (created bool, err error) {
 	vms, err := c.List(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, vm := range vms {
 		if vm.Name == name {
-			return ensureRunning(ctx, c, name, claudeReadyTimeout)
+			return false, ensureRunning(ctx, c, name, claudeReadyTimeout)
 		}
+	}
+	if !create {
+		return false, fmt.Errorf("no box %s -- start one with boxctl claude", name)
 	}
 	fmt.Fprintf(os.Stderr, "Creating %s (%s, %s)...\n", name, claudeImage, claudeSize)
 	if _, err := c.Create(ctx, name, "", claudeImage, claudeSize); err != nil {
-		return fmt.Errorf("creating %s: %w", name, err)
+		return false, fmt.Errorf("creating %s: %w", name, err)
 	}
 	_, err = c.WaitReady(ctx, name, claudeReadyTimeout)
-	return err
+	return true, err
 }
 
 // ensureClaudeKey returns the private key boxctl uses for boxes it runs
@@ -366,6 +457,24 @@ func (b *boxSSH) run(ctx context.Context, command string, in io.Reader) error {
 	cmd.Stdin = in
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	return cmd.Run()
+}
+
+// output runs a command on the box and returns its stdout; stderr passes
+// through.
+func (b *boxSSH) output(ctx context.Context, command string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "ssh", append(append([]string{"-o", "BatchMode=yes"}, b.args...), command)...)
+	cmd.Stderr = os.Stderr
+	return cmd.Output()
+}
+
+// gitSSHCommand is ssh as git should run it to reach the box: everything
+// in b.args but the destination, which git adds from the remote's URL.
+func (b *boxSSH) gitSSHCommand() string {
+	words := []string{"ssh", "-o", "BatchMode=yes"}
+	for _, a := range b.args[:len(b.args)-1] {
+		words = append(words, shellQuote(a))
+	}
+	return strings.Join(words, " ")
 }
 
 // attach runs command on the box with a terminal, returning when it ends,
