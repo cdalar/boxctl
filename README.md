@@ -85,6 +85,8 @@ boxctl create big-box --size large
 boxctl ssh my-box
 boxctl ssh my-box -- ls -al   # run one command instead of a shell
 boxctl port-forward my-box 3000   # localhost:3000 -> port 3000 inside the box
+ssh -o ProxyCommand='boxctl ssh-proxy %h' root@my-box   # real ssh (key needed, see below)
+boxctl claude                     # Claude Code on a box, with this project (see below)
 boxctl pause my-box
 boxctl resume my-box
 boxctl rm my-box
@@ -95,6 +97,64 @@ boxctl logout   # forgets the token locally; revoke it from the dashboard too
 Every command talks to `https://vms-backend.boxctl.io` by default; override
 with `--api-url` (or by passing a different one to `boxctl login`) for a
 local/dev `boxctl-vms` instance.
+
+## Claude Code on a box (`boxctl claude`)
+
+Runs Claude Code itself on a box instead of on your machine, attached to
+your terminal -- so its file edits and its shell both happen there, on
+the box's copy of the project, and nothing is synced.
+
+```bash
+cd ~/src/myproject
+boxctl claude                           # create or reattach to claude-myproject
+boxctl claude --prompt "fix the flaky auth test"
+boxctl claude --detach --prompt "..."   # start it without attaching
+boxctl claude -- --model opus           # arguments for claude itself
+```
+
+The first run creates the project's box (`claude-<directory>`, from the
+`claude-agent` image, `medium`), copies the project to the **same
+absolute path** -- what git counts as the project (`git ls-files
+--cached --others --exclude-standard`, so uncommitted changes and
+untracked files go, `.gitignore`'d ones don't) plus `.git` -- installs
+Claude Code with Anthropic's installer, copies your `~/.claude/CLAUDE.md`,
+`agents/`, `skills/`, `commands/` and `settings.json` (minus hooks, the
+status line, plugins, `env` and credential helpers, which point at this
+machine), and starts `claude` in tmux. Log it in once with `/login`: it
+prints a URL to open here and a code to paste back, and the login stays
+on the box.
+
+Claude keeps running when you detach (`Ctrl-b d`) or the connection
+drops; `boxctl claude` again attaches to it. Later runs don't copy the
+project again -- the box's copy is the one Claude works on, so get its
+work back the git way (Claude commits and pushes from the box). Plan and
+what's next (GitHub credential forwarding, fetching the box's branches,
+handing off a running session): boxctl-vms's
+`docs/plans/claude-on-the-box.md`.
+
+It all runs over real ssh to the box's sshd, as root, with the key in
+`~/.boxctl/claude/id_ed25519` (authorized on the box over `boxctl ssh`),
+tunneled by `boxctl ssh-proxy`.
+
+## Real ssh (`ssh-proxy`)
+
+`boxctl ssh` runs a shell or one command over boxctl's own terminal
+protocol. For everything else ssh does -- `scp`, `rsync`, `git` over ssh,
+port and socket forwarding, VS Code Remote-SSH -- `boxctl ssh-proxy <box>
+[port]` connects its stdin and stdout to the box's sshd (or another port)
+through the same tunnel as `port-forward`, for use as ssh's
+`ProxyCommand`. A paused box is resumed first.
+
+```
+# ~/.ssh/config
+Host *.box
+  ProxyCommand boxctl ssh-proxy %n
+  User root
+```
+
+then `ssh my-box.box`, `rsync -a dir/ my-box.box:/srv/`. Boxes accept
+key logins for root: add your public key once with
+`boxctl ssh my-box -- "mkdir -p ~/.ssh && echo '<your key>' >> ~/.ssh/authorized_keys"`.
 
 ## Claude Code plugin
 
