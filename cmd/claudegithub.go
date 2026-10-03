@@ -133,7 +133,7 @@ func (s *tokenServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			outcome = "refused: " + err.Error()
 		}
-		fmt.Fprintf(s.log, "%s %s asked for a %s token for %s: %s\n", time.Now().Format(time.RFC3339), s.box, host, what, outcome)
+		_, _ = fmt.Fprintf(s.log, "%s %s asked for a %s token for %s: %s\n", time.Now().Format(time.RFC3339), s.box, host, what, outcome)
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
