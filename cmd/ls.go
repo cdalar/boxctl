@@ -20,11 +20,15 @@ var lsCmd = &cobra.Command{
 	Short:   "List your boxes",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		asJSON, err := wantJSON(cmd)
+		if err != nil {
+			return err
+		}
 		vms, err := newClient().List(cmd.Context())
 		if err != nil {
 			return err
 		}
-		if len(vms) == 0 {
+		if len(vms) == 0 && !asJSON {
 			fmt.Println("No boxes yet. Create one with `boxctl create <name>`.")
 			return nil
 		}
@@ -39,6 +43,9 @@ var lsCmd = &cobra.Command{
 			}
 			return vms[i].ID < vms[j].ID
 		})
+		if asJSON {
+			return printJSON(vms)
+		}
 
 		// Every row goes through one tabwriter, so columns line up across
 		// sections, and the section labels are slotted in afterwards: a
@@ -171,5 +178,6 @@ func age(t time.Time) string {
 }
 
 func init() {
+	addOutputFlag(lsCmd)
 	rootCmd.AddCommand(lsCmd)
 }

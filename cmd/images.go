@@ -14,9 +14,16 @@ var imagesCmd = &cobra.Command{
 	Short:   "List available boot images",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		asJSON, err := wantJSON(cmd)
+		if err != nil {
+			return err
+		}
 		images, err := newClient().ListImages(cmd.Context())
 		if err != nil {
 			return err
+		}
+		if asJSON {
+			return printJSON(images)
 		}
 		if len(images) == 0 {
 			fmt.Println("No images available.")
@@ -37,5 +44,6 @@ var imagesCmd = &cobra.Command{
 }
 
 func init() {
+	addOutputFlag(imagesCmd)
 	rootCmd.AddCommand(imagesCmd)
 }
