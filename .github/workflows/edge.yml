@@ -11,7 +11,7 @@ name: edge
 # (github.com/cdalar/boxctl/releases/tag/edge).
 #
 # Runs on a plain GitHub-hosted ubuntu-latest runner -- unlike onctl's
-# self-hosted onctl-4 runner (needed there because building
+# self-hosted onctl-2 runner (needed there because building
 # aws-sdk-go-v2/service/ec2 three times in parallel OOMs that box),
 # boxctl's dependency set (cobra, gorilla/websocket, x/term) is far
 # lighter, so there's no need for --parallelism=1 or a self-hosted runner
