@@ -500,6 +500,50 @@ func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int6
 	return status.VM, nil
 }
 
+// Backup is one entry of GET /api/backups: a saved copy of a paused box
+// (what `download` and the dashboard's Backup button create).
+type Backup struct {
+	ID        string    `json:"id"`
+	VMName    string    `json:"vm_name"`
+	SizeBytes int64     `json:"size_bytes"`
+	CreatedAt time.Time `json:"created_at"`
+	// UploadStatus is "uploaded", "uploading" or "failed" -- how far the
+	// host's copy to object storage has got. A backup can be restored in
+	// any of them.
+	UploadStatus string `json:"upload_status"`
+	UploadError  string `json:"upload_error,omitempty"`
+}
+
+func (c *Client) ListBackups(ctx context.Context) ([]Backup, error) {
+	var backups []Backup
+	if err := c.do(ctx, http.MethodGet, "/api/backups", nil, &backups); err != nil {
+		return nil, err
+	}
+	return backups, nil
+}
+
+// Restore rebuilds backupID as a new box named name and waits for it. An
+// empty size keeps the one the box was backed up at, and it comes back
+// paused; with another size the server boots it fresh from the backup's
+// disk at that size, so it comes back running.
+func (c *Client) Restore(ctx context.Context, backupID, name, size string) (*VM, error) {
+	body := map[string]string{"name": name}
+	if size != "" {
+		body["size"] = size
+	}
+	var kickoff struct {
+		ImportID string `json:"import_id"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/backups/"+url.PathEscape(backupID)+"/restore", body, &kickoff); err != nil {
+		return nil, err
+	}
+	status, err := c.pollTransfer(ctx, "/api/imports/"+url.PathEscape(kickoff.ImportID), "waiting for the host to rebuild the box")
+	if err != nil {
+		return nil, err
+	}
+	return status.VM, nil
+}
+
 // pollTransfer polls path (a backup or import status endpoint) at
 // transferPollInterval until it reports "done" or "failed", or ctx ends.
 // label names what it's waiting on (e.g. "waiting for aimax to build and

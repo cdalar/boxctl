@@ -90,6 +90,9 @@ ssh -o ProxyCommand='boxctl ssh-proxy %h' root@my-box   # real ssh (key needed, 
 boxctl claude                     # Claude Code on a box, with this project (see below)
 boxctl pause my-box
 boxctl resume my-box
+boxctl backups                    # saved copies of paused boxes (made by `boxctl download` or the dashboard)
+boxctl restore my-box             # newest backup of my-box, back as a paused box
+boxctl restore my-box -n big-box --size large   # ...or booted fresh at another size (files kept, running programs not)
 boxctl rm my-box
 
 boxctl logout   # forgets the token locally; revoke it from the dashboard too

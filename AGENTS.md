@@ -137,6 +137,12 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   (tmpfs), which the session's command sources and deletes -- never
   argv, never disk. Always `tmux ... -t =<name>`: a bare `-t claude`
   prefix-matches `claude-auth`.
+- `cmd/backups.go`/`restore.go` — `backups` (GET /api/backups) and
+  `restore <backup> [--name] [--size]` (POST
+  /api/backups/{id}/restore, then the same import poll as `import`).
+  `<backup>` is a backup id or a box name, meaning that box's newest
+  backup (`findBackup`). The paused-vs-fresh-boot difference `--size`
+  makes is the server's (`boxctl-vms`'s `handleRestoreBackup`).
 - `cmd/sizes.go` — `sizes` (GET /api/sizes), plus `sizeLabel` for
   `ls`'s SIZE column and `completeSize` for `create`/`exec`'s
   `--size`. The size names are the server's; this CLI never hard-codes
