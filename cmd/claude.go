@@ -31,9 +31,6 @@ import (
 const (
 	claudeDefaultImage = "claude-agent"
 	claudeDefaultSize  = "medium"
-	// claudeSession is the tmux session Claude runs in on the box: one
-	// per box, so a second `boxctl claude` attaches to it.
-	claudeSession = "claude"
 	// claudeInstall is Anthropic's installer, run on first use rather than
 	// baking Claude Code into the image (which would redistribute it). It
 	// installs to ~/.local/bin and keeps itself updated.
@@ -97,36 +94,20 @@ that must reach GitHub while you're away, --github store keeps a token
 you paste on the box -- make it a fine-grained one for this repository.
 --github off gives it nothing. Your git user.name and user.email are set
 on the box either way.`,
-	RunE: runClaude,
+	RunE: claudeAgent.runs(runClaude),
 }
 
 func init() {
-	claudeCmd.PersistentFlags().StringVar(&claudeBox, "box", "", "box to use (default: claude-<project directory name>)")
-	claudeCmd.PersistentFlags().StringVar(&claudeProject, "project", "", "project directory (default: the git repository, or directory, you're in)")
+	claudeAgent.addFlags(claudeCmd)
 	claudeCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Claude Code session (its ID) on the box")
-	claudeCmd.PersistentFlags().StringVarP(&claudeTask, "task", "t", "", "work on a task in parallel: its own worktree (<dir>@<task>, branch <task>) and Claude on the box")
-	claudeCmd.PersistentFlags().BoolVar(&claudeOwnBox, "own-box", false, "with --task: give the task a box of its own (claude-<project>-<task>) instead of a worktree")
 	claudeCmd.Flags().StringVar(&claudeAuth, "claude-auth", claudeAuthAuto, "how Claude on the box logs in: auto (the token boxctl claude login saved, else /login), token, login or api-key")
 	_ = claudeCmd.RegisterFlagCompletionFunc("claude-auth", cobra.FixedCompletions([]string{claudeAuthAuto, claudeAuthToken, claudeAuthLogin, claudeAuthAPIKey}, cobra.ShellCompDirectiveNoFileComp))
-	claudeCmd.Flags().StringVarP(&claudeSize, "size", "s", claudeDefaultSize, "size of a box created for this")
-	_ = claudeCmd.RegisterFlagCompletionFunc("size", completeSize)
-	claudeCmd.Flags().StringVarP(&claudeImage, "image", "i", claudeDefaultImage, "image of a box created for this")
-	claudeCmd.Flags().StringVarP(&claudePrompt, "prompt", "p", "", "first message for a newly started Claude")
-	claudeCmd.Flags().BoolVarP(&claudeDetach, "detach", "d", false, "start Claude on the box without attaching to it")
-	claudeCmd.Flags().StringVar(&claudeGitHub, "github", githubForward, "GitHub credentials for the box: forward (lent while attached), store (a token kept on the box) or off")
-	_ = claudeCmd.RegisterFlagCompletionFunc("github", cobra.FixedCompletions([]string{githubForward, githubStore, githubOff}, cobra.ShellCompDirectiveNoFileComp))
-	claudeCmd.Flags().DurationVar(&claudeIdle, "idle-ttl", claudeDefaultIdleTTL, "pause the box after this long unused, 10m to 720h (set on a new box, or on an existing one when given)")
 	rootCmd.AddCommand(claudeCmd)
 }
 
 func runClaude(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
-	switch claudeGitHub {
-	case githubForward, githubStore, githubOff:
-	default:
-		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
-	}
-	if err := resolveTask(); err != nil {
+	if err := checkSessionFlags(); err != nil {
 		return err
 	}
 	// Everything that can fail here fails before any box is created or
@@ -146,19 +127,79 @@ func runClaude(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	t, err := openClaudeBox(ctx, true, cmd.Flags().Changed("idle-ttl"))
+	t, sess, err := openSession(ctx, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {
 		return err
 	}
 	defer t.box.close()
-	dir, name, box := t.dir, t.name, t.box
+	name, box := t.name, t.box
 
-	if t.needsCopy {
-		if err := copyProject(ctx, box, dir); err != nil {
+	if err := copyClaudeConfig(ctx, box); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: couldn't copy your Claude configuration: %v\n", err)
+	}
+	if err := box.run(ctx, agent.setupScript(), nil); err != nil {
+		return fmt.Errorf("installing Claude Code on %s: %w", name, err)
+	}
+	if err := box.run(ctx, claudeStateScript([]string{sess.dir}, localClaudeTheme(), apiKey), nil); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: couldn't skip Claude's first-run setup on %s: %v\n", name, err)
+	}
+
+	running := sessionRunning(ctx, box, sess)
+	if claudeHandoff != "" {
+		if running {
+			return fmt.Errorf("a Claude session is already running there -- attach with %s and quit it, then hand off again", sess.attachHint(name))
+		}
+		if err := copyTranscript(ctx, box, sess.dir, transcript, claudeHandoff); err != nil {
 			return err
 		}
+		args = append([]string{"--resume", claudeHandoff}, args...)
+	}
+	if !running {
+		if env == "" && claudeAuth == claudeAuthAuto {
+			fmt.Fprintln(os.Stderr, "Log Claude in on the box with /login -- or run boxctl claude login once, and every box's Claude is logged in.")
+		}
+		if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
+			return fmt.Errorf("passing Claude its credentials: %w", err)
+		}
+	}
+	return startSession(ctx, t, sess, running, args)
+}
+
+// checkSessionFlags checks the flags every agent's command shares, before
+// anything is done.
+func checkSessionFlags() error {
+	switch claudeGitHub {
+	case githubForward, githubStore, githubOff:
+	default:
+		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
+	}
+	return resolveTask()
+}
+
+// openSession is the start of an agent's run, whichever agent: the
+// project's box with the project on it -- copied the first time -- the
+// task's worktree, your git identity and, for --github store, a token.
+func openSession(ctx context.Context, setTTL bool) (*claudeTarget, taskSession, error) {
+	t, err := openClaudeBox(ctx, true, setTTL)
+	if err != nil {
+		return nil, taskSession{}, err
+	}
+	sess, err := prepareSession(ctx, t)
+	if err != nil {
+		t.box.close()
+		return nil, taskSession{}, err
+	}
+	return t, sess, nil
+}
+
+func prepareSession(ctx context.Context, t *claudeTarget) (taskSession, error) {
+	dir, name, box := t.dir, t.name, t.box
+	if t.needsCopy {
+		if err := copyProject(ctx, box, dir); err != nil {
+			return taskSession{}, err
+		}
 		if err := markProject(ctx, box, dir); err != nil {
-			return err
+			return taskSession{}, err
 		}
 	} else if claudeTask == "" {
 		fmt.Fprintf(os.Stderr, "%s is already on %s; working with the box's copy (it isn't copied again).\n", dir, name)
@@ -169,66 +210,48 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	sess := newTaskSession(dir, claudeTask)
 	if sess.task != "" {
 		if err := box.run(ctx, worktreeScript(dir, sess.task), nil); err != nil {
-			return fmt.Errorf("making the %s worktree on %s: %w", sess.task, name, err)
+			return sess, fmt.Errorf("making the %s worktree on %s: %w", sess.task, name, err)
 		}
-	}
-	if err := copyClaudeConfig(ctx, box); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't copy your Claude configuration: %v\n", err)
 	}
 	if err := copyGitIdentity(ctx, box, dir); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't set your git identity on %s: %v\n", name, err)
 	}
 	if claudeGitHub == githubStore {
 		if err := storeGitHubToken(ctx, box, githubRepo(dir)); err != nil {
-			return err
+			return sess, err
 		}
 	}
-	if err := box.run(ctx, claudeSetupScript, nil); err != nil {
-		return fmt.Errorf("installing Claude Code on %s: %w", name, err)
-	}
-	if err := box.run(ctx, claudeStateScript([]string{sess.dir}, localClaudeTheme(), apiKey), nil); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't skip Claude's first-run setup on %s: %v\n", name, err)
-	}
+	return sess, nil
+}
 
-	// =name: exact. A bare -t name falls back to a prefix match, so "claude"
-	// would find "claude-auth" and take the main session for running.
-	running := box.run(ctx, "tmux has-session -t ="+sess.tmux+" 2>/dev/null", nil) == nil
-	if claudeHandoff != "" {
-		if running {
-			return fmt.Errorf("a Claude session is already running there -- attach with %s and quit it, then hand off again", sess.attachHint(name))
-		}
-		if err := copyTranscript(ctx, box, sess.dir, transcript, claudeHandoff); err != nil {
-			return err
-		}
-		args = append([]string{"--resume", claudeHandoff}, args...)
-	}
-	if running {
-		if claudePrompt != "" || len(args) > 0 {
-			fmt.Fprintf(os.Stderr, "Claude is already running there; attaching to it (--prompt and claude arguments only apply to a new session).\n")
-		}
-	} else {
-		if env == "" && claudeAuth == claudeAuthAuto {
-			fmt.Fprintln(os.Stderr, "Log Claude in on the box with /login -- or run boxctl claude login once, and every box's Claude is logged in.")
-		}
-		if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
-			return fmt.Errorf("passing Claude its credentials: %w", err)
-		}
+// sessionRunning reports whether sess's agent is running in tmux on the
+// box. =name: exact. A bare -t name falls back to a prefix match, so
+// "claude" would find "claude-auth" and take the main session for running.
+func sessionRunning(ctx context.Context, box *boxSSH, sess taskSession) bool {
+	return box.run(ctx, "tmux has-session -t ="+sess.tmux+" 2>/dev/null", nil) == nil
+}
+
+// startSession starts the agent in sess with --prompt and args, unless
+// it's running already, and attaches to it unless --detach says not to.
+func startSession(ctx context.Context, t *claudeTarget, sess taskSession, running bool, args []string) error {
+	if running && (claudePrompt != "" || len(args) > 0) {
+		fmt.Fprintf(os.Stderr, "%s is already running there; attaching to it (--prompt and %s arguments only apply to a new session).\n", agent.title, agent.bin)
 	}
 	line := sess.commandLine(claudePrompt, args)
 	if claudeDetach {
 		if !running {
-			if err := box.run(ctx, sess.tmuxCommand(line, true), nil); err != nil {
-				return fmt.Errorf("starting Claude on %s: %w", name, err)
+			if err := t.box.run(ctx, sess.tmuxCommand(line, true), nil); err != nil {
+				return fmt.Errorf("starting %s on %s: %w", agent.title, t.name, err)
 			}
 		}
-		fmt.Fprintf(os.Stderr, "Claude is running on %s; attach with: %s\n", name, sess.attachHint(name))
+		fmt.Fprintf(os.Stderr, "%s is running on %s; attach with: %s\n", agent.title, t.name, sess.attachHint(t.name))
 		return nil
 	}
-	return attachClaude(ctx, box, sess, sess.tmuxCommand(line, false))
+	return attachClaude(ctx, t.box, sess, sess.tmuxCommand(line, false))
 }
 
 // resolveTask checks --task and --own-box, and turns --own-box into the
-// task's own box: claude-<project>-<task>, where it's the main session.
+// task's own box: <agent>-<project>-<task>, where it's the main session.
 func resolveTask() error {
 	if claudeTask != "" && !taskNamePattern.MatchString(claudeTask) {
 		return fmt.Errorf("--task %q: use lowercase letters, digits and dashes, at most 30", claudeTask)
@@ -291,9 +314,9 @@ type claudeTarget struct {
 }
 
 // openClaudeBox resolves the project and its box (--box, or
-// claude-<dir>), makes sure it's running and reachable with boxctl's
+// <agent>-<dir>), makes sure it's running and reachable with boxctl's
 // key, and checks it holds this project and no other. create says
-// whether a missing box is created (boxctl claude) or an error (fetch,
+// whether a missing box is created (boxctl claude, kilo) or an error (fetch,
 // push); setTTL applies --idle-ttl to a box that already exists.
 func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, error) {
 	dir, err := projectDir()
@@ -351,7 +374,7 @@ func checkProject(ctx context.Context, box *boxSSH, dir string) (needsCopy bool,
 		return false, nil
 	case strings.HasPrefix(status, "other "):
 		other := strings.TrimPrefix(status, "other ")
-		return false, fmt.Errorf("%s holds %s, not %s -- run boxctl claude from there, or pick another box with --box", box.name, other, dir)
+		return false, fmt.Errorf("%s holds %s, not %s -- run boxctl %s from there, or pick another box with --box", box.name, other, dir, agent.name)
 	default:
 		return false, fmt.Errorf("checking %s's project: unexpected %q", box.name, status)
 	}
@@ -376,14 +399,6 @@ func markProject(ctx context.Context, box *boxSSH, dir string) error {
 	return box.run(ctx, `mkdir -p "$(dirname `+projectMarker+`)" && printf '%s' `+d+` >`+projectMarker+`
 [ ! -d `+d+`/.git ] || git -C `+d+` config receive.denyCurrentBranch updateInstead`, nil)
 }
-
-// claudeSetupScript makes sure the box can run Claude in tmux. On the
-// claude-agent image only the Claude Code install does anything, once;
-// other images get tmux from apt.
-const claudeSetupScript = `set -e
-export PATH="$HOME/.local/bin:$PATH"
-command -v tmux >/dev/null || { echo "Installing tmux..." >&2; apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux >/dev/null; }
-command -v claude >/dev/null || { echo "Installing Claude Code..." >&2; ` + claudeInstall + ` >&2; }`
 
 // projectDir is the git repository's top level, or the directory itself
 // outside one, for --project or else the current directory -- the
@@ -414,8 +429,9 @@ func projectDir() (string, error) {
 
 var slugUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)
 
-// claudeBoxName is the project's box, named like the Claude Code plugin's
-// project-mode box: claude-<directory name, slugged, at most 20 chars>.
+// claudeBoxName is the project's box for the running agent:
+// <agent>-<directory name, slugged, at most 20 chars>, so claude-<dir>
+// for Claude.
 func claudeBoxName(dir string) string {
 	slug := slugUnsafe.ReplaceAllString(strings.ToLower(filepath.Base(dir)), "-")
 	if len(slug) > 20 {
@@ -425,7 +441,7 @@ func claudeBoxName(dir string) string {
 	if slug == "" {
 		slug = "project"
 	}
-	return "claude-" + slug
+	return agent.name + "-" + slug
 }
 
 // ensureClaudeBox resumes name if it exists, or creates it when create
@@ -441,7 +457,7 @@ func ensureClaudeBox(ctx context.Context, c *client.Client, name string, create 
 		}
 	}
 	if !create {
-		return false, fmt.Errorf("no box %s -- start one with boxctl claude", name)
+		return false, fmt.Errorf("no box %s -- start one with boxctl %s", name, agent.name)
 	}
 	fmt.Fprintf(os.Stderr, "Creating %s (%s, %s)...\n", name, claudeImage, claudeSize)
 	if _, err := c.Create(ctx, name, "", claudeImage, claudeSize); err != nil {
@@ -507,7 +523,7 @@ func newBoxSSH(name, key string) (*boxSSH, error) {
 		return nil, err
 	}
 	if _, err := exec.LookPath("ssh"); err != nil {
-		return nil, errors.New("boxctl claude needs ssh on this machine")
+		return nil, fmt.Errorf("boxctl %s needs ssh on this machine", agent.name)
 	}
 	control := filepath.Join(filepath.Dir(key), "cm-%C")
 	return &boxSSH{name: name, args: []string{
