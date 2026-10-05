@@ -26,50 +26,55 @@ const boxRemote = "box"
 // and a directory of refs by one name.)
 const wipRef = "refs/boxctl/wip"
 
-var claudeFetchCmd = &cobra.Command{
-	Use:   "fetch",
-	Short: "Fetch the box's branches and uncommitted work as box/*",
-	Long: `Fetches every branch of the project on its box into this repository as
-box/<branch>, whether or not Claude has pushed it anywhere, plus
+// fetchCmd and pushCmd are an agent's fetch and push subcommands.
+func (a *boxAgent) fetchCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "fetch",
+		Short: "Fetch the box's branches and uncommitted work as box/*",
+		Long: a.fill(`Fetches every branch of the project on its box into this repository as
+box/<branch>, whether or not {Agent} has pushed it anywhere, plus
 box/wip: a commit of the box's uncommitted work (tracked changes and
 untracked files that aren't ignored) on top of whatever the box has
 checked out. Nothing on the box changes.
 
-  boxctl claude fetch
+  boxctl {agent} fetch
   git log box/fix-auth
   git diff main box/fix-auth
-  git show --stat box/wip           # what Claude is in the middle of
+  git show --stat box/wip           # what {Agent} is in the middle of
   git checkout -b fix-auth box/fix-auth
 
 The box is a git remote named box (root@<box>.box:<project dir>);
-boxctl claude fetch and push supply the ssh to reach it.`,
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		return claudeFetch(cmd.Context())
-	},
+boxctl {agent} fetch and push supply the ssh to reach it.`),
+		Args: cobra.NoArgs,
+		RunE: a.runs(func(cmd *cobra.Command, _ []string) error {
+			return claudeFetch(cmd.Context())
+		}),
+	}
 }
 
-var claudePushCmd = &cobra.Command{
-	Use:   "push [refspec...]",
-	Short: "Push local commits to the project on its box",
-	Long: `Pushes to the project on its box -- the current branch, or the refspecs
-given, as git push would -- so Claude has commits made here: a fix, a
+func (a *boxAgent) pushCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "push [refspec...]",
+		Short: "Push local commits to the project on its box",
+		Long: a.fill(`Pushes to the project on its box -- the current branch, or the refspecs
+given, as git push would -- so {Agent} has commits made here: a fix, a
 rebase onto the latest main.
 
 Pushing to the branch the box has checked out updates its files too, as
-long as Claude has no uncommitted changes there; with some, git refuses
-rather than overwrite them. Push to another branch then, or have Claude
+long as {Agent} has no uncommitted changes there; with some, git refuses
+rather than overwrite them. Push to another branch then, or have {Agent}
 commit first.
 
-  boxctl claude push                 # the current branch
-  boxctl claude push main:main`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return claudePush(cmd.Context(), args)
-	},
+  boxctl {agent} push                 # the current branch
+  boxctl {agent} push main:main`),
+		RunE: a.runs(func(cmd *cobra.Command, args []string) error {
+			return claudePush(cmd.Context(), args)
+		}),
+	}
 }
 
 func init() {
-	claudeCmd.AddCommand(claudeFetchCmd, claudePushCmd)
+	claudeCmd.AddCommand(claudeAgent.fetchCmd(), claudeAgent.pushCmd())
 }
 
 func claudeFetch(ctx context.Context) error {
@@ -137,7 +142,7 @@ func claudePush(ctx context.Context, refspecs []string) error {
 		refspecs = []string{"HEAD"}
 	}
 	if err := t.git(ctx, append([]string{"push", boxRemote}, refspecs...)...); err != nil {
-		return fmt.Errorf("%w (if the box's checked-out branch has uncommitted changes, push to another branch or have Claude commit first)", err)
+		return fmt.Errorf("%w (if the box's checked-out branch has uncommitted changes, push to another branch or have %s commit first)", err, agent.title)
 	}
 	return nil
 }
@@ -162,7 +167,7 @@ func openClaudeGit(ctx context.Context) (*claudeGitTarget, error) {
 	}
 	if t.needsCopy {
 		t.box.close()
-		return nil, fmt.Errorf("%s doesn't have %s yet -- run boxctl claude first", t.name, t.dir)
+		return nil, fmt.Errorf("%s doesn't have %s yet -- run boxctl %s first", t.name, t.dir, agent.name)
 	}
 	g := &claudeGitTarget{t}
 	if err := g.ensureRemote(ctx); err != nil {

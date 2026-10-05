@@ -23,18 +23,18 @@ var taskNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,29}$`)
 type taskSession struct {
 	task     string // "" for the main checkout
 	dir      string // where Claude runs on the box
-	tmux     string // its tmux session
+	tmux     string // its tmux session: the agent's name, -<task> for a task
 	ghSocket string // where its GitHub forwarding lands on the box
 }
 
 func newTaskSession(project, task string) taskSession {
 	if task == "" {
-		return taskSession{dir: project, tmux: claudeSession, ghSocket: boxGitHubSocket}
+		return taskSession{dir: project, tmux: agent.name, ghSocket: boxGitHubSocket}
 	}
 	return taskSession{
 		task:     task,
 		dir:      taskDir(project, task),
-		tmux:     claudeSession + "-" + task,
+		tmux:     agent.name + "-" + task,
 		ghSocket: "/root/.boxctl/gh-" + task + ".sock",
 	}
 }
@@ -45,7 +45,7 @@ func taskDir(project, task string) string { return project + "@" + task }
 
 // attachHint is the command that comes back to this session.
 func (s taskSession) attachHint(box string) string {
-	hint := "boxctl claude --box " + box
+	hint := "boxctl " + agent.name + " --box " + box
 	if s.task != "" {
 		hint += " --task " + s.task
 	}
@@ -59,33 +59,36 @@ func (s taskSession) envFile() string { return "/run/boxctl/" + s.tmux + ".env" 
 
 // commandLine is the shell command tmux runs for this session: pick up
 // and delete the secrets, point the GitHub helpers at this session's
-// socket, then claude with the prompt and arguments.
+// socket, then the agent with the prompt and arguments.
 func (s taskSession) commandLine(prompt string, args []string) string {
 	f := shellQuote(s.envFile())
 	words := []string{
 		"if [ -f " + f + " ]; then . " + f + "; rm -f " + f + "; fi;",
 		"export BOXCTL_GH_SOCKET=" + shellQuote(s.ghSocket) + ";",
-		`PATH="$HOME/.local/bin:$PATH"`, "exec", "claude",
+		`PATH="$HOME/` + agent.binDir + `:$PATH"`, "exec", agent.bin,
 	}
 	for _, a := range args {
 		words = append(words, shellQuote(a))
 	}
 	if prompt != "" {
+		if agent.promptFlag != "" {
+			words = append(words, agent.promptFlag)
+		}
 		words = append(words, shellQuote(prompt))
 	}
 	return strings.Join(words, " ")
 }
 
-// tmuxCommand starts this session's Claude in tmux, or with -A attaches
+// tmuxCommand starts this session's agent in tmux, or with -A attaches
 // to it if it's already running. -u: the box has no locale set, and
 // Claude's interface is Unicode.
-func (s taskSession) tmuxCommand(claudeLine string, detached bool) string {
+func (s taskSession) tmuxCommand(line string, detached bool) string {
 	mode := "-A"
 	if detached {
 		mode = "-d"
 	}
 	return fmt.Sprintf("tmux -u new-session %s -s %s -c %s %s",
-		mode, s.tmux, shellQuote(s.dir), shellQuote(claudeLine))
+		mode, s.tmux, shellQuote(s.dir), shellQuote(line))
 }
 
 // worktreeScript makes the task's worktree if it isn't there: on branch

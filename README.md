@@ -88,6 +88,7 @@ boxctl ssh my-box -- ls -al   # run one command instead of a shell
 boxctl port-forward my-box 3000   # localhost:3000 -> port 3000 inside the box
 ssh -o ProxyCommand='boxctl ssh-proxy %h' root@my-box   # real ssh (key needed, see below)
 boxctl claude                     # Claude Code on a box, with this project (see below)
+boxctl kilo                       # the same, for the Kilo CLI (see below)
 boxctl pause my-box
 boxctl resume my-box
 boxctl backups                    # saved copies of paused boxes (made by `boxctl download` or the dashboard)
@@ -215,6 +216,45 @@ session): boxctl-vms's `docs/plans/claude-on-the-box.md`.
 It all runs over real ssh to the box's sshd, as root, with the key in
 `~/.boxctl/claude/id_ed25519` (authorized on the box over `boxctl ssh`),
 tunneled by `boxctl ssh-proxy`.
+
+## Kilo on a box (`boxctl kilo`)
+
+The same thing for the [Kilo CLI](https://kilo.ai/docs): the box, the
+project copy, tmux, tasks, GitHub, `fetch`/`push` and the idle TTL all
+work as they do for `boxctl claude`, on a box of its own
+(`kilo-<directory>`).
+
+```bash
+cd ~/src/myproject
+boxctl kilo                             # create or reattach to kilo-myproject
+boxctl kilo --prompt "fix the flaky auth test"
+boxctl kilo --detach --prompt "..."     # start it without attaching
+boxctl kilo -- --model provider/model   # arguments for kilo itself
+boxctl kilo --task auth                 # a second Kilo, in parallel, on its own branch
+boxctl kilo --env OPENAI_API_KEY        # pass a provider key from this shell
+boxctl kilo ls                          # this project's Kilo sessions
+boxctl kilo fetch                       # the box's branches and uncommitted work, as box/*
+boxctl kilo push                        # this branch to the box
+```
+
+The first run installs Kilo with its own installer
+(`https://kilo.ai/cli/install`, into `~/.kilo/bin`) and copies your
+`~/.config/kilo` -- `kilo.json`/`kilo.jsonc`, `AGENTS.md`, `agents/`,
+`commands/`, `modes/` and `skills/`, not `plugin/` -- as it is. A
+provider that configuration points at on this machine or your own
+network (`http://localhost:...`) isn't reachable from the box; pick
+another with `-- --model`.
+
+**Credentials.** Kilo on the box is logged in as it is here, with
+nothing on the box's disk: what `kilo auth login` saved on this machine
+(`~/.local/share/kilo/auth.json`, passed as `KILO_AUTH_CONTENT`) and the
+environment variables your configuration refers to (`{env:NAME}`), if
+they're set in this shell, go into the new session's environment the way
+Claude's token does -- over ssh's stdin into a file in the box's `/run`
+that the session reads and deletes. `--env NAME` (repeatable) passes one
+more variable the same way. `--kilo-auth login` passes none of yours:
+log in on the box with `/connect`, and that login stays there. There is
+no `--handoff` for Kilo yet.
 
 ## Real ssh (`ssh-proxy`)
 

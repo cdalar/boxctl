@@ -13,21 +13,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var claudeLsCmd = &cobra.Command{
-	Use:   "ls",
-	Short: "List this project's Claude sessions: the main one and its tasks",
-	Long: `Lists the Claude sessions working on this project: the main checkout and
+// lsCmd is an agent's ls subcommand.
+func (a *boxAgent) lsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ls",
+		Short: a.fill("List this project's {Agent} sessions: the main one and its tasks"),
+		Long: a.fill(`Lists the {Agent} sessions working on this project: the main checkout and
 each --task worktree on the project's box (with its branch, whether
-Claude is running there, and when it last showed activity), plus the
-boxes of --own-box tasks.`,
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, _ []string) error {
-		return claudeList(cmd.Context())
-	},
+{Agent} is running there, and when it last showed activity), plus the
+boxes of --own-box tasks.`),
+		Args: cobra.NoArgs,
+		RunE: a.runs(func(cmd *cobra.Command, _ []string) error {
+			return claudeList(cmd.Context())
+		}),
+	}
 }
 
 func init() {
-	claudeCmd.AddCommand(claudeLsCmd)
+	claudeCmd.AddCommand(claudeAgent.lsCmd())
 }
 
 func claudeList(ctx context.Context) error {
@@ -45,7 +48,7 @@ func claudeList(ctx context.Context) error {
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "TASK\tBRANCH\tCLAUDE\tACTIVE\tBOX")
+	_, _ = fmt.Fprintf(tw, "TASK\tBRANCH\t%s\tACTIVE\tBOX\n", strings.ToUpper(agent.name))
 	// The project's box first, then the --own-box tasks' boxes.
 	sort.SliceStable(vms, func(i, j int) bool { return vms[i].Name == main && vms[j].Name != main })
 	rows := 0
@@ -66,7 +69,7 @@ func claudeList(ctx context.Context) error {
 		}
 	}
 	if rows == 0 {
-		fmt.Fprintf(os.Stderr, "No Claude sessions for %s -- start one with boxctl claude.\n", dir)
+		fmt.Fprintf(os.Stderr, "No %s sessions for %s -- start one with boxctl %s.\n", agent.title, dir, agent.name)
 		return nil
 	}
 	return tw.Flush()

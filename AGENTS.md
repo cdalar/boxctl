@@ -49,7 +49,8 @@ every target; it needs `goreleaser` on PATH.
 
 Tests are few -- this is a thin, mostly-I/O client -- and cover the
 pure parts (`go test ./...`: `boxctl claude`'s file selection, tar
-stream, settings filtering and shell quoting). Otherwise rely on `go
+stream, settings filtering and shell quoting, `boxctl kilo`'s
+credential environment). Otherwise rely on `go
 vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
 ...`) for changes.
 
@@ -137,6 +138,21 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   (tmpfs), which the session's command sources and deletes -- never
   argv, never disk. Always `tmux ... -t =<name>`: a bare `-t claude`
   prefix-matches `claude-auth`.
+- `cmd/agent.go`, `cmd/kilo.go` — `kilo`: the same for the Kilo CLI.
+  A `boxAgent` is the little that differs between the two (name -- also
+  the box prefix and tmux session -- binary, install dir, installer,
+  how a first prompt is passed); everything in `claude*.go` that isn't
+  Claude's own (config, token, handoff) reads the running command's
+  agent from the `agent` global, which each command's `RunE` sets through
+  `boxAgent.runs`. Both commands bind the same flag variables
+  (`boxAgent.addFlags`) and get their `ls`/`fetch`/`push` from
+  `lsCmd`/`fetchCmd`/`pushCmd`; `openSession` and `startSession` are the
+  shared start and end of a run. Kilo's own: `~/.config/kilo` copied
+  verbatim (it's JSONC -- don't parse it), and credentials as
+  environment in the same tmpfs env file as Claude's token --
+  `auth.json` as `KILO_AUTH_CONTENT`, plus the `{env:NAME}` variables the
+  config refers to and any `--env NAME`. A third agent (opencode, which
+  Kilo is a fork of) is another `boxAgent` and a file like `kilo.go`.
 - `cmd/backups.go`/`restore.go` — `backups` (GET /api/backups) and
   `restore <backup> [--name] [--size]` (POST
   /api/backups/{id}/restore, then the same import poll as `import`).
