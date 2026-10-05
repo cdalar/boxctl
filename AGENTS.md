@@ -153,6 +153,12 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `auth.json` as `KILO_AUTH_CONTENT`, plus the `{env:NAME}` variables the
   config refers to and any `--env NAME`. A third agent (opencode, which
   Kilo is a fork of) is another `boxAgent` and a file like `kilo.go`.
+- `cmd/backups.go`/`restore.go` — `backups` (GET /api/backups) and
+  `restore <backup> [--name] [--size]` (POST
+  /api/backups/{id}/restore, then the same import poll as `import`).
+  `<backup>` is a backup id or a box name, meaning that box's newest
+  backup (`findBackup`). The paused-vs-fresh-boot difference `--size`
+  makes is the server's (`boxctl-vms`'s `handleRestoreBackup`).
 - `cmd/sizes.go` — `sizes` (GET /api/sizes), plus `sizeLabel` for
   `ls`'s SIZE column and `completeSize` for `create`/`exec`'s
   `--size`. The size names are the server's; this CLI never hard-codes
