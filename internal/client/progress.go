@@ -66,9 +66,9 @@ func printProgress(done, total int64) {
 	}
 	if total > 0 {
 		pct := float64(done) / float64(total) * 100
-		fmt.Fprintf(os.Stderr, "\r%s / %s (%.0f%%)", formatBytes(done), formatBytes(total), pct)
+		fmt.Fprintf(os.Stderr, "\r%s / %s (%.0f%%)", FormatBytes(done), FormatBytes(total), pct)
 	} else {
-		fmt.Fprintf(os.Stderr, "\r%s", formatBytes(done))
+		fmt.Fprintf(os.Stderr, "\r%s", FormatBytes(done))
 	}
 }
 
@@ -117,7 +117,8 @@ func finishWaiting() {
 	fmt.Fprint(os.Stderr, "\r\033[K")
 }
 
-func formatBytes(n int64) string {
+// FormatBytes renders a byte count for people ("1.2 GB").
+func FormatBytes(n int64) string {
 	const unit = 1024
 	if n < unit {
 		return fmt.Sprintf("%d B", n)
