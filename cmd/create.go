@@ -23,6 +23,7 @@ var (
 	createApplyFile string
 	createImage     string
 	createSize      string
+	createIdleTTL   time.Duration
 )
 
 var createCmd = &cobra.Command{
@@ -35,38 +36,41 @@ var createCmd = &cobra.Command{
 		fmt.Printf("Creating %s...\n", name)
 
 		c := newClient()
-		if createApplyFile == "" {
-			vm, err := c.Create(cmd.Context(), name, "", createImage, createSize)
-			if err != nil {
-				return err
+		// With an apply script the server answers only once it has
+		// finished (minutes, for something like Rancher), so tail its log
+		// off the box meanwhile instead of sitting silent the whole time.
+		stopTail := func() {}
+		if createApplyFile != "" {
+			tailCtx, cancelTail := context.WithCancel(cmd.Context())
+			tailDone := make(chan struct{})
+			t := &applyLogTail{c: c, box: name, log: "output-" + path.Base(createApplyFile) + ".log"}
+			go func() {
+				defer close(tailDone)
+				t.follow(tailCtx)
+			}()
+			stopTail = func() {
+				cancelTail()
+				<-tailDone
+				// Whatever the script wrote since the last poll -- best
+				// effort, the box may not even exist if the create failed.
+				drainCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				t.poll(drainCtx)
 			}
-			fmt.Printf("Created %s (%s, %s)\n", vm.Name, vm.State, sizeLabel(*vm))
-			return nil
 		}
-
-		// The server answers only once the apply script has finished
-		// (minutes, for something like Rancher), so tail its log off the
-		// box meanwhile instead of sitting silent the whole time.
-		tailCtx, stopTail := context.WithCancel(cmd.Context())
-		tailDone := make(chan struct{})
-		t := &applyLogTail{c: c, box: name, log: "output-" + path.Base(createApplyFile) + ".log"}
-		go func() {
-			defer close(tailDone)
-			t.follow(tailCtx)
-		}()
 
 		vm, err := c.Create(cmd.Context(), name, createApplyFile, createImage, createSize)
 		stopTail()
-		<-tailDone
-		// Whatever the script wrote since the last poll -- best effort,
-		// the box may not even exist if the create failed.
-		drainCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		t.poll(drainCtx)
-		cancel()
 		if err != nil {
 			return err
 		}
 		fmt.Printf("Created %s (%s, %s)\n", vm.Name, vm.State, sizeLabel(*vm))
+		if cmd.Flags().Changed("idle-ttl") {
+			if _, err := c.SetIdleTTL(cmd.Context(), name, createIdleTTL); err != nil {
+				return fmt.Errorf("setting %s's idle TTL: %w", name, err)
+			}
+			fmt.Printf("%s pauses after %s unused\n", name, createIdleTTL)
+		}
 		return nil
 	},
 }
@@ -130,5 +134,6 @@ func init() {
 	createCmd.Flags().StringVarP(&createImage, "image", "i", defaultImage, "boot image to use (list them with boxctl images)")
 	createCmd.Flags().StringVarP(&createSize, "size", "s", "", "box size: small, medium or large (list them with boxctl sizes; default small)")
 	_ = createCmd.RegisterFlagCompletionFunc("size", completeSize)
+	createCmd.Flags().DurationVar(&createIdleTTL, "idle-ttl", 0, "pause the box after this long unused, 10m to 720h (default: the server's, 6h; 0 never)")
 	rootCmd.AddCommand(createCmd)
 }

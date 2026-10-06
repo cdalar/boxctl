@@ -16,13 +16,20 @@ var sizesCmd = &cobra.Command{
 	Short:   "List available box sizes",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		asJSON, err := wantJSON(cmd)
+		if err != nil {
+			return err
+		}
 		sizes, err := newClient().ListSizes(cmd.Context())
 		if err != nil {
 			return err
 		}
+		if asJSON {
+			return printJSON(sizes)
+		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		if _, err := fmt.Fprintln(w, "NAME\tVCPU\tMEMORY"); err != nil {
+		if _, err := fmt.Fprintln(w, "NAME\tVCPU\tMEMORY\tDISK"); err != nil {
 			return err
 		}
 		for _, s := range sizes {
@@ -30,7 +37,12 @@ var sizesCmd = &cobra.Command{
 			if s.Default {
 				name += " (default)"
 			}
-			if _, err := fmt.Fprintf(w, "%s\t%d\t%s\n", name, s.VCPU, memLabel(s.MemMiB)); err != nil {
+			// "-" only from a server that predates per-size disks.
+			disk := "-"
+			if s.DiskMiB > 0 {
+				disk = memLabel(s.DiskMiB)
+			}
+			if _, err := fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", name, s.VCPU, memLabel(s.MemMiB), disk); err != nil {
 				return err
 			}
 		}
@@ -39,6 +51,7 @@ var sizesCmd = &cobra.Command{
 }
 
 func init() {
+	addOutputFlag(sizesCmd)
 	rootCmd.AddCommand(sizesCmd)
 }
 

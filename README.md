@@ -77,15 +77,23 @@ into `dist/`).
 boxctl login
 
 boxctl ls
+boxctl ls -o json                 # for scripts; images and sizes take -o json too
 boxctl images
 boxctl create my-box
-boxctl sizes                      # small (default) 1 vCPU/4 GiB, medium 2/8, large 4/16
+boxctl sizes                      # vCPU, memory and disk of small (default), medium, large
 boxctl create big-box --size large
+boxctl create long-job --idle-ttl 48h   # pause after 48h unused (default 6h)
 boxctl ssh my-box
 boxctl ssh my-box -- ls -al   # run one command instead of a shell
 boxctl port-forward my-box 3000   # localhost:3000 -> port 3000 inside the box
+ssh -o ProxyCommand='boxctl ssh-proxy %h' root@my-box   # real ssh (key needed, see below)
+boxctl claude                     # Claude Code on a box, with this project (see below)
+boxctl kilo                       # the same, for the Kilo CLI (see below)
 boxctl pause my-box
 boxctl resume my-box
+boxctl backups                    # saved copies of paused boxes (made by `boxctl download` or the dashboard)
+boxctl restore my-box             # newest backup of my-box, back as a paused box
+boxctl restore my-box -n big-box --size large   # ...or booted fresh at another size (files kept, running programs not)
 boxctl rm my-box
 
 boxctl logout   # forgets the token locally; revoke it from the dashboard too
@@ -94,6 +102,179 @@ boxctl logout   # forgets the token locally; revoke it from the dashboard too
 Every command talks to `https://vms-backend.boxctl.io` by default; override
 with `--api-url` (or by passing a different one to `boxctl login`) for a
 local/dev `boxctl-vms` instance.
+
+## Claude Code on a box (`boxctl claude`)
+
+Runs Claude Code itself on a box instead of on your machine, attached to
+your terminal -- so its file edits and its shell both happen there, on
+the box's copy of the project, and nothing is synced.
+
+```bash
+cd ~/src/myproject
+boxctl claude                           # create or reattach to claude-myproject
+boxctl claude --prompt "fix the flaky auth test"
+boxctl claude --detach --prompt "..."   # start it without attaching
+boxctl claude -- --model opus           # arguments for claude itself
+boxctl claude login                     # once: every box's Claude is logged in (below)
+boxctl claude --task auth               # a second Claude, in parallel, on its own branch
+boxctl claude ls                        # this project's Claude sessions
+boxctl claude --handoff <session-id>    # carry on a local session on the box
+boxctl claude fetch                     # the box's branches and uncommitted work, as box/*
+boxctl claude push                      # this branch to the box
+```
+
+**Logging Claude in, once.** `boxctl claude login` runs `claude
+setup-token` here (one browser approval; Pro, Max, Team or Enterprise)
+and saves the long-lived token it makes -- in the macOS Keychain, or
+`~/.boxctl/claude/oauth-token` (0600) elsewhere. Every Claude `boxctl
+claude` then starts, on any box or task, gets it as
+`CLAUDE_CODE_OAUTH_TOKEN`: sent over ssh's stdin into a 0600 file in the
+box's `/run` (memory, not disk), which the session reads and deletes as
+it starts -- never on a command line, never on the box's disk. The
+box's first-run screens (onboarding, trusting the project) are marked
+done, with your theme. No `/login` anywhere. The token only makes model
+requests, so Remote Control and claude.ai connectors need
+`--claude-auth login` (the box's own `/login`) instead; `--claude-auth
+api-key` passes `ANTHROPIC_API_KEY` the same way. `boxctl claude logout`
+forgets it. Without a saved token, it falls back to `/login` on the box.
+
+**Several things at once.** `--task <name>` runs another Claude on the
+same box, in a git worktree of its own -- `<dir>@<name>`, on branch
+`<name>`, made from what the box's main checkout has -- in its own tmux
+session, so the two never touch each other's files. Starting one takes
+seconds: no copy, no install, no login. `boxctl claude --task auth`
+again attaches to it; `boxctl claude ls` lists them all, running or
+not. They share the box's CPU, memory and ports -- `--task <name>
+--own-box` gives a task a box of its own (`claude-<project>-<name>`)
+instead. `fetch` brings each task's branch back, and its uncommitted
+work as `box/wip-<name>`.
+
+The first run creates the project's box (`claude-<directory>`, from the
+`claude-agent` image, `medium`), copies the project to the **same
+absolute path** -- what git counts as the project (`git ls-files
+--cached --others --exclude-standard`, so uncommitted changes and
+untracked files go, `.gitignore`'d ones don't) plus `.git` -- installs
+Claude Code with Anthropic's installer, copies your `~/.claude/CLAUDE.md`,
+`agents/`, `skills/`, `commands/` and `settings.json` (minus hooks, the
+status line, plugins, `env` and credential helpers, which point at this
+machine), and starts `claude` in tmux. Log it in once with `/login`: it
+prints a URL to open here and a code to paste back, and the login stays
+on the box.
+
+**GitHub.** While you're attached, Claude on the box can `git push` and
+`gh pr create`/`merge` as you: the box asks this machine for your `gh`
+token each time it needs one, over the ssh connection, and keeps nothing
+(`--github forward`, the default). Each use is logged to
+`~/.boxctl/claude/github.log`, and detaching prints a count. Detached,
+the box has no GitHub access. For work that has to reach GitHub while
+you're away, `--github store` keeps a token on the box until it's
+destroyed -- it asks you for one (or reads `BOXCTL_GITHUB_TOKEN`) rather
+than using your gh token, so make it a fine-grained token for just that
+repository. `--github off` gives the box nothing. Your git `user.name`
+and `user.email` are set on the box either way, so its commits are yours.
+Forwarding needs the `claude-agent` image's credential helper and `gh`
+wrapper (boxctl-vms `images/claude-agent/`).
+
+**Handing off a session.** `--handoff <session-id>` moves a local Claude Code session to the box:
+its transcript -- `~/.claude/projects/<key>/<id>.jsonl`, plus the
+session's directory of subagent transcripts if it has one -- goes into
+the box's `~/.claude/projects/<key>/`, and Claude starts there with
+`claude --resume <id>`. The project has the same absolute path on the
+box, so its key (that path with every non-alphanumeric character turned
+into `-`) is the same too. It refuses while another Claude is running
+on the box. A box that already had the project keeps its own copy, so
+local changes since then aren't on it: commit them and `boxctl claude
+push`, or hand off to a fresh `--box`. `--project <dir>` picks the
+project when you're not in it.
+
+**Getting work back, and sending it there.** The box is a git remote
+named `box` (`root@<box>.box:<project dir>`). `boxctl claude fetch`
+brings every branch on the box back as `box/<branch>` -- pushed to GitHub
+or not -- plus `box/wip`: a commit of the box's uncommitted work (tracked
+changes and untracked files that aren't ignored) on top of what it has
+checked out, made with a throwaway index so nothing on the box changes.
+Then it's plain git: `git log box/fix-auth`, `git show --stat box/wip`,
+`git checkout -b fix-auth box/fix-auth`. `boxctl claude push
+[refspec...]` sends local commits the other way; pushing to the branch
+the box has checked out updates its files too, unless Claude has
+uncommitted changes there, in which case git refuses rather than
+overwrite them. Both supply the ssh themselves; with the `Host *.box`
+config below, plain `git fetch box` works as well.
+
+Claude keeps running when you detach (`Ctrl-b d`) or the connection
+drops; `boxctl claude` again attaches to it. Boxes it creates pause after
+`--idle-ttl` unused (default `24h`, not the server's 6h): a detached
+Claude working on its own makes no traffic the idle reaper counts. Pass
+`--idle-ttl` to change an existing box's. A box holds one project -- the
+directory it was started from -- and `boxctl claude --box` from another
+directory is refused rather than copying a second one there. Later runs don't copy the
+project again -- the box's copy is the one Claude works on, so get its
+work back the git way (Claude commits and pushes from the box). Plan and
+what's next (fetching the box's branches, handing off a running
+session): boxctl-vms's `docs/plans/claude-on-the-box.md`.
+
+It all runs over real ssh to the box's sshd, as root, with the key in
+`~/.boxctl/claude/id_ed25519` (authorized on the box over `boxctl ssh`),
+tunneled by `boxctl ssh-proxy`.
+
+## Kilo on a box (`boxctl kilo`)
+
+The same thing for the [Kilo CLI](https://kilo.ai/docs): the box, the
+project copy, tmux, tasks, GitHub, `fetch`/`push` and the idle TTL all
+work as they do for `boxctl claude`, on a box of its own
+(`kilo-<directory>`).
+
+```bash
+cd ~/src/myproject
+boxctl kilo                             # create or reattach to kilo-myproject
+boxctl kilo --prompt "fix the flaky auth test"
+boxctl kilo --detach --prompt "..."     # start it without attaching
+boxctl kilo -- --model provider/model   # arguments for kilo itself
+boxctl kilo --task auth                 # a second Kilo, in parallel, on its own branch
+boxctl kilo --env OPENAI_API_KEY        # pass a provider key from this shell
+boxctl kilo ls                          # this project's Kilo sessions
+boxctl kilo fetch                       # the box's branches and uncommitted work, as box/*
+boxctl kilo push                        # this branch to the box
+```
+
+The first run installs Kilo with its own installer
+(`https://kilo.ai/cli/install`, into `~/.kilo/bin`) and copies your
+`~/.config/kilo` -- `kilo.json`/`kilo.jsonc`, `AGENTS.md`, `agents/`,
+`commands/`, `modes/` and `skills/`, not `plugin/` -- as it is. A
+provider that configuration points at on this machine or your own
+network (`http://localhost:...`) isn't reachable from the box; pick
+another with `-- --model`.
+
+**Credentials.** Kilo on the box is logged in as it is here, with
+nothing on the box's disk: what `kilo auth login` saved on this machine
+(`~/.local/share/kilo/auth.json`, passed as `KILO_AUTH_CONTENT`) and the
+environment variables your configuration refers to (`{env:NAME}`), if
+they're set in this shell, go into the new session's environment the way
+Claude's token does -- over ssh's stdin into a file in the box's `/run`
+that the session reads and deletes. `--env NAME` (repeatable) passes one
+more variable the same way. `--kilo-auth login` passes none of yours:
+log in on the box with `/connect`, and that login stays there. There is
+no `--handoff` for Kilo yet.
+
+## Real ssh (`ssh-proxy`)
+
+`boxctl ssh` runs a shell or one command over boxctl's own terminal
+protocol. For everything else ssh does -- `scp`, `rsync`, `git` over ssh,
+port and socket forwarding, VS Code Remote-SSH -- `boxctl ssh-proxy <box>
+[port]` connects its stdin and stdout to the box's sshd (or another port)
+through the same tunnel as `port-forward`, for use as ssh's
+`ProxyCommand`. A paused box is resumed first.
+
+```
+# ~/.ssh/config
+Host *.box
+  ProxyCommand boxctl ssh-proxy %n
+  User root
+```
+
+then `ssh my-box.box`, `rsync -a dir/ my-box.box:/srv/`. Boxes accept
+key logins for root: add your public key once with
+`boxctl ssh my-box -- "mkdir -p ~/.ssh && echo '<your key>' >> ~/.ssh/authorized_keys"`.
 
 ## How auth works
 

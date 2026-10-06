@@ -47,9 +47,12 @@ gofmt -l .
 (unsigned, nothing published) to check the release config still builds
 every target; it needs `goreleaser` on PATH.
 
-No test suite yet — this is a thin, mostly-I/O client; rely on `go vet`,
-`gofmt`, and manual verification (`go build -o boxctl . && ./boxctl ...`)
-for changes.
+Tests are few -- this is a thin, mostly-I/O client -- and cover the
+pure parts (`go test ./...`: `boxctl claude`'s file selection, tar
+stream, settings filtering and shell quoting, `boxctl kilo`'s
+credential environment). Otherwise rely on `go
+vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
+...`) for changes.
 
 ## Code layout
 
@@ -88,6 +91,79 @@ for changes.
   bearer token on the upgrade) per accepted TCP connection, raw bytes
   in binary messages. A far-end close reason (the agent's dial error) is
   printed per connection; the forward itself keeps running.
+- `cmd/sshproxy.go` — `ssh-proxy <name> [port]`: stdin/stdout relayed
+  to a box port (22 by default) over the same `Client.DialPort` tunnel as
+  `port-forward`, for ssh's `ProxyCommand` -- real ssh to a box with
+  nothing listening locally. Resumes a paused box first.
+- `cmd/claude.go`, `cmd/claudecopy.go` — `claude`: Claude Code run *on* a
+  box (boxctl-vms's `docs/plans/claude-on-the-box.md`). Creates or
+  resumes `claude-<dir>`, authorizes `~/.boxctl/claude/id_ed25519`
+  over `Exec`, then does everything else over real ssh via
+  `ssh-proxy` with a ControlMaster: a one-time gzipped tar of the project
+  to the same absolute path (`git ls-files --cached --others
+  --exclude-standard` plus `.git`, so git's own ignore rules -- never
+  translate them), the user-level Claude config (settings.json minus
+  keys that point at this machine), the Claude Code install, and `tmux
+  new-session -A` running `claude`. It never syncs: once the project is
+  on the box, the box's copy is the one Claude works on.
+  `cmd/claudegithub.go` is its GitHub side: by default a token server
+  on a local Unix socket answers the box's `GET /token?host=&for=` with
+  `gh auth token`, forwarded by the attach's ssh (`-R
+  /root/.boxctl/gh.sock:...`, on a connection of its own -- `ControlPath=none`
+  must come before the shared ControlPath, since ssh takes an option's
+  first value) for exactly as long as you're attached, logging each use
+  to `~/.boxctl/claude/github.log` -- never to the terminal, which is
+  Claude's. That protocol is the image's contract (boxctl-vms
+  `images/claude-agent/git-credential-boxctl` and `gh`); change both
+  sides together. `--github store` logs a pasted token into the box's gh
+  instead -- never `gh auth token` itself, which would sit on the box.
+  `cmd/claudegit.go` is `claude fetch`/`push`: the box as a git remote
+  named `box` (`root@<box>.box:<dir>`, so the README's `Host *.box`
+  ssh config reaches it too) with `GIT_SSH_COMMAND` set to boxctl's ssh.
+  `fetch` first runs `wipSnapshotScript` on the box -- `git add -A` into a
+  throwaway index, `commit-tree` onto HEAD, `refs/boxctl/wip` -- then one
+  `fetch --prune` with the heads and wip refspecs together (separately,
+  prune would delete `box/wip` every time). `push` relies on
+  `receive.denyCurrentBranch=updateInstead` on the box. `openClaudeBox`
+  is the shared start of all three: box, TTL, key, ssh, and the project
+  check -- `/root/.boxctl/project` on the box records which directory it
+  holds, so `--box` from another project is refused.
+  `--handoff <session-id>` (with `--project`, so it can be run from
+  outside the project directory) copies `~/.claude/projects/<key>/<id>.jsonl` (and the
+  session's directory, if any) into the box's same key and starts
+  `claude --resume <id>`. The key is Claude Code's: the project path with
+  every non-alphanumeric character turned into `-` (`claudeProjectKey`);
+  it only matches because the project has the same absolute path on the
+  box. The transcript is found before any box is touched.
+  `cmd/claudesession.go`: a `taskSession` is the main checkout or a
+  `--task` worktree (`<dir>@<task>`, tmux `claude-<task>`, GitHub socket
+  `gh-<task>.sock` via `BOXCTL_GH_SOCKET` in its environment). Claude's
+  credentials (`cmd/claudeauth.go`: a `claude setup-token` token in the
+  Keychain) go to the box over ssh stdin into `/run/boxctl/<tmux>.env`
+  (tmpfs), which the session's command sources and deletes -- never
+  argv, never disk. Always `tmux ... -t =<name>`: a bare `-t claude`
+  prefix-matches `claude-auth`.
+- `cmd/agent.go`, `cmd/kilo.go` — `kilo`: the same for the Kilo CLI.
+  A `boxAgent` is the little that differs between the two (name -- also
+  the box prefix and tmux session -- binary, install dir, installer,
+  how a first prompt is passed); everything in `claude*.go` that isn't
+  Claude's own (config, token, handoff) reads the running command's
+  agent from the `agent` global, which each command's `RunE` sets through
+  `boxAgent.runs`. Both commands bind the same flag variables
+  (`boxAgent.addFlags`) and get their `ls`/`fetch`/`push` from
+  `lsCmd`/`fetchCmd`/`pushCmd`; `openSession` and `startSession` are the
+  shared start and end of a run. Kilo's own: `~/.config/kilo` copied
+  verbatim (it's JSONC -- don't parse it), and credentials as
+  environment in the same tmpfs env file as Claude's token --
+  `auth.json` as `KILO_AUTH_CONTENT`, plus the `{env:NAME}` variables the
+  config refers to and any `--env NAME`. A third agent (opencode, which
+  Kilo is a fork of) is another `boxAgent` and a file like `kilo.go`.
+- `cmd/backups.go`/`restore.go` — `backups` (GET /api/backups) and
+  `restore <backup> [--name] [--size]` (POST
+  /api/backups/{id}/restore, then the same import poll as `import`).
+  `<backup>` is a backup id or a box name, meaning that box's newest
+  backup (`findBackup`). The paused-vs-fresh-boot difference `--size`
+  makes is the server's (`boxctl-vms`'s `handleRestoreBackup`).
 - `cmd/sizes.go` — `sizes` (GET /api/sizes), plus `sizeLabel` for
   `ls`'s SIZE column and `completeSize` for `create`/`exec`'s
   `--size`. The size names are the server's; this CLI never hard-codes
@@ -125,6 +201,12 @@ for changes.
   rolling `edge` prerelease from every push to `main`, on a GitHub-hosted
   runner.
 
+- `.github/dependabot.yml` + `.github/workflows/dependabot-automerge.yml`
+  — daily Go-module and Actions bumps; patch/minor ones get GitHub
+  auto-merge (merge commit), which waits for `main`'s required checks
+  (Build (stable), Lint, Vuln — a repo branch-protection setting, not in
+  this repo's files). Majors stay open for review.
+
 ## Conventions
 
 - Standard library plus `spf13/cobra`, `gorilla/websocket`, and
@@ -138,3 +220,12 @@ for changes.
   boxctl.io's own domain; if that ever moves, it's the only place to
   change (besides `config.DefaultAPIURL`, which points at the API host,
   not the dashboard).
+
+## Workflow
+
+- Don't ask whether to open a pull request. When you consider a task
+  finished, branch off `main` (if needed), commit, push, and open the PR
+  yourself.
+- Once the PR's checks are green, merge it yourself -- unless it's a
+  design or documentation change, which the maintainer needs to review
+  first. Leave those open.

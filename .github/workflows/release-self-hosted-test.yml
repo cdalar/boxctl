@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: onctl-4
+    runs-on: onctl-2
     # runs-on: [self-hosted, macOS, ARM64]   # macOS: needed for quill notarization
     steps:
       - name: Checkout
