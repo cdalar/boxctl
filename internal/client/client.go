@@ -183,9 +183,20 @@ func (c *Client) ListSizes(ctx context.Context) ([]Size, error) {
 // stripped back off, so the caller never has to think about it. An
 // empty size leaves the choice to the server's default.
 func (c *Client) Create(ctx context.Context, name, template, image, size string) (*VM, error) {
-	body := map[string]string{"name": name, "image": image}
+	return c.CreateWithEnv(ctx, name, template, image, size, nil)
+}
+
+// CreateWithEnv is Create with variables for the template's script to
+// read (onctl's -e NAME=value). The server refuses them without a
+// template, and refuses values it can't pass on unchanged -- see
+// boxctl-vms's templateEnvArgs.
+func (c *Client) CreateWithEnv(ctx context.Context, name, template, image, size string, env map[string]string) (*VM, error) {
+	body := map[string]any{"name": name, "image": image}
 	if template != "" {
 		body["template"] = template
+	}
+	if len(env) > 0 {
+		body["env"] = env
 	}
 	if size != "" {
 		body["size"] = size

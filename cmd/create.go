@@ -24,7 +24,23 @@ var (
 	createImage     string
 	createSize      string
 	createIdleTTL   time.Duration
+	createVars      []string
 )
+
+// parseVars turns --vars' NAME=value arguments into the map the server
+// takes. Only the shape is checked here: which names and values are
+// acceptable is the server's call, and its error says why.
+func parseVars(vars []string) (map[string]string, error) {
+	env := make(map[string]string, len(vars))
+	for _, v := range vars {
+		name, value, ok := strings.Cut(v, "=")
+		if !ok || name == "" {
+			return nil, fmt.Errorf("--vars %q: want NAME=value", v)
+		}
+		env[name] = value
+	}
+	return env, nil
+}
 
 var createCmd = &cobra.Command{
 	Use:     "create <name>",
@@ -33,6 +49,13 @@ var createCmd = &cobra.Command{
 	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
+		env, err := parseVars(createVars)
+		if err != nil {
+			return err
+		}
+		if len(env) > 0 && createApplyFile == "" {
+			return fmt.Errorf("--vars needs --apply-file: the variables are for its script")
+		}
 		fmt.Printf("Creating %s...\n", name)
 
 		c := newClient()
@@ -59,7 +82,7 @@ var createCmd = &cobra.Command{
 			}
 		}
 
-		vm, err := c.Create(cmd.Context(), name, createApplyFile, createImage, createSize)
+		vm, err := c.CreateWithEnv(cmd.Context(), name, createApplyFile, createImage, createSize, env)
 		stopTail()
 		if err != nil {
 			return err
@@ -131,6 +154,8 @@ func init() {
 	// Deprecated flags are hidden from --help and print a notice when used.
 	createCmd.Flags().StringVarP(&createApplyFile, "template", "t", "", "")
 	_ = createCmd.Flags().MarkDeprecated("template", "use --apply-file/-a instead")
+	// An array, not a slice: a slice would split one value on its commas.
+	createCmd.Flags().StringArrayVarP(&createVars, "vars", "e", nil, "variable for the --apply-file script, like onctl up -e (NAME=value; repeat for more)")
 	createCmd.Flags().StringVarP(&createImage, "image", "i", defaultImage, "boot image to use (list them with boxctl images)")
 	createCmd.Flags().StringVarP(&createSize, "size", "s", "", "box size: small, medium or large (list them with boxctl sizes; default small)")
 	_ = createCmd.RegisterFlagCompletionFunc("size", completeSize)
