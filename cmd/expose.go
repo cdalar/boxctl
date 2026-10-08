@@ -200,13 +200,17 @@ func exposeNote(name string, in *client.Ingress) string {
 
 func printIngressTable(list []client.Ingress) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "PORT\tSTATUS\tURL\tHOST HEADER\tAGE")
+	if _, err := fmt.Fprintln(w, "PORT\tSTATUS\tURL\tHOST HEADER\tAGE"); err != nil {
+		return err
+	}
 	for _, in := range list {
 		hostHeader := in.HostHeader
 		if hostHeader == "" {
 			hostHeader = "-"
 		}
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", in.Port, in.Status, in.URL, hostHeader, age(in.CreatedAt))
+		if _, err := fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", in.Port, in.Status, in.URL, hostHeader, age(in.CreatedAt)); err != nil {
+			return err
+		}
 	}
 	return w.Flush()
 }
