@@ -91,6 +91,16 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   bearer token on the upgrade) per accepted TCP connection, raw bytes
   in binary messages. A far-end close reason (the agent's dial error) is
   printed per connection; the forward itself keeps running.
+- `cmd/expose.go` — `expose <name> [port]` / `unexpose <name>
+  <port|all>`: public HTTPS URLs for a box's ports, over
+  `Client.Expose`/`ListIngress`/`Unexpose` (`/api/vms/{id}/ingress`).
+  Unlike `port-forward` no traffic passes through this CLI -- it only
+  asks the server and prints the URL the server assigned. The URL line
+  goes to stdout by itself and the explanatory note to stderr, so the
+  command stays usable in `$(...)`; keep it that way. The server's
+  `status` (`pending`/`active`/`paused`) drives the note, and an unknown
+  status is treated as "not yet" rather than an error, so a newer server
+  doesn't break an older CLI.
 - `cmd/sshproxy.go` — `ssh-proxy <name> [port]`: stdin/stdout relayed
   to a box port (22 by default) over the same `Client.DialPort` tunnel as
   `port-forward`, for ssh's `ProxyCommand` -- real ssh to a box with

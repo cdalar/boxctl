@@ -62,6 +62,22 @@ type VM struct {
 	VCPU   int    `json:"vcpu"`
 	MemMiB int    `json:"mem_mib"`
 	Size   string `json:"size"`
+	// Ingress lists the box's publicly exposed ports, lowest first --
+	// absent when nothing is exposed or the server has no public ingress.
+	Ingress []Ingress `json:"ingress,omitempty"`
+}
+
+// Ingress is one port of a box exposed at a public URL, as boxctl-vms's
+// /api/vms/{id}/ingress returns it. Status is "active" once the URL is
+// serving, "pending" until then, and "paused" while the box isn't
+// running (the URL comes back, unchanged, when it resumes).
+type Ingress struct {
+	Label      string    `json:"label"`
+	URL        string    `json:"url"`
+	Port       int       `json:"port"`
+	Status     string    `json:"status"`
+	HostHeader string    `json:"host_header,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // Size is one box size offered by boxctl-vms, as returned by /api/sizes
@@ -238,6 +254,48 @@ func (c *Client) Resume(ctx context.Context, name string) (*VM, error) {
 		return nil, err
 	}
 	return &vm, nil
+}
+
+// ingressUnavailable turns the bare 404 a server without public ingress
+// gives for these routes (they aren't registered at all there) into
+// something a person can act on. A 404 with a message of its own -- "vm
+// not found", "that port is not exposed" -- is left as it is.
+func ingressUnavailable(err error) error {
+	var ae *apiError
+	if errors.As(err, &ae) && ae.status == http.StatusNotFound && strings.Contains(ae.body, "page not found") {
+		return errors.New("this server doesn't offer public URLs for boxes")
+	}
+	return err
+}
+
+// Expose gives port on box name a public HTTPS URL. hostHeader, when not
+// empty, replaces the Host header the app sees. Exposing a port that is
+// already exposed returns the existing URL.
+func (c *Client) Expose(ctx context.Context, name string, port int, hostHeader string) (*Ingress, error) {
+	body := map[string]any{"port": port}
+	if hostHeader != "" {
+		body["host_header"] = hostHeader
+	}
+	var in Ingress
+	if err := c.do(ctx, http.MethodPost, "/api/vms/"+url.PathEscape(name)+"/ingress", body, &in); err != nil {
+		return nil, ingressUnavailable(err)
+	}
+	return &in, nil
+}
+
+// ListIngress returns box name's exposed ports, lowest port first.
+func (c *Client) ListIngress(ctx context.Context, name string) ([]Ingress, error) {
+	var list []Ingress
+	if err := c.do(ctx, http.MethodGet, "/api/vms/"+url.PathEscape(name)+"/ingress", nil, &list); err != nil {
+		return nil, ingressUnavailable(err)
+	}
+	return list, nil
+}
+
+// Unexpose takes port on box name off the internet. Its URL is retired,
+// not kept for later: exposing the port again gives a new one.
+func (c *Client) Unexpose(ctx context.Context, name string, port int) error {
+	return ingressUnavailable(c.do(ctx, http.MethodDelete, "/api/vms/"+url.PathEscape(name)+"/ingress/"+strconv.Itoa(port), nil, nil))
 }
 
 // MintTerminalTicket returns a single-use ticket plus the resolved

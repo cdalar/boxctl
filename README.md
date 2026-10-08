@@ -86,6 +86,8 @@ boxctl create long-job --idle-ttl 48h   # pause after 48h unused (default 6h)
 boxctl ssh my-box
 boxctl ssh my-box -- ls -al   # run one command instead of a shell
 boxctl port-forward my-box 3000   # localhost:3000 -> port 3000 inside the box
+boxctl expose my-box 3000         # a public https://my-box-xxxxxxxx.boxctl.app -> port 3000
+boxctl unexpose my-box 3000       # take it down again
 ssh -o ProxyCommand='boxctl ssh-proxy %h' root@my-box   # real ssh (key needed, see below)
 boxctl claude                     # Claude Code on a box, with this project (see below)
 boxctl kilo                       # the same, for the Kilo CLI (see below)
@@ -289,7 +291,7 @@ and is never sent anywhere except the configured API URL.
 
 ```
 main.go                 Entry point, delegates to cmd.Execute()
-cmd/                     Cobra subcommands (login/logout/ls/images/sizes/create/rm/pause/resume/ssh/port-forward/version),
+cmd/                     Cobra subcommands (login/logout/ls/images/sizes/create/rm/pause/resume/ssh/port-forward/expose/version),
                          plus box-name tab completion (complete.go)
 internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
 internal/config/         ~/.boxctl/config.json read/write
@@ -329,3 +331,36 @@ the far end closes with the dial error as its reason and this prints it
 (`my-box:3000: dial tcp ...: connection refused`) -- the connection is
 dropped, the forward keeps running. Traffic through a forward counts as
 using the box for idle auto-pause.
+
+## `expose`
+
+`boxctl expose <name> <port>` asks `boxctl-vms` to put that port on the
+internet (`POST /api/vms/{name}/ingress`) and prints the HTTPS URL it
+assigned -- `https://<name>-<8 random characters>.boxctl.app`. The URL
+is chosen by the server, stays the same for as long as the port is
+exposed (across pause and resume), and is never reused after
+`boxctl unexpose`. `boxctl expose <name>` with no port lists a box's
+URLs; `-o json` works on both.
+
+Where `port-forward` is for your own traffic, this is for everyone
+else's: anyone with the URL can reach the port, with no login in front
+of it. The URL is hard to guess, and that is all the protection there
+is.
+
+The command waits up to 30 seconds for the URL to report `active`
+(`--no-wait` to skip), then prints it on stdout alone, with a one-line
+note on stderr. `active` means the route is in place, not that your app
+answered -- the two usual reasons a live URL doesn't load are:
+
+- the app listens on `127.0.0.1`. It has to listen on `0.0.0.0`: the
+  request reaches the box from its host, not from inside it.
+- the app rejects the hostname. Vite, Rails and Django only answer to
+  names they know. Allow the public hostname in the app, or pass
+  `--host-header localhost:3000` so requests arrive under that name.
+
+HTTP, WebSocket and server-sent events work; other TCP protocols don't.
+Uploads over 100 MB and responses that take more than 100 seconds to
+start are cut off before they reach the box. A paused box's URL shows a
+"not available" page and comes back when the box resumes; visitors
+count as using the box, so it isn't auto-paused while people are on it.
+A box can expose at most five ports.
