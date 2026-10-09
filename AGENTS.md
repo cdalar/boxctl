@@ -107,8 +107,8 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   nothing listening locally. Resumes a paused box first.
 - `cmd/claude.go`, `cmd/claudecopy.go` — `claude`: Claude Code run *on* a
   box (boxctl-vms's `docs/plans/claude-on-the-box.md`). Creates or
-  resumes `claude-<dir>`, authorizes `~/.boxctl/claude/id_ed25519`
-  over `Exec`, then does everything else over real ssh via
+  resumes `claude-<dir>`, authorizes `~/.boxctl/claude/id_ed25519` (the
+  plugin's key) over `Exec`, then does everything else over real ssh via
   `ssh-proxy` with a ControlMaster: a one-time gzipped tar of the project
   to the same absolute path (`git ls-files --cached --others
   --exclude-standard` plus `.git`, so git's own ignore rules -- never
@@ -138,8 +138,9 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   is the shared start of all three: box, TTL, key, ssh, and the project
   check -- `/root/.boxctl/project` on the box records which directory it
   holds, so `--box` from another project is refused.
-  `--handoff <session-id>` (with `--project`, so it can be run from
-  outside the project directory) copies `~/.claude/projects/<key>/<id>.jsonl` (and the
+  `--handoff <session-id>` (the plugin's `/boxctl:handoff`, which must
+  start its command with `boxctl` so `route-bash` keeps it local -- hence
+  `--project`) copies `~/.claude/projects/<key>/<id>.jsonl` (and the
   session's directory, if any) into the box's same key and starts
   `claude --resume <id>`. The key is Claude Code's: the project path with
   every non-alphanumeric character turned into `-` (`claudeProjectKey`);
@@ -246,3 +247,32 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
 - Once the PR's checks are green, merge it yourself -- unless it's a
   design or documentation change, which the maintainer needs to review
   first. Leave those open.
+
+## Claude Code plugin (`claude-plugin/`)
+
+Bash + `jq`, no Go: a `PreToolUse` hook (`hooks/route-bash`) rewrites
+Bash commands into `bin/boxctl-claude run` (shells out to
+`boxctl ssh <box> -- ...`) or, in exec mode, `bin/boxctl-claude exec`
+(`boxctl exec`, unpacking its JSON). A `SessionEnd` hook destroys
+session-mode boxes, and a `SessionStart` hook implements the `autostart`
+option (`userConfig` in `plugin.json`, read as
+`CLAUDE_PLUGIN_OPTION_AUTOSTART`/`_SIZE`/`_IMAGE`) -- it must never fail
+a session, only fall back to local bash and say so.
+Workspaces (`sync`/`copy`/`git`) move files with `rsync` over `ssh`
+through a background `boxctl port-forward <box> :22`; the exec endpoint
+has no stdin or upload to carry them. Two traps, both hit while building
+it: macOS's `rsync` is openrsync, which ignores `--filter=':- .gitignore'`
+for `--delete` -- a sync back deleted the local `node_modules` -- so
+`ignore_rules` translates `.gitignore` files into explicit rules instead
+(test any change with openrsync, not Homebrew's rsync); and the plugin's
+`ssh` runs with `-F /dev/null`, since macOS's default config sends `LC_*`
+and the box has no locales for it. It depends only on those commands' documented
+behavior (no stdin, 5-minute cap, exit code passthrough, and the
+"must be running and ready" error it resumes on) -- changing any of
+those in `cmd/ssh.go` or boxctl-vms's exec endpoint needs a matching
+change here. `CLAUDE_PROJECT_DIR` isn't set in the Bash tool's
+environment, and neither is `CLAUDE_SESSION_ID`, which is why
+`commands/*.md` pass both explicitly (both are substituted into command
+markdown); the hooks read `session_id` from their stdin. Check it
+with `shellcheck claude-plugin/bin/* claude-plugin/hooks/route-bash` and
+`claude plugin validate .`.
