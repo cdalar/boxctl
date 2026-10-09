@@ -177,7 +177,8 @@ and `user.email` are set on the box either way, so its commits are yours.
 Forwarding needs the `claude-agent` image's credential helper and `gh`
 wrapper (boxctl-vms `images/claude-agent/`).
 
-**Handing off a session.** `--handoff <session-id>` moves a local Claude Code session to the box:
+**Handing off a session.** `--handoff <session-id>` (what the plugin's
+`/boxctl:handoff` runs) moves a local Claude Code session to the box:
 its transcript -- `~/.claude/projects/<key>/<id>.jsonl`, plus the
 session's directory of subagent transcripts if it has one -- goes into
 the box's `~/.claude/projects/<key>/`, and Claude starts there with
@@ -278,6 +279,88 @@ then `ssh my-box.box`, `rsync -a dir/ my-box.box:/srv/`. Boxes accept
 key logins for root: add your public key once with
 `boxctl ssh my-box -- "mkdir -p ~/.ssh && echo '<your key>' >> ~/.ssh/authorized_keys"`.
 
+## Claude Code plugin
+
+`claude-plugin/` is a Claude Code plugin that runs Claude's Bash commands in
+one of your boxes instead of on your machine. Install it from this repo:
+
+```
+/plugin marketplace add cdalar/boxctl
+/plugin install boxctl@boxctl
+```
+
+It needs `boxctl` (logged in) and `jq` on your `PATH`. Then:
+
+```
+/boxctl:on [--mode session|project|exec] [--workspace sync|copy|git|none] [box-name] [--size medium] [--image name]
+/boxctl:status
+/boxctl:off
+/boxctl:handoff [note]
+```
+
+`/boxctl:handoff` is different from the rest: rather than routing this
+session's Bash, it moves the whole session to a box. It runs `boxctl claude
+--handoff <this session>` (see "Claude Code on a box"): the project goes
+to its box as usual, this conversation's transcript goes with it, and
+Claude starts there resuming it -- with the note, if you gave one, as its
+first message. Attach with `boxctl claude` in a terminal; this local
+session should stop there, since the box now has its own copy.
+
+| `--mode` | Box | `/boxctl:off` |
+|---|---|---|
+| `session` (default) | One box for this Claude Code session, destroyed when the session ends (a `SessionEnd` hook) | destroys it |
+| `project` | One box for this project directory, reused by every session there | leaves it running |
+| `exec` | A fresh, disposable box for every command (`boxctl exec`); nothing persists | -- |
+
+`--workspace` is how the project gets onto a session or project box,
+always at the same absolute path it has locally:
+
+| `--workspace` | The box has |
+|---|---|
+| `sync` (default) | The project, copied there before every command and back after, so Claude's Read/Edit/Write and the box's Bash always see the same files (about a second per command) |
+| `copy` | The project as it was when the box was turned on |
+| `git` | A clone of `origin` at the local commit. A GitHub origin clones over https with the local `gh auth token` (passed on stdin, deleted afterwards); anything else clones with the local ssh agent forwarded |
+| `none` | An empty directory |
+
+`.gitignore`'d files are never copied in either direction, so
+`node_modules`, build output and `.env` stay on whichever side made them.
+The copying is `rsync` over `ssh` through a background
+`boxctl port-forward <box> :22`, with a key the plugin generates
+(`~/.boxctl/claude/id_ed25519`) and authorizes on the box over
+`boxctl ssh`; `rsync`/`git` are installed on the box if missing.
+
+Boxes boot the `claude-agent` image unless the **Boot image** option or
+`--image` says otherwise: `debian-slim` plus git, openssh-client, rsync,
+jq, ripgrep and make, so neither a workspace nor Claude's first command
+starts with an `apt-get install`.
+
+To skip `/boxctl:on`, set the plugin's **Auto-on at session start**
+option (`autostart` in `/config`, or when the plugin is enabled) to a
+mode: every new session then turns remote bash on by itself, using the
+plugin's **Workspace**, **Box size** and **Boot image** options (which
+`/boxctl:on` uses too, unless its own flags override them),
+and tells Claude where its Bash runs. It defaults to `off`. If the box
+can't be had (not logged in, API down), the session starts with local
+bash and a message saying why. Resumed sessions keep what they have, and
+`/boxctl:off` still works for the rest of a session.
+
+A session's own routing wins over its project's, so `/boxctl:on` in one
+session doesn't touch others in the same project unless you ask for
+`--mode project`.
+
+A `PreToolUse` hook (`claude-plugin/hooks/route-bash`) rewrites each Bash
+command to `boxctl-claude run` (or `exec`), which sends it base64-encoded
+through `boxctl ssh <box> --` (or `boxctl exec`) and relays stdout, stderr
+and the exit code. On a session or project box the working directory
+carries over between commands (kept on the box), the box starts in the
+same absolute path as the local project, and a box the idle reaper paused
+is resumed on the next command. Each command is capped at 5 minutes and has no stdin, like `boxctl ssh --`. Commands that
+start with a `# local` line, or with `boxctl `, run locally. Routing is
+kept in `~/.boxctl/claude/` (`sessions/<id>`, `projects/<hash>`). If
+Claude Code is killed rather than exited, `SessionEnd` never runs and a
+session box is left behind; the idle reaper pauses it, and `boxctl ls`
+shows it as `claude-<session id prefix>`.
+
 ## How auth works
 
 A personal token is scoped to your own boxes only — `boxctl-vms` resolves
@@ -295,6 +378,8 @@ cmd/                     Cobra subcommands (login/logout/ls/images/sizes/create/
                          plus box-name tab completion (complete.go)
 internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
 internal/config/         ~/.boxctl/config.json read/write
+claude-plugin/           Claude Code plugin: route Bash to a box (see "Claude Code plugin")
+.claude-plugin/          Marketplace manifest listing that plugin
 ```
 
 ## `ssh` / terminal protocol
