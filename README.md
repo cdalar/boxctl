@@ -427,10 +427,11 @@ exposed (across pause and resume), and is never reused after
 `boxctl unexpose`. `boxctl expose <name>` with no port lists a box's
 URLs; `-o json` works on both.
 
-Public URLs are part of the Pro plan. On a Free account `expose` says
-so and points at `port-forward`, which is free; listing and `unexpose`
-keep working, so a URL from before a plan change can always be taken
-down.
+Public URLs are free on every plan, up to five per account across all
+its boxes; past that the server refuses with "an account can have at
+most 5 public URLs" until one is removed. (If the server is ever set to
+limit them to some plans, `expose` says so and points at
+`port-forward`; listing and `unexpose` keep working either way.)
 
 Where `port-forward` is for your own traffic, this is for everyone
 else's: anyone with the URL can reach the port, with no login in front
@@ -453,4 +454,4 @@ Uploads over 100 MB and responses that take more than 100 seconds to
 start are cut off before they reach the box. A paused box's URL shows a
 "not available" page and comes back when the box resumes; visitors
 count as using the box, so it isn't auto-paused while people are on it.
-A box can expose at most five ports.
+An account can have at most five public URLs.
