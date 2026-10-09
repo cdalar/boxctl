@@ -22,10 +22,11 @@ func TestParseExposePort(t *testing.T) {
 
 func TestExposeNote(t *testing.T) {
 	cases := map[string]string{
-		"active":  "0.0.0.0:3000",
-		"paused":  "boxctl resume my-box",
-		"pending": "boxctl expose my-box",
-		"":        "boxctl expose my-box", // a status this CLI doesn't know reads as "not yet"
+		"active":    "0.0.0.0:3000",
+		"paused":    "boxctl resume my-box",
+		"suspended": "Pro plan",
+		"pending":   "boxctl expose my-box",
+		"":          "boxctl expose my-box", // a status this CLI doesn't know reads as "not yet"
 	}
 	for status, want := range cases {
 		got := exposeNote("my-box", &client.Ingress{Port: 3000, Status: status})

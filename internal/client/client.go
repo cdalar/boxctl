@@ -256,14 +256,21 @@ func (c *Client) Resume(ctx context.Context, name string) (*VM, error) {
 	return &vm, nil
 }
 
-// ingressUnavailable turns the bare 404 a server without public ingress
-// gives for these routes (they aren't registered at all there) into
-// something a person can act on. A 404 with a message of its own -- "vm
+// ingressUnavailable turns the two answers that need explaining -- the
+// bare 404 of a server without public ingress (the routes aren't
+// registered at all there) and the 402 of an account whose plan doesn't
+// include public URLs -- into something a person can act on. A 404 with a message of its own -- "vm
 // not found", "that port is not exposed" -- is left as it is.
 func ingressUnavailable(err error) error {
 	var ae *apiError
 	if errors.As(err, &ae) && ae.status == http.StatusNotFound && strings.Contains(ae.body, "page not found") {
 		return errors.New("this server doesn't offer public URLs for boxes")
+	}
+	// 402: the account's plan doesn't include public URLs. Say what does
+	// and what to use meanwhile, rather than echo the server's one line.
+	if errors.As(err, &ae) && ae.status == http.StatusPaymentRequired {
+		return errors.New("public URLs are part of the Pro plan -- see https://boxctl.io/docs/public-urls\n" +
+			"To reach a port yourself without making it public, use `boxctl port-forward`, which is free on every plan")
 	}
 	return err
 }
