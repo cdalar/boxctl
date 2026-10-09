@@ -36,6 +36,8 @@ use port-forward instead.
   boxctl expose my-box             # list my-box's public URLs
   boxctl unexpose my-box 3000      # take it down
 
+Public URLs are part of the Pro plan; port-forward is free.
+
 The URL is chosen for you and stays the same for as long as the port is
 exposed, across pause and resume. While the box is paused the URL shows
 a "not available" page.
@@ -193,6 +195,8 @@ func exposeNote(name string, in *client.Ingress) string {
 		return fmt.Sprintf("Live. If it doesn't load, check the app listens on 0.0.0.0:%d inside the box.", in.Port)
 	case "paused":
 		return fmt.Sprintf("%s isn't running, so the URL shows a \"not available\" page until you `boxctl resume %s`.", name, name)
+	case "suspended":
+		return "Offline: public URLs are part of the Pro plan. The URL is kept and serves again once the account is on Pro."
 	default:
 		return fmt.Sprintf("Not serving yet -- it should be within a minute. Check with `boxctl expose %s`.", name)
 	}

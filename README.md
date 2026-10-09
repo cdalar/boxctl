@@ -427,6 +427,11 @@ exposed (across pause and resume), and is never reused after
 `boxctl unexpose`. `boxctl expose <name>` with no port lists a box's
 URLs; `-o json` works on both.
 
+Public URLs are part of the Pro plan. On a Free account `expose` says
+so and points at `port-forward`, which is free; listing and `unexpose`
+keep working, so a URL from before a plan change can always be taken
+down.
+
 Where `port-forward` is for your own traffic, this is for everyone
 else's: anyone with the URL can reach the port, with no login in front
 of it. The URL is hard to guess, and that is all the protection there
