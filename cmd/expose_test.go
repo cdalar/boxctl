@@ -24,7 +24,7 @@ func TestExposeNote(t *testing.T) {
 	cases := map[string]string{
 		"active":    "0.0.0.0:3000",
 		"paused":    "boxctl resume my-box",
-		"suspended": "Pro plan",
+		"suspended": "plan",
 		"pending":   "boxctl expose my-box",
 		"":          "boxctl expose my-box", // a status this CLI doesn't know reads as "not yet"
 	}

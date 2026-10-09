@@ -266,10 +266,12 @@ func ingressUnavailable(err error) error {
 	if errors.As(err, &ae) && ae.status == http.StatusNotFound && strings.Contains(ae.body, "page not found") {
 		return errors.New("this server doesn't offer public URLs for boxes")
 	}
-	// 402: the account's plan doesn't include public URLs. Say what does
-	// and what to use meanwhile, rather than echo the server's one line.
+	// 402: the account's plan doesn't include public URLs. No plan is
+	// set up that way today -- they are free for everyone -- but the
+	// server can be, so say what to use meanwhile rather than echo its
+	// one line.
 	if errors.As(err, &ae) && ae.status == http.StatusPaymentRequired {
-		return errors.New("public URLs are part of the Pro plan -- see https://boxctl.io/docs/public-urls\n" +
+		return errors.New("public URLs aren't included in this account's plan -- see https://boxctl.io/docs/public-urls\n" +
 			"To reach a port yourself without making it public, use `boxctl port-forward`, which is free on every plan")
 	}
 	return err
