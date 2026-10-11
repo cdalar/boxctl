@@ -46,7 +46,7 @@ list, connect to, and destroy your Firecracker microVMs ("boxes").`,
 	Example: `  # Save your personal access token (create one at ` + dashboardURL + `)
   boxctl login
 
-  # List your boxes
+  # List your running boxes (-a for paused ones too)
   boxctl ls
 
   # List available boot images

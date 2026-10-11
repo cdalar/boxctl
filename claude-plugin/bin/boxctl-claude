@@ -67,8 +67,10 @@ cmd_state() {
 	done
 }
 
+# -a: a plain `boxctl ls` lists running boxes only, and a paused one must
+# be found to be resumed. The fallback is for a boxctl from before -a.
 box_state() {
-	boxctl ls 2>/dev/null | awk -v n="$1" 'NR > 1 && $1 == n { print $2 }'
+	{ boxctl ls -a 2>/dev/null || boxctl ls 2>/dev/null; } | awk -v n="$1" 'NR > 1 && $1 == n { print $2 }'
 }
 
 # ensure_running resumes a paused box; boxctl's exec endpoint refuses
@@ -83,7 +85,7 @@ ensure_running() {
 		boxctl resume "$box" >&2
 		;;
 	"")
-		echo "boxctl: box $box not found (boxctl ls); run /boxctl:on again" >&2
+		echo "boxctl: box $box not found (boxctl ls -a); run /boxctl:on again" >&2
 		return 1
 		;;
 	*)

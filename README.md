@@ -76,7 +76,8 @@ into `dist/`).
 # at the hidden prompt (or pipe it in: `pbpaste | boxctl login`).
 boxctl login
 
-boxctl ls
+boxctl ls                         # running boxes
+boxctl ls -a                      # all of them, paused and stopped too
 boxctl ls -o json                 # for scripts; images and sizes take -o json too
 boxctl images
 boxctl create my-box
@@ -358,7 +359,7 @@ is resumed on the next command. Each command is capped at 5 minutes and has no s
 start with a `# local` line, or with `boxctl `, run locally. Routing is
 kept in `~/.boxctl/claude/` (`sessions/<id>`, `projects/<hash>`). If
 Claude Code is killed rather than exited, `SessionEnd` never runs and a
-session box is left behind; the idle reaper pauses it, and `boxctl ls`
+session box is left behind; the idle reaper pauses it, and `boxctl ls -a`
 shows it as `claude-<session id prefix>`.
 
 ## How auth works
