@@ -63,6 +63,11 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
 - `cmd/login.go`/`logout.go` — save/remove the personal token.
 - `cmd/ls.go`/`create.go`/`rm.go`/`pause.go`/`resume.go` — thin wrappers
   around `internal/client`'s matching methods.
+  `ls` lists only live boxes (`stateRank` 0: provisioning, running,
+  stopping) unless `-a`, in JSON too, and says on stderr how many it
+  left out. The filter is this CLI's -- the server always returns every
+  box -- so anything that must find a paused box by name
+  (`claude-plugin/bin/boxctl-claude`'s `box_state`) calls `ls -a`.
 - `cmd/create.go` — `create -a <script>` blocks until the server's
   `onctl create -a` finishes, so meanwhile `applyLogTail` polls the
   script's log (`~/.onctl/applyNN/output-<script>.log`, where onctl's

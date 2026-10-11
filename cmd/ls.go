@@ -17,7 +17,7 @@ import (
 var lsCmd = &cobra.Command{
 	Use:     "ls",
 	Aliases: []string{"list"},
-	Short:   "List your boxes",
+	Short:   "List your running boxes (-a for all of them)",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		asJSON, err := wantJSON(cmd)
@@ -31,6 +31,30 @@ var lsCmd = &cobra.Command{
 		if len(vms) == 0 && !asJSON {
 			fmt.Println("No boxes yet. Create one with `boxctl create <name>`.")
 			return nil
+		}
+
+		// Like `docker ps`: only live boxes unless -a. The note about the
+		// rest goes to stderr, so stdout stays the listing alone.
+		if all, _ := cmd.Flags().GetBool("all"); !all {
+			live := vms[:0]
+			for _, vm := range vms {
+				if stateRank(vm.State) == 0 {
+					live = append(live, vm)
+				}
+			}
+			hidden := len(vms) - len(live)
+			vms = live
+			if !asJSON {
+				if len(vms) == 0 {
+					fmt.Println("No running boxes.")
+				}
+				if hidden > 0 {
+					defer fmt.Fprintf(os.Stderr, "%s not running; `boxctl ls -a` lists them.\n", boxCount(hidden))
+				}
+				if len(vms) == 0 {
+					return nil
+				}
+			}
 		}
 
 		sort.Slice(vms, func(i, j int) bool {
@@ -125,6 +149,14 @@ var lsCmd = &cobra.Command{
 	},
 }
 
+// boxCount is "1 box" or "3 boxes".
+func boxCount(n int) string {
+	if n == 1 {
+		return "1 box"
+	}
+	return fmt.Sprintf("%d boxes", n)
+}
+
 // lsSections are `ls`'s sections, indexed by stateRank.
 var lsSections = []struct{ label, color string }{
 	{"RUNNING", "\033[1;32m"},
@@ -179,5 +211,6 @@ func age(t time.Time) string {
 
 func init() {
 	addOutputFlag(lsCmd)
+	lsCmd.Flags().BoolP("all", "a", false, "also list paused and stopped boxes")
 	rootCmd.AddCommand(lsCmd)
 }
