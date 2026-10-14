@@ -61,6 +61,8 @@ var (
 	claudeTask    string
 	claudeOwnBox  bool
 	claudeAuth    string
+	claudeRepo    string
+	claudeGoal    string
 )
 
 var claudeCmd = &cobra.Command{
@@ -82,6 +84,8 @@ box.
   boxctl claude --prompt "fix the flaky auth test"
   boxctl claude --detach --prompt "..."   # start it, don't attach
   boxctl claude -- --model opus           # arguments for claude itself
+  boxctl claude --repo owner/name         # a fresh box, the repo cloned, on a new branch
+  boxctl claude --goal "bump Go and fix what breaks"   # unattended, ends in a PR
 
 The first time, log Claude in on the box with /login: it prints a URL to
 open here and a code to paste back. That login stays on the box.
@@ -93,19 +97,34 @@ logged to ~/.boxctl/claude/github.log). Detached, it has none. For work
 that must reach GitHub while you're away, --github store keeps a token
 you paste on the box -- make it a fine-grained one for this repository.
 --github off gives it nothing. Your git user.name and user.email are set
-on the box either way.`,
+on the box either way.
+
+--repo owner/name needs no local copy: it creates a box, clones the
+repository's default branch and starts Claude on a new branch,
+boxctl/<slug>-<id>. With --goal, Claude instead runs unattended
+(claude -p) until the goal is done and opens a pull request; the command
+prints the box, the branch and how to follow it, and returns. Without
+--repo, --goal uses this directory's git repository (its GitHub origin).
+That run outlives this terminal, so it can't use --github forward, which
+only works while you're attached: it needs --github store.
+boxctl claude logs <box> shows how it's going.`,
 	RunE: claudeAgent.runs(runClaude),
 }
 
 func init() {
 	claudeAgent.addFlags(claudeCmd)
 	claudeCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Claude Code session (its ID) on the box")
+	claudeCmd.Flags().StringVar(&claudeRepo, "repo", "", "GitHub repository (owner/name) to clone on a new box, on a new boxctl/... branch (with --goal: default is this directory's origin)")
+	claudeCmd.Flags().StringVar(&claudeGoal, "goal", "", "a goal for Claude to carry out unattended, ending in a pull request (needs --github store)")
 	claudeCmd.Flags().StringVar(&claudeAuth, "claude-auth", claudeAuthAuto, "how Claude on the box logs in: auto (the token boxctl claude login saved, else /login), token, login or api-key")
 	_ = claudeCmd.RegisterFlagCompletionFunc("claude-auth", cobra.FixedCompletions([]string{claudeAuthAuto, claudeAuthToken, claudeAuthLogin, claudeAuthAPIKey}, cobra.ShellCompDirectiveNoFileComp))
 	rootCmd.AddCommand(claudeCmd)
 }
 
 func runClaude(cmd *cobra.Command, args []string) error {
+	if claudeRepo != "" || claudeGoal != "" {
+		return runRepo(cmd, args)
+	}
 	ctx := cmd.Context()
 	if err := checkSessionFlags(); err != nil {
 		return err
@@ -279,10 +298,7 @@ func attachClaude(ctx context.Context, box *boxSSH, sess taskSession, command st
 	if claudeGitHub != githubForward {
 		return box.attach(ctx, command, nil)
 	}
-	logPath := ""
-	if home, err := os.UserHomeDir(); err == nil {
-		logPath = filepath.Join(home, ".boxctl", "claude", "github.log")
-	}
+	logPath := githubLogPath()
 	srv, err := startTokenServer(box.name, logPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: not forwarding GitHub credentials: %v\n", err)
@@ -302,6 +318,33 @@ func attachClaude(ctx context.Context, box *boxSSH, sess taskSession, command st
 		}
 		fmt.Fprintf(os.Stderr, " (%s).\n", logPath)
 	}
+	return err
+}
+
+// githubLogPath is where each use of the forwarded token is logged.
+func githubLogPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".boxctl", "claude", "github.log")
+}
+
+// runForwarded runs command on the box with your gh token lent to it for
+// as long as it runs (--github forward), on an ssh connection of its own.
+func (b *boxSSH) runForwarded(ctx context.Context, command, boxSocket string) error {
+	srv, err := startTokenServer(b.name, githubLogPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: not forwarding GitHub credentials: %v\n", err)
+		return b.run(ctx, command, nil)
+	}
+	defer srv.close()
+	_ = b.run(ctx, "rm -f "+shellQuote(boxSocket), nil)
+	argv := append([]string{"-o", "BatchMode=yes", "-o", "ControlPath=none", "-o", "ExitOnForwardFailure=no", "-R", boxSocket + ":" + srv.socket}, b.args...)
+	cmd := exec.CommandContext(ctx, "ssh", append(argv, command)...)
+	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	err = cmd.Run()
+	_ = b.run(context.Background(), "rm -f "+shellQuote(boxSocket), nil)
 	return err
 }
 
@@ -327,6 +370,22 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 	if name == "" {
 		name = claudeBoxName(dir)
 	}
+	box, err := connectClaudeBox(ctx, name, create, setTTL)
+	if err != nil {
+		return nil, err
+	}
+	needsCopy, err := checkProject(ctx, box, dir)
+	if err != nil {
+		box.close()
+		return nil, err
+	}
+	return &claudeTarget{dir: dir, name: name, box: box, needsCopy: needsCopy}, nil
+}
+
+// connectClaudeBox makes sure the box name is running (created first when
+// create is set), authorized for boxctl's key and reachable over ssh,
+// with its idle TTL set when it's new or setTTL says to.
+func connectClaudeBox(ctx context.Context, name string, create, setTTL bool) (*boxSSH, error) {
 	c := newClient()
 	created, err := ensureClaudeBox(ctx, c, name, create)
 	if err != nil {
@@ -352,12 +411,7 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 		box.close()
 		return nil, fmt.Errorf("can't ssh into %s: %w", name, err)
 	}
-	needsCopy, err := checkProject(ctx, box, dir)
-	if err != nil {
-		box.close()
-		return nil, err
-	}
-	return &claudeTarget{dir: dir, name: name, box: box, needsCopy: needsCopy}, nil
+	return box, nil
 }
 
 // checkProject reports whether dir still has to be copied to the box,
@@ -557,6 +611,14 @@ func (b *boxSSH) output(ctx context.Context, command string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "ssh", append(append([]string{"-o", "BatchMode=yes"}, b.args...), command)...)
 	cmd.Stderr = os.Stderr
 	return cmd.Output()
+}
+
+// stream runs a command on the box with its output on ours, until it ends
+// or ctx is cancelled.
+func (b *boxSSH) stream(ctx context.Context, command string) error {
+	cmd := exec.CommandContext(ctx, "ssh", append(append([]string{"-o", "BatchMode=yes"}, b.args...), command)...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
 }
 
 // gitSSHCommand is ssh as git should run it to reach the box: everything

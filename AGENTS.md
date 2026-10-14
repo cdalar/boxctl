@@ -159,6 +159,18 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   (tmpfs), which the session's command sources and deletes -- never
   argv, never disk. Always `tmux ... -t =<name>`: a bare `-t claude`
   prefix-matches `claude-auth`.
+- `cmd/claudegoal.go` — `claude --repo owner/name [--goal "..."]` and
+  `claude logs <box>`: a new box, the repo cloned (default branch) onto
+  `boxctl/<slug>-<id>`, no local copy. With `--goal`, a detached tmux
+  session runs a generated `run.sh` (`claude -p`, stream-json, in
+  `/root/.boxctl/goals/<id>/`, `latest` symlinked) that records
+  `status.json` (running/done/failed, pr_url) -- on the box, because
+  boxctl-vms has no per-box metadata API; move it there if one appears.
+  Goal mode requires `--github store` (forward only lives while attached)
+  and checks everything, token included, before creating a box. `--goal`
+  without `--repo` takes the cwd's GitHub origin. Unverified against a
+  real box: `IS_SANDBOX=1` letting `--dangerously-skip-permissions` run as
+  root.
 - `cmd/agent.go`, `cmd/kilo.go` — `kilo`: the same for the Kilo CLI.
   A `boxAgent` is the little that differs between the two (name -- also
   the box prefix and tmux session -- binary, install dir, installer,

@@ -165,24 +165,44 @@ func (s *tokenServer) close() (given, refused int) {
 // which usually reaches every repository you can, and would then sit on
 // the box for as long as it exists.
 func storeGitHubToken(ctx context.Context, box *boxSSH, repo string) error {
-	token := strings.TrimSpace(os.Getenv("BOXCTL_GITHUB_TOKEN"))
-	if token == "" {
-		if !term.IsTerminal(int(os.Stdin.Fd())) {
-			return errors.New("--github store needs a token: set BOXCTL_GITHUB_TOKEN")
-		}
-		fmt.Fprintf(os.Stderr, "--github store keeps a GitHub token on %s until it's destroyed, so give it one that can do little:\n", box.name)
-		fmt.Fprintf(os.Stderr, "a fine-grained token for %s only, with Contents and Pull requests read/write and an expiry\n", repo)
-		fmt.Fprintf(os.Stderr, "(https://github.com/settings/personal-access-tokens/new).\nToken: ")
-		raw, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(os.Stderr)
-		if err != nil {
-			return err
-		}
-		token = strings.TrimSpace(string(raw))
-		if token == "" {
-			return errors.New("no token given")
-		}
+	token, err := readGitHubToken(box.name, repo)
+	if err != nil {
+		return err
 	}
+	return loginGitHubToken(ctx, box, token)
+}
+
+// readGitHubToken is BOXCTL_GITHUB_TOKEN, or asked for on the terminal.
+// It is apart from storing it so goal mode can fail before it makes a box.
+func readGitHubToken(boxName, repo string) (string, error) {
+	token := strings.TrimSpace(os.Getenv("BOXCTL_GITHUB_TOKEN"))
+	if token != "" {
+		return token, nil
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", errors.New("--github store needs a token: set BOXCTL_GITHUB_TOKEN")
+	}
+	if repo == "" {
+		repo = "this repository"
+	}
+	fmt.Fprintf(os.Stderr, "--github store keeps a GitHub token on %s until it's destroyed, so give it one that can do little:\n", boxName)
+	fmt.Fprintf(os.Stderr, "a fine-grained token for %s only, with Contents and Pull requests read/write and an expiry\n", repo)
+	fmt.Fprintf(os.Stderr, "(https://github.com/settings/personal-access-tokens/new).\nToken: ")
+	raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", err
+	}
+	token = strings.TrimSpace(string(raw))
+	if token == "" {
+		return "", errors.New("no token given")
+	}
+	return token, nil
+}
+
+// loginGitHubToken logs token in to gh on the box and makes gh git's
+// credential helper there.
+func loginGitHubToken(ctx context.Context, box *boxSSH, token string) error {
 	// /usr/bin/gh, not the image's wrapper: with a forwarded token around,
 	// the wrapper would set GH_TOKEN, and gh refuses to log in over it.
 	err := box.run(ctx, `gh=/usr/bin/gh; [ -x "$gh" ] || gh=gh
@@ -215,7 +235,11 @@ func githubRepo(dir string) string {
 func copyGitIdentity(ctx context.Context, box *boxSSH, dir string) error {
 	var script []string
 	for _, key := range []string{"user.name", "user.email"} {
-		out, err := exec.Command("git", "-C", dir, "config", "--get", key).Output()
+		gitArgs := []string{"config", "--get", key}
+		if dir != "" { // "": whatever applies wherever you are
+			gitArgs = append([]string{"-C", dir}, gitArgs...)
+		}
+		out, err := exec.Command("git", gitArgs...).Output()
 		if err != nil {
 			continue
 		}
