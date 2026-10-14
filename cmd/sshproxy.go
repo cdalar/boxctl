@@ -53,10 +53,18 @@ forwarding, file transfer and stdin all work.`,
 			port = p
 		}
 		c := newClient()
-		if err := ensureRunning(cmd.Context(), c, name, sshProxyReadyTimeout); err != nil {
-			return err
+		var conn *websocket.Conn
+		var err error
+		if sshProxyRunning {
+			// Dial straight away; a box that's paused since is resumed below.
+			conn, err = c.DialPort(cmd.Context(), name, port)
 		}
-		conn, err := c.DialPort(cmd.Context(), name, port)
+		if conn == nil {
+			if err := ensureRunning(cmd.Context(), c, name, sshProxyReadyTimeout); err != nil {
+				return err
+			}
+			conn, err = c.DialPort(cmd.Context(), name, port)
+		}
 		if err != nil {
 			return fmt.Errorf("connecting to %s:%d: %w", name, port, err)
 		}
@@ -68,7 +76,15 @@ forwarding, file transfer and stdin all work.`,
 	},
 }
 
+// sshProxyRunning (--running) is for boxctl's own ssh to a box it has
+// just made sure is running: dial at once, without asking the server
+// first, and resume the box only if that fails -- one round trip less
+// per connection.
+var sshProxyRunning bool
+
 func init() {
+	sshProxyCmd.Flags().BoolVar(&sshProxyRunning, "running", false, "the box is known to be running: check only if connecting fails")
+	_ = sshProxyCmd.Flags().MarkHidden("running")
 	rootCmd.AddCommand(sshProxyCmd)
 }
 

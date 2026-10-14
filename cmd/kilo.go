@@ -114,7 +114,7 @@ func runKilo(cmd *cobra.Command, args []string) error {
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	t, sess, err := openSession(ctx, cmd.Flags().Changed("idle-ttl"))
+	t, sess, err := openSession(ctx, cmd.Flags().Changed("idle-ttl"), nil)
 	if err != nil {
 		return err
 	}
