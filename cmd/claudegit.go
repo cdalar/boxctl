@@ -83,7 +83,12 @@ func claudeFetch(ctx context.Context) error {
 		return err
 	}
 	defer t.box.close()
+	return fetchBox(ctx, t)
+}
 
+// fetchBox fetches the box's branches and its worktrees' uncommitted
+// work as box/*.
+func fetchBox(ctx context.Context, t *claudeGitTarget) error {
 	// Snapshot the uncommitted work of the main checkout and of every
 	// task's worktree: box/wip, box/wip-<task>.
 	worktrees, err := boxWorktrees(ctx, t.box, t.dir)

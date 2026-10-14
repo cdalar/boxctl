@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -47,19 +49,22 @@ var kiloCmd = &cobra.Command{
 	Use:   "kilo [-- kilo-args...]",
 	Short: "Run Kilo on a box, with this project on it",
 	Long: `Runs the Kilo CLI on a box instead of on this machine, attached to your
-terminal -- boxctl claude, for Kilo. The first time, it creates the
-project's box (kilo-<project>), copies the project there -- the same
-absolute path, .git and uncommitted changes included, .gitignore'd files
-left out -- installs Kilo and your Kilo configuration, and starts Kilo
-in it.
+terminal -- boxctl claude, for Kilo. Each run creates a box of its own
+(kilo-<project>-<random>), copies the project there -- the same absolute
+path, .git and uncommitted changes included, .gitignore'd files left out
+-- installs Kilo and your Kilo configuration, and starts Kilo in it.
+When Kilo exits, you detach or the connection drops, the box's work is
+fetched here as box/* and the box is deleted.
 
-Kilo runs in tmux, so it keeps going when you detach (Ctrl-b d) or the
-connection drops; run boxctl kilo again to come back to it. The box's
+--keep uses the project's own box (kilo-<project>) and keeps it: Kilo
+runs in tmux, so it keeps going when you detach (Ctrl-b d) or the
+connection drops; run boxctl kilo --keep again to come back to it. The box's
 copy of the project is the one Kilo works on: later runs don't copy it
 again, and nothing is synced back -- Kilo commits and pushes from the
 box, or boxctl kilo fetch brings its work here.
 
-  boxctl kilo                           # create or reattach
+  boxctl kilo                           # a new box, deleted afterwards
+  boxctl kilo --keep                    # create or reattach to kilo-<project>
   boxctl kilo --prompt "fix the flaky auth test"
   boxctl kilo --detach --prompt "..."   # start it, don't attach
   boxctl kilo -- --model provider/model # arguments for kilo itself
@@ -106,11 +111,13 @@ func runKilo(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	t, sess, err := openSession(ctx, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {
 		return err
 	}
-	defer t.box.close()
+	defer t.end()
 
 	if err := copyKiloConfig(ctx, t.box, configDir); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't copy your Kilo configuration: %v\n", err)

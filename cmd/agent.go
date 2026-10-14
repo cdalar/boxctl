@@ -61,7 +61,7 @@ command -v ` + a.bin + ` >/dev/null || { echo "Installing ` + a.product + `..." 
 // flags its subcommands (ls, fetch, push) share, and the ones for
 // starting a session.
 func (a *boxAgent) addFlags(c *cobra.Command) {
-	c.PersistentFlags().StringVar(&claudeBox, "box", "", a.fill("box to use (default: {agent}-<project directory name>)"))
+	c.PersistentFlags().StringVar(&claudeBox, "box", "", a.fill("box to use, kept after the run (default: {agent}-<project directory name> with --keep and for ls/fetch/push; otherwise a new box of the run's own)"))
 	c.PersistentFlags().StringVar(&claudeProject, "project", "", "project directory (default: the git repository, or directory, you're in)")
 	c.PersistentFlags().StringVarP(&claudeTask, "task", "t", "", a.fill("work on a task in parallel: its own worktree (<dir>@<task>, branch <task>) and {Agent} on the box"))
 	c.PersistentFlags().BoolVar(&claudeOwnBox, "own-box", false, a.fill("with --task: give the task a box of its own ({agent}-<project>-<task>) instead of a worktree"))
@@ -72,5 +72,6 @@ func (a *boxAgent) addFlags(c *cobra.Command) {
 	c.Flags().BoolVarP(&claudeDetach, "detach", "d", false, a.fill("start {Agent} on the box without attaching to it"))
 	c.Flags().StringVar(&claudeGitHub, "github", githubForward, "GitHub credentials for the box: forward (lent while attached), store (a token kept on the box) or off")
 	_ = c.RegisterFlagCompletionFunc("github", cobra.FixedCompletions([]string{githubForward, githubStore, githubOff}, cobra.ShellCompDirectiveNoFileComp))
+	c.Flags().BoolVarP(&claudeKeep, "keep", "k", false, a.fill("use the project's own box, {agent}-<project>, and keep it -- instead of a new box deleted when the run ends (--box, --detach and --task keep it too)"))
 	c.Flags().DurationVar(&claudeIdle, "idle-ttl", claudeDefaultIdleTTL, "pause the box after this long unused, 10m to 720h (set on a new box, or on an existing one when given)")
 }

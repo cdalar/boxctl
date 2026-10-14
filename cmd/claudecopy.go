@@ -38,6 +38,40 @@ func copyProject(ctx context.Context, box *boxSSH, dir string) error {
 		func(tw *tar.Writer) error { return addFiles(tw, dir, files) })
 }
 
+// cloneURL is the URL the box clones the project from: its origin, with
+// GitHub over https so the box's credential helper answers for it -- or
+// "" when dir isn't a git repository with an origin, and is copied.
+func cloneURL(dir string) string {
+	if repo := githubRepo(dir); repo != "" {
+		return "https://github.com/" + repo + ".git"
+	}
+	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// cloneProject clones url's default branch to dir on the box -- the same
+// absolute path as here -- and starts branch from it, for Claude to work
+// on. Nothing local goes: not uncommitted changes, not unpushed commits.
+// With --github forward, your GitHub token is lent for the clone, as it
+// is while you're attached.
+func cloneProject(ctx context.Context, box *boxSSH, dir, url, branch string) error {
+	fmt.Fprintf(os.Stderr, "Cloning %s to %s on %s, branch %s...\n", url, dir, box.name, branch)
+	script := cloneScript(url, dir, branch)
+	var err error
+	if claudeGitHub == githubForward {
+		err = box.runForwarded(ctx, script, boxGitHubSocket)
+	} else {
+		err = box.run(ctx, script, nil)
+	}
+	if err != nil {
+		return fmt.Errorf("cloning %s on %s: %w", url, box.name, err)
+	}
+	return nil
+}
+
 // projectFiles lists dir's files to copy, as slash-separated paths
 // relative to it, sorted.
 func projectFiles(dir string) ([]string, error) {

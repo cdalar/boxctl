@@ -132,12 +132,13 @@ fi
 `
 }
 
-// cloneScript clones repo into dir and branches. It refuses a directory
-// that's there: a --box that holds something already.
-func cloneScript(repo, dir, branch string) string {
+// cloneScript clones url's default branch into dir and branches. It
+// refuses a directory that's there: a --box that holds something already.
+func cloneScript(url, dir, branch string) string {
 	return `set -e
 [ ! -e ` + shellQuote(dir) + ` ] || { echo "` + dir + ` already exists on this box" >&2; exit 1; }
-git clone -q https://github.com/` + repo + `.git ` + shellQuote(dir) + `
+mkdir -p "$(dirname ` + shellQuote(dir) + `)"
+git clone -q --single-branch ` + shellQuote(url) + ` ` + shellQuote(dir) + `
 git -C ` + shellQuote(dir) + ` checkout -q -b ` + shellQuote(branch)
 }
 
@@ -234,7 +235,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: couldn't set your git identity on %s: %v\n", name, err)
 	}
 	fmt.Fprintf(os.Stderr, "Cloning %s on %s...\n", repo, name)
-	clone := cloneScript(repo, dir, branch)
+	clone := cloneScript("https://github.com/"+repo+".git", dir, branch)
 	if claudeGitHub == githubForward {
 		err = box.runForwarded(ctx, clone, boxGitHubSocket)
 	} else {
