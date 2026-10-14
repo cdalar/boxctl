@@ -425,6 +425,9 @@ report a vulnerability (security@boxctl.io).
   Claude token, an ssh key, and the log above. On the box: the tmpfs
   file only until Claude starts; a stored GitHub token if you chose
   `store`. The Claude and GitHub tokens are not sent to the boxctl API.
+- **Server side.** The control plane stores only a SHA-256 hash of your
+  boxctl token. `boxctl rm` stops the microVM and deletes its rootfs from
+  the host; earlier backups are separate copies.
 - **What to do.** Use fine-grained, least-privilege tokens with an expiry,
   and `boxctl rm` boxes when you're done.
 - **One thing to know.** `boxctl claude` skips ssh host-key checking

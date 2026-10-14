@@ -18,6 +18,12 @@ problem involves a token, rotate it first, then tell us.
 
 - Every box is its own Firecracker microVM, with its own guest kernel.
   Boxes don't share a kernel with each other.
+- Destroying a box (`boxctl rm`) stops its Firecracker process and removes
+  its VM directory, which holds the rootfs, from the host (`onctl`'s
+  Firecracker provider, `Destroy`). That is a file deletion, not a secure
+  erase. Backups you made earlier (`boxctl download`, the dashboard's
+  Backup button) are separate copies and stay until they age out or you
+  delete them.
 - Every `/api/vms*` request the CLI makes is scoped by the server to the
   owner of your personal token. The CLI never computes or sees that scope.
 - Inside a box you are `root`. Anything you or an agent runs there can
@@ -115,9 +121,12 @@ repository.
 - `boxctl claude` adds its public key to the box over the exec endpoint.
 
 The Claude token and GitHub tokens are not sent to the boxctl API. They
-go to the box over that ssh connection. How the control plane stores your
-personal token and what it logs is documented in the `boxctl-vms`
-repository, not here.
+go to the box over that ssh connection. The control plane keeps only a
+SHA-256 hash of your boxctl personal token, with its label, owner prefix,
+and creation and last-used times, in a JSON file written with mode `0600`
+(`boxctl-vms`, `internal/auth/tokens.go`). It can't hand the token back,
+and a personal token can't mint another one. Revoke yours from the
+dashboard's tokens page.
 
 ## What you should do
 
