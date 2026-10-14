@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -33,6 +35,24 @@ func completeBoxName(cmd *cobra.Command, args []string, toComplete string) ([]co
 		names = append(names, cobra.CompletionWithDesc(vm.Name, vm.State))
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
+// completeBoxNamesOrAll is for `rm`, which takes several names: it keeps
+// completing after the first, skips names already given, and offers
+// `all` only as the sole argument.
+func completeBoxNamesOrAll(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	if slices.Contains(args, allBoxes) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	names, directive := completeBoxName(cmd, nil, toComplete)
+	names = slices.DeleteFunc(names, func(c cobra.Completion) bool {
+		name, _, _ := strings.Cut(string(c), "\t")
+		return slices.Contains(args, name)
+	})
+	if len(args) == 0 {
+		names = append(names, cobra.CompletionWithDesc(allBoxes, "every box"))
+	}
+	return names, directive
 }
 
 // completeBoxNameOrAll is completeBoxName plus the `all` keyword, for
