@@ -176,7 +176,9 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	inParallel(
 		func() { configErr = copyClaudeConfig(ctx, box) },
 		func() { setupErr = box.run(ctx, agent.setupScript(), nil) },
-		func() { stateErr = box.run(ctx, claudeStateScript([]string{sess.dir}, localClaudeTheme(), apiKey), nil) },
+		func() {
+			stateErr = box.run(ctx, claudeStateScript([]string{sess.dir}, localClaudeTheme(), apiKey), nil)
+		},
 		func() { running = sessionRunning(ctx, box, sess) },
 	)
 	if configErr != nil {
