@@ -211,7 +211,7 @@ func TestAgentDefaultSize(t *testing.T) {
 		a    *boxAgent
 		want string
 	}{
-		{claudeAgent, "claude"},
+		{claudeAgent, "ai-sandbox"},
 		{kiloAgent, "medium"},
 	} {
 		c := &cobra.Command{Use: tc.a.name}

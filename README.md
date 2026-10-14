@@ -81,7 +81,7 @@ boxctl ls -a                      # all of them, paused and stopped too
 boxctl ls -o json                 # for scripts; images and sizes take -o json too
 boxctl images
 boxctl create my-box
-boxctl sizes                      # vCPU, memory and disk of small (default), claude, medium, large
+boxctl sizes                      # vCPU, memory and disk of small (default), ai-sandbox, medium, large
 boxctl create big-box --size large
 boxctl create long-job --idle-ttl 48h   # pause after 48h unused (default 6h)
 boxctl ssh my-box
@@ -199,7 +199,7 @@ instead. `fetch` brings each task's branch back, and its uncommitted
 work as `box/wip-<name>`.
 
 With `--keep`, the first run creates the project's box (`claude-<directory>`, from the
-`claude-agent` image, `claude` size), puts the project at the **same
+`claude-agent` image, `ai-sandbox` size), puts the project at the **same
 absolute path** -- cloned as above, or, without a git origin, copied:
 what git counts as the project (`git ls-files --cached --others
 --exclude-standard`, so uncommitted changes and untracked files go,
