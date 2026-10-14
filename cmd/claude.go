@@ -160,27 +160,29 @@ func runClaude(cmd *cobra.Command, args []string) error {
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	t, sess, err := openSession(ctx, cmd.Flags().Changed("idle-ttl"))
+	// Independent of each other and of the project being on the box, so
+	// they run while it's cloned or copied, sharing its time instead of
+	// adding to it (the ssh connection is shared, see boxSSH).
+	var (
+		configErr, setupErr, stateErr error
+		running                       bool
+	)
+	t, sess, err := openSession(ctx, cmd.Flags().Changed("idle-ttl"), func(box *boxSSH, sess taskSession) {
+		inParallel(
+			func() { configErr = copyClaudeConfig(ctx, box) },
+			func() { setupErr = box.run(ctx, agent.setupScript(), nil) },
+			func() {
+				stateErr = box.run(ctx, claudeStateScript([]string{sess.dir}, localClaudeTheme(), apiKey), nil)
+			},
+			func() { running = sessionRunning(ctx, box, sess) },
+		)
+	})
 	if err != nil {
 		return err
 	}
 	defer t.end()
 	name, box := t.name, t.box
 
-	// Independent of each other, so they share the time of one round trip
-	// instead of adding up (the ssh connection is shared, see boxSSH).
-	var (
-		configErr, setupErr, stateErr error
-		running                       bool
-	)
-	inParallel(
-		func() { configErr = copyClaudeConfig(ctx, box) },
-		func() { setupErr = box.run(ctx, agent.setupScript(), nil) },
-		func() {
-			stateErr = box.run(ctx, claudeStateScript([]string{sess.dir}, localClaudeTheme(), apiKey), nil)
-		},
-		func() { running = sessionRunning(ctx, box, sess) },
-	)
 	if configErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't copy your Claude configuration: %v\n", configErr)
 	}
@@ -228,7 +230,10 @@ func checkSessionFlags() error {
 //
 // Unless ephemeralRun says otherwise, the box is a new one of the run's
 // own, which t.end() deletes -- as openSession does itself if it fails.
-func openSession(ctx context.Context, setTTL bool) (*claudeTarget, taskSession, error) {
+//
+// alongside, unless nil, is the agent's own setup on the box, which
+// doesn't need the project there: it runs while the project is put there.
+func openSession(ctx context.Context, setTTL bool, alongside func(*boxSSH, taskSession)) (*claudeTarget, taskSession, error) {
 	ephemeral := ephemeralRun()
 	if ephemeral {
 		dir, err := projectDir()
@@ -250,7 +255,23 @@ func openSession(ctx context.Context, setTTL bool) (*claudeTarget, taskSession, 
 	if ephemeral {
 		fmt.Fprintf(os.Stderr, "%s is this run's box: it's deleted when %s exits or you detach, after its work is fetched here as box/* (--keep keeps it).\n", t.name, agent.title)
 	}
-	sess, err := prepareSession(ctx, t)
+	// Before the project, which a clone may need it for -- and before
+	// anything runs alongside, as it may ask for the token.
+	if claudeGitHub == githubStore {
+		if err := storeGitHubToken(ctx, t.box, githubRepo(t.dir)); err != nil {
+			t.end()
+			return nil, taskSession{}, err
+		}
+	}
+	sess := newTaskSession(t.dir, claudeTask)
+	if alongside == nil {
+		err = prepareSession(ctx, t, sess)
+	} else {
+		inParallel(
+			func() { err = prepareSession(ctx, t, sess) },
+			func() { alongside(t.box, sess) },
+		)
+	}
 	if err != nil {
 		t.end()
 		return nil, taskSession{}, err
@@ -258,14 +279,10 @@ func openSession(ctx context.Context, setTTL bool) (*claudeTarget, taskSession, 
 	return t, sess, nil
 }
 
-func prepareSession(ctx context.Context, t *claudeTarget) (taskSession, error) {
+// prepareSession puts the project on t's box, unless it's there, and
+// makes sess's worktree.
+func prepareSession(ctx context.Context, t *claudeTarget, sess taskSession) error {
 	dir, name, box := t.dir, t.name, t.box
-	// Before the project, which a clone may need it for.
-	if claudeGitHub == githubStore {
-		if err := storeGitHubToken(ctx, box, githubRepo(dir)); err != nil {
-			return taskSession{}, err
-		}
-	}
 	// Your git identity doesn't depend on the project being there yet, so
 	// it's set while the clone or copy runs.
 	identityErr := make(chan error, 1)
@@ -281,13 +298,13 @@ func prepareSession(ctx context.Context, t *claudeTarget) (taskSession, error) {
 		// boxctl/<box name less the agent's>.
 		if url := cloneURL(dir); url != "" {
 			if err := cloneProject(ctx, box, dir, url, "boxctl/"+strings.TrimPrefix(name, agent.name+"-")); err != nil {
-				return taskSession{}, err
+				return err
 			}
 		} else if err := copyProject(ctx, box, dir); err != nil {
-			return taskSession{}, err
+			return err
 		}
 		if err := markProject(ctx, box, dir); err != nil {
-			return taskSession{}, err
+			return err
 		}
 		t.needsCopy = false
 	} else if claudeTask == "" {
@@ -296,13 +313,12 @@ func prepareSession(ctx context.Context, t *claudeTarget) (taskSession, error) {
 			fmt.Fprintf(os.Stderr, "Your local changes since then aren't on the box: commit them and run boxctl claude push, or hand off to a fresh box with --box.\n")
 		}
 	}
-	sess := newTaskSession(dir, claudeTask)
 	if sess.task != "" {
 		if err := box.run(ctx, worktreeScript(dir, sess.task), nil); err != nil {
-			return sess, fmt.Errorf("making the %s worktree on %s: %w", sess.task, name, err)
+			return fmt.Errorf("making the %s worktree on %s: %w", sess.task, name, err)
 		}
 	}
-	return sess, nil
+	return nil
 }
 
 // inParallel runs fns at once and returns when all have.
@@ -406,7 +422,9 @@ func githubLogPath() string {
 }
 
 // runForwarded runs command on the box with your gh token lent to it for
-// as long as it runs (--github forward), on an ssh connection of its own.
+// as long as it runs (--github forward). The forward is added to the
+// shared connection for that time (ssh -O forward) rather than given a
+// connection of its own, which would cost a new tunnel and handshake.
 func (b *boxSSH) runForwarded(ctx context.Context, command, boxSocket string) error {
 	srv, err := startTokenServer(b.name, githubLogPath())
 	if err != nil {
@@ -414,13 +432,26 @@ func (b *boxSSH) runForwarded(ctx context.Context, command, boxSocket string) er
 		return b.run(ctx, command, nil)
 	}
 	defer srv.close()
+	fwd := boxSocket + ":" + srv.socket
 	_ = b.run(ctx, "rm -f "+shellQuote(boxSocket), nil)
-	argv := append([]string{"-o", "BatchMode=yes", "-o", "ControlPath=none", "-o", "ExitOnForwardFailure=no", "-R", boxSocket + ":" + srv.socket}, b.args...)
-	cmd := exec.CommandContext(ctx, "ssh", append(argv, command)...)
-	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
-	err = cmd.Run()
-	_ = b.run(context.Background(), "rm -f "+shellQuote(boxSocket), nil)
-	return err
+	if err := b.control("forward", "-R", fwd); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: not forwarding GitHub credentials: %v\n", err)
+		return b.run(ctx, command, nil)
+	}
+	defer func() { _ = b.control("cancel", "-R", fwd) }()
+	// Without the socket the box's helpers say "attach to forward", rather
+	// than failing to reach a stale one.
+	return b.run(ctx, "trap "+shellQuote("rm -f "+shellQuote(boxSocket))+" EXIT\n"+command, nil)
+}
+
+// control asks the shared connection's master to do op (ssh -O op).
+func (b *boxSSH) control(op string, extra ...string) error {
+	argv := append(append([]string{"-O", op}, extra...), b.args...)
+	out, err := exec.Command("ssh", argv...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ssh -O %s: %w: %s", op, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // claudeTarget is the project here and its box, reachable over ssh.
@@ -674,7 +705,7 @@ func newBoxSSH(name, key string) (*boxSSH, error) {
 		// token, over TLS to boxctl.io), and every box has fresh host
 		// keys, so there's nothing for known_hosts to add.
 		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
-		"-o", "ProxyCommand=" + shellQuote(self) + " ssh-proxy " + shellQuote(name),
+		"-o", "ProxyCommand=" + shellQuote(self) + " ssh-proxy --running " + shellQuote(name),
 		"-o", "ServerAliveInterval=30",
 		"-o", "ControlMaster=auto", "-o", "ControlPath=" + control, "-o", "ControlPersist=60s",
 		"root@" + name,
