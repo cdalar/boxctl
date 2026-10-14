@@ -401,6 +401,39 @@ README's "Personal API tokens (the `boxctl` CLI)"), the same way
 shared token. Your token lives in `~/.boxctl/config.json` (mode `0600`)
 and is never sent anywhere except the configured API URL.
 
+## Security & credentials
+
+Short version; [SECURITY.md](SECURITY.md) has the details and how to
+report a vulnerability (security@boxctl.io).
+
+- **Isolation.** Each box is its own Firecracker microVM with its own
+  guest kernel. Inside it you are root, so anything running there can read
+  whatever credentials the box holds.
+- **Claude.** `boxctl claude login` saves a `claude setup-token` token (macOS
+  Keychain, else a `0600` file). It is sent over ssh stdin into a `0600`
+  file on the box's `/run` tmpfs, which the session's command sources and
+  deletes before Claude starts. It's not in argv, not on the box's disk,
+  not in an image, and not logged. Claude's process still holds it in its
+  environment while it runs.
+- **GitHub (`--github`).** `forward` (default) lends your `gh auth token`
+  over a Unix socket only while you're attached; each use is logged to
+  `~/.boxctl/claude/github.log`. `store` (needed for `--goal` and other
+  work while you're away) keeps a token on the box until it's destroyed:
+  pass a fine-grained, single-repository token in `BOXCTL_GITHUB_TOKEN`.
+  `off` gives the box nothing.
+- **Where things live.** Locally: `~/.boxctl/config.json` (`0600`), the
+  Claude token, an ssh key, and the log above. On the box: the tmpfs
+  file only until Claude starts; a stored GitHub token if you chose
+  `store`. The Claude and GitHub tokens are not sent to the boxctl API.
+- **Server side.** The control plane stores only a SHA-256 hash of your
+  boxctl token. `boxctl rm` stops the microVM and deletes its rootfs from
+  the host; earlier backups are separate copies.
+- **What to do.** Use fine-grained, least-privilege tokens with an expiry,
+  and `boxctl rm` boxes when you're done.
+- **One thing to know.** `boxctl claude` skips ssh host-key checking
+  (the tunnel is authenticated with your boxctl token instead), so you
+  trust boxctl.io to connect you to your own box.
+
 ## Project layout
 
 ```
