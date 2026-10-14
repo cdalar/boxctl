@@ -17,19 +17,35 @@ import (
 var lsCmd = &cobra.Command{
 	Use:     "ls",
 	Aliases: []string{"list"},
-	Short:   "List your boxes",
+	Short:   "List your running boxes (-a for all)",
 	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		asJSON, err := wantJSON(cmd)
 		if err != nil {
 			return err
 		}
+		all, _ := cmd.Flags().GetBool("all")
 		vms, err := newClient().List(cmd.Context())
 		if err != nil {
 			return err
 		}
+		total := len(vms)
+		// Like `docker ps`: only live boxes unless -a.
+		if !all {
+			live := vms[:0]
+			for _, vm := range vms {
+				if stateRank(vm.State) == 0 {
+					live = append(live, vm)
+				}
+			}
+			vms = live
+		}
 		if len(vms) == 0 && !asJSON {
-			fmt.Println("No boxes yet. Create one with `boxctl create <name>`.")
+			if total > 0 {
+				fmt.Println("No running boxes. Use `boxctl ls -a` to show all boxes.")
+			} else {
+				fmt.Println("No boxes yet. Create one with `boxctl create <name>`.")
+			}
 			return nil
 		}
 
@@ -97,6 +113,10 @@ var lsCmd = &cobra.Command{
 				fmt.Fprintln(&out, row)
 			}
 			_, err := os.Stdout.WriteString(out.String())
+			// stderr, so the table on stdout stays clean for pipes.
+			if hidden := total - len(vms); hidden > 0 && err == nil {
+				fmt.Fprintf(os.Stderr, "\n%d more box(es) not shown (paused or stopped). Use `boxctl ls -a` to list all.\n", hidden)
+			}
 			return err
 		}
 		color := useColor()
@@ -178,6 +198,7 @@ func age(t time.Time) string {
 }
 
 func init() {
+	lsCmd.Flags().BoolP("all", "a", false, "show all boxes (default shows just running)")
 	addOutputFlag(lsCmd)
 	rootCmd.AddCommand(lsCmd)
 }

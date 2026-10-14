@@ -76,7 +76,8 @@ into `dist/`).
 # at the hidden prompt (or pipe it in: `pbpaste | boxctl login`).
 boxctl login
 
-boxctl ls
+boxctl ls                          # running boxes only
+boxctl ls -a                       # all, including paused and stopped
 boxctl ls -o json                 # for scripts; images and sizes take -o json too
 boxctl images
 boxctl create my-box
