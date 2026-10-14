@@ -81,7 +81,7 @@ boxctl ls -a                      # all of them, paused and stopped too
 boxctl ls -o json                 # for scripts; images and sizes take -o json too
 boxctl images
 boxctl create my-box
-boxctl sizes                      # vCPU, memory and disk of small (default), medium, large
+boxctl sizes                      # vCPU, memory and disk of small (default), ai-sandbox, medium, large
 boxctl create big-box --size large
 boxctl create long-job --idle-ttl 48h   # pause after 48h unused (default 6h)
 boxctl ssh my-box
@@ -111,6 +111,8 @@ local/dev `boxctl-vms` instance.
 Runs Claude Code itself on a box instead of on your machine, attached to
 your terminal -- so its file edits and its shell both happen there, on
 the box's copy of the project, and nothing is synced.
+
+A box created for Claude is 2 vCPU / 4 GiB RAM with a 10 GiB disk unless you pass `--size`.
 
 By default every run gets a fresh box (`claude-<directory>-<random>`)
 that lives only as long as the run. A git repository with an `origin`
@@ -197,7 +199,7 @@ instead. `fetch` brings each task's branch back, and its uncommitted
 work as `box/wip-<name>`.
 
 With `--keep`, the first run creates the project's box (`claude-<directory>`, from the
-`claude-agent` image, `medium`), puts the project at the **same
+`claude-agent` image, `ai-sandbox` size), puts the project at the **same
 absolute path** -- cloned as above, or, without a git origin, copied:
 what git counts as the project (`git ls-files --cached --others
 --exclude-standard`, so uncommitted changes and untracked files go,
