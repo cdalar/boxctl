@@ -7,9 +7,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cdalar/boxctl/internal/client"
@@ -63,26 +65,35 @@ var (
 	claudeAuth    string
 	claudeRepo    string
 	claudeGoal    string
+	claudeKeep    bool
 )
 
 var claudeCmd = &cobra.Command{
 	Use:   "claude [-- claude-args...]",
 	Short: "Run Claude Code on a box, with this project on it",
 	Long: `Runs Claude Code on a box instead of on this machine, attached to your
-terminal. The first time, it creates the project's box (claude-<project>),
-copies the project there -- the same absolute path, .git and uncommitted
-changes included, .gitignore'd files left out -- installs Claude Code and
-your Claude configuration, and starts Claude in it.
+terminal. Each run creates a box of its own (claude-<project>-<random>)
+and puts the project there, at the same absolute path: a git repository
+with an origin is cloned from it -- the default branch, then a new
+branch boxctl/<project>-<random> for Claude to work on; nothing local,
+uncommitted or unpushed, goes -- and anything else is copied. Then it
+installs Claude Code and your Claude configuration, and starts Claude in
+it. When Claude exits, you
+detach (Ctrl-b d) or the connection drops, the box's branches and
+uncommitted work are fetched here as box/* (as boxctl claude fetch does)
+and the box is deleted.
 
-Claude runs in tmux, so it keeps going when you detach (Ctrl-b d) or the
-connection drops; run boxctl claude again to come back to it. The box's
+--keep uses the project's own box (claude-<project>) instead, and keeps
+it: Claude runs in tmux, so it keeps going when you detach or the
+connection drops, and boxctl claude --keep comes back to it. The box's
 copy of the project is the one Claude works on: later runs don't copy it
 again, and nothing is synced back -- Claude commits and pushes from the
-box.
+box. --box, --detach and --task keep their box too.
 
-  boxctl claude                           # create or reattach
+  boxctl claude                           # a new box, deleted afterwards
+  boxctl claude --keep                    # create or reattach to claude-<project>
   boxctl claude --prompt "fix the flaky auth test"
-  boxctl claude --detach --prompt "..."   # start it, don't attach
+  boxctl claude --detach --prompt "..."   # start it, don't attach (kept)
   boxctl claude -- --model opus           # arguments for claude itself
   boxctl claude --repo owner/name         # a fresh box, the repo cloned, on a new branch
   boxctl claude --goal "bump Go and fix what breaks"   # unattended, ends in a PR
@@ -146,11 +157,13 @@ func runClaude(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	t, sess, err := openSession(ctx, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {
 		return err
 	}
-	defer t.box.close()
+	defer t.end()
 	name, box := t.name, t.box
 
 	if err := copyClaudeConfig(ctx, box); err != nil {
@@ -198,14 +211,34 @@ func checkSessionFlags() error {
 // openSession is the start of an agent's run, whichever agent: the
 // project's box with the project on it -- copied the first time -- the
 // task's worktree, your git identity and, for --github store, a token.
+//
+// Unless ephemeralRun says otherwise, the box is a new one of the run's
+// own, which t.end() deletes -- as openSession does itself if it fails.
 func openSession(ctx context.Context, setTTL bool) (*claudeTarget, taskSession, error) {
+	ephemeral := ephemeralRun()
+	if ephemeral {
+		dir, err := projectDir()
+		if err != nil {
+			return nil, taskSession{}, err
+		}
+		if claudeBox, err = ephemeralBoxName(dir); err != nil {
+			return nil, taskSession{}, err
+		}
+	}
 	t, err := openClaudeBox(ctx, true, setTTL)
 	if err != nil {
+		if ephemeral {
+			discardBox(claudeBox)
+		}
 		return nil, taskSession{}, err
+	}
+	t.ephemeral = ephemeral
+	if ephemeral {
+		fmt.Fprintf(os.Stderr, "%s is this run's box: it's deleted when %s exits or you detach, after its work is fetched here as box/* (--keep keeps it).\n", t.name, agent.title)
 	}
 	sess, err := prepareSession(ctx, t)
 	if err != nil {
-		t.box.close()
+		t.end()
 		return nil, taskSession{}, err
 	}
 	return t, sess, nil
@@ -213,13 +246,27 @@ func openSession(ctx context.Context, setTTL bool) (*claudeTarget, taskSession, 
 
 func prepareSession(ctx context.Context, t *claudeTarget) (taskSession, error) {
 	dir, name, box := t.dir, t.name, t.box
+	// Before the project, which a clone may need it for.
+	if claudeGitHub == githubStore {
+		if err := storeGitHubToken(ctx, box, githubRepo(dir)); err != nil {
+			return taskSession{}, err
+		}
+	}
 	if t.needsCopy {
-		if err := copyProject(ctx, box, dir); err != nil {
+		// A git repository with an origin is cloned there, not copied:
+		// the default branch, plus a branch of the box's own to work on,
+		// boxctl/<box name less the agent's>.
+		if url := cloneURL(dir); url != "" {
+			if err := cloneProject(ctx, box, dir, url, "boxctl/"+strings.TrimPrefix(name, agent.name+"-")); err != nil {
+				return taskSession{}, err
+			}
+		} else if err := copyProject(ctx, box, dir); err != nil {
 			return taskSession{}, err
 		}
 		if err := markProject(ctx, box, dir); err != nil {
 			return taskSession{}, err
 		}
+		t.needsCopy = false
 	} else if claudeTask == "" {
 		fmt.Fprintf(os.Stderr, "%s is already on %s; working with the box's copy (it isn't copied again).\n", dir, name)
 		if claudeHandoff != "" {
@@ -234,11 +281,6 @@ func prepareSession(ctx context.Context, t *claudeTarget) (taskSession, error) {
 	}
 	if err := copyGitIdentity(ctx, box, dir); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't set your git identity on %s: %v\n", name, err)
-	}
-	if claudeGitHub == githubStore {
-		if err := storeGitHubToken(ctx, box, githubRepo(dir)); err != nil {
-			return sess, err
-		}
 	}
 	return sess, nil
 }
@@ -354,6 +396,8 @@ type claudeTarget struct {
 	box       *boxSSH
 	// needsCopy: the project isn't on the box yet.
 	needsCopy bool
+	// ephemeral: the box is this run's, deleted by end.
+	ephemeral bool
 }
 
 // openClaudeBox resolves the project and its box (--box, or

@@ -112,9 +112,23 @@ Runs Claude Code itself on a box instead of on your machine, attached to
 your terminal -- so its file edits and its shell both happen there, on
 the box's copy of the project, and nothing is synced.
 
+By default every run gets a fresh box (`claude-<directory>-<random>`)
+that lives only as long as the run. A git repository with an `origin`
+isn't copied: the box clones origin's default branch (your GitHub token
+lent for it, as below) and Claude works on a new branch,
+`boxctl/<directory>-<random>` -- so local uncommitted or unpushed work
+isn't there; push it first. Anything else is copied. When the run ends --
+Claude exits, you detach, or the connection drops -- the box's branches and uncommitted work are
+fetched here as `box/*` (what `boxctl claude fetch` does) and the box is
+deleted -- or kept, with a message, if that fetch fails. Ctrl-C during
+setup deletes it too. `--keep` uses the project's long-lived box
+(`claude-<directory>`) instead, as described below; `--box`, `--detach`
+and `--task` imply it.
+
 ```bash
 cd ~/src/myproject
-boxctl claude                           # create or reattach to claude-myproject
+boxctl claude                           # a new box for this run, deleted afterwards
+boxctl claude --keep                    # create or reattach to claude-myproject
 boxctl claude --prompt "fix the flaky auth test"
 boxctl claude --detach --prompt "..."   # start it without attaching
 boxctl claude -- --model opus           # arguments for claude itself
@@ -182,11 +196,12 @@ not. They share the box's CPU, memory and ports -- `--task <name>
 instead. `fetch` brings each task's branch back, and its uncommitted
 work as `box/wip-<name>`.
 
-The first run creates the project's box (`claude-<directory>`, from the
-`claude-agent` image, `medium`), copies the project to the **same
-absolute path** -- what git counts as the project (`git ls-files
---cached --others --exclude-standard`, so uncommitted changes and
-untracked files go, `.gitignore`'d ones don't) plus `.git` -- installs
+With `--keep`, the first run creates the project's box (`claude-<directory>`, from the
+`claude-agent` image, `medium`), puts the project at the **same
+absolute path** -- cloned as above, or, without a git origin, copied:
+what git counts as the project (`git ls-files --cached --others
+--exclude-standard`, so uncommitted changes and untracked files go,
+`.gitignore`'d ones don't) plus `.git` -- installs
 Claude Code with Anthropic's installer, copies your `~/.claude/CLAUDE.md`,
 `agents/`, `skills/`, `commands/` and `settings.json` (minus hooks, the
 status line, plugins, `env` and credential helpers, which point at this
@@ -235,8 +250,8 @@ uncommitted changes there, in which case git refuses rather than
 overwrite them. Both supply the ssh themselves; with the `Host *.box`
 config below, plain `git fetch box` works as well.
 
-Claude keeps running when you detach (`Ctrl-b d`) or the connection
-drops; `boxctl claude` again attaches to it. Boxes it creates pause after
+With `--keep`, Claude keeps running when you detach (`Ctrl-b d`) or the connection
+drops; `boxctl claude --keep` again attaches to it. Boxes it creates pause after
 `--idle-ttl` unused (default `24h`, not the server's 6h): a detached
 Claude working on its own makes no traffic the idle reaper counts. Pass
 `--idle-ttl` to change an existing box's. A box holds one project -- the
@@ -256,11 +271,13 @@ tunneled by `boxctl ssh-proxy`.
 The same thing for the [Kilo CLI](https://kilo.ai/docs): the box, the
 project copy, tmux, tasks, GitHub, `fetch`/`push` and the idle TTL all
 work as they do for `boxctl claude`, on a box of its own
-(`kilo-<directory>`).
+(a fresh `kilo-<directory>-<random>` deleted after the run, or
+`kilo-<directory>` with `--keep`).
 
 ```bash
 cd ~/src/myproject
-boxctl kilo                             # create or reattach to kilo-myproject
+boxctl kilo                             # a new box for this run, deleted afterwards
+boxctl kilo --keep                      # create or reattach to kilo-myproject
 boxctl kilo --prompt "fix the flaky auth test"
 boxctl kilo --detach --prompt "..."     # start it without attaching
 boxctl kilo -- --model provider/model   # arguments for kilo itself

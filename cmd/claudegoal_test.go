@@ -73,9 +73,9 @@ func TestCloneScript(t *testing.T) {
 	run(t, origin, "git", "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
 	run(t, origin, "git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
 
-	// The script clones from GitHub; point that URL at the local repository.
+	// Cloned from a local repository rather than GitHub.
 	dir := filepath.Join(root, "box", "n")
-	script := strings.ReplaceAll(cloneScript("o/n", dir, "boxctl/x-ab12cd"), "https://github.com/o/n.git", origin)
+	script := cloneScript(origin, dir, "boxctl/x-ab12cd")
 	if out, err := exec.Command("sh", "-c", script).CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
