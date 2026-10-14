@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -166,17 +167,28 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	defer t.end()
 	name, box := t.name, t.box
 
-	if err := copyClaudeConfig(ctx, box); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't copy your Claude configuration: %v\n", err)
+	// Independent of each other, so they share the time of one round trip
+	// instead of adding up (the ssh connection is shared, see boxSSH).
+	var (
+		configErr, setupErr, stateErr error
+		running                       bool
+	)
+	inParallel(
+		func() { configErr = copyClaudeConfig(ctx, box) },
+		func() { setupErr = box.run(ctx, agent.setupScript(), nil) },
+		func() { stateErr = box.run(ctx, claudeStateScript([]string{sess.dir}, localClaudeTheme(), apiKey), nil) },
+		func() { running = sessionRunning(ctx, box, sess) },
+	)
+	if configErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: couldn't copy your Claude configuration: %v\n", configErr)
 	}
-	if err := box.run(ctx, agent.setupScript(), nil); err != nil {
-		return fmt.Errorf("installing Claude Code on %s: %w", name, err)
+	if setupErr != nil {
+		return fmt.Errorf("installing Claude Code on %s: %w", name, setupErr)
 	}
-	if err := box.run(ctx, claudeStateScript([]string{sess.dir}, localClaudeTheme(), apiKey), nil); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't skip Claude's first-run setup on %s: %v\n", name, err)
+	if stateErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: couldn't skip Claude's first-run setup on %s: %v\n", name, stateErr)
 	}
 
-	running := sessionRunning(ctx, box, sess)
 	if claudeHandoff != "" {
 		if running {
 			return fmt.Errorf("a Claude session is already running there -- attach with %s and quit it, then hand off again", sess.attachHint(name))
@@ -252,6 +264,15 @@ func prepareSession(ctx context.Context, t *claudeTarget) (taskSession, error) {
 			return taskSession{}, err
 		}
 	}
+	// Your git identity doesn't depend on the project being there yet, so
+	// it's set while the clone or copy runs.
+	identityErr := make(chan error, 1)
+	go func() { identityErr <- copyGitIdentity(ctx, box, dir) }()
+	defer func() {
+		if err := <-identityErr; err != nil {
+			fmt.Fprintf(os.Stderr, "warning: couldn't set your git identity on %s: %v\n", name, err)
+		}
+	}()
 	if t.needsCopy {
 		// A git repository with an origin is cloned there, not copied:
 		// the default branch, plus a branch of the box's own to work on,
@@ -279,10 +300,20 @@ func prepareSession(ctx context.Context, t *claudeTarget) (taskSession, error) {
 			return sess, fmt.Errorf("making the %s worktree on %s: %w", sess.task, name, err)
 		}
 	}
-	if err := copyGitIdentity(ctx, box, dir); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't set your git identity on %s: %v\n", name, err)
-	}
 	return sess, nil
+}
+
+// inParallel runs fns at once and returns when all have.
+func inParallel(fns ...func()) {
+	var wg sync.WaitGroup
+	for _, fn := range fns {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
+	}
+	wg.Wait()
 }
 
 // sessionRunning reports whether sess's agent is running in tmux on the
@@ -435,17 +466,25 @@ func connectClaudeBox(ctx context.Context, name string, create, setTTL bool) (*b
 	if err != nil {
 		return nil, err
 	}
-	if created || setTTL {
-		if _, err := c.SetIdleTTL(ctx, name, claudeIdle); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: couldn't set %s's idle TTL: %v\n", name, err)
-		}
-	}
 	key, err := ensureClaudeKey()
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeKey(ctx, c, name, key); err != nil {
-		return nil, err
+	// Two independent API calls: no reason to wait for one before the other.
+	var ttlErr, authErr error
+	inParallel(
+		func() {
+			if created || setTTL {
+				_, ttlErr = c.SetIdleTTL(ctx, name, claudeIdle)
+			}
+		},
+		func() { authErr = authorizeKey(ctx, c, name, key) },
+	)
+	if ttlErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: couldn't set %s's idle TTL: %v\n", name, ttlErr)
+	}
+	if authErr != nil {
+		return nil, authErr
 	}
 	box, err := newBoxSSH(name, key)
 	if err != nil {
