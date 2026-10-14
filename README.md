@@ -124,7 +124,37 @@ boxctl claude ls                        # this project's Claude sessions
 boxctl claude --handoff <session-id>    # carry on a local session on the box
 boxctl claude fetch                     # the box's branches and uncommitted work, as box/*
 boxctl claude push                      # this branch to the box
+boxctl claude --repo owner/name         # a fresh box with the repo cloned, on a new branch
+boxctl claude --repo owner/name --goal "bump Go to 1.24 and fix what breaks" --github store
+boxctl claude logs <box> [-f]           # how a --goal run is going
 ```
+
+**A repository instead of a local copy.** `--repo owner/name` creates a
+new box, clones the repository's default branch from GitHub onto a new
+branch `boxctl/<slug>-<id>`, and starts Claude there, attached as usual
+(come back with `boxctl ssh <box>`, then `tmux attach -t claude`). With
+`--goal "..."` Claude doesn't wait for you: it runs `claude -p` to the end
+in a detached tmux session, then opens a pull request with `gh pr create`
+whose body has the goal and a summary. `boxctl claude` prints the box, the
+branch and the `boxctl claude logs <box>` command and returns; closing
+the terminal changes nothing. Without `--repo`, `--goal` uses the git
+repository of the directory you run it in (its GitHub `origin`). The run's
+status (`running`, `done` or `failed`, with the PR's URL) is kept on the
+box, in `/root/.boxctl/goals/latest/status.json`, and `logs` prints it
+before the log. Claude must be logged in without you (`boxctl claude
+login`, or `--claude-auth api-key`).
+
+**`--github` forward, store, off -- and why a goal needs store.**
+`forward` lends Claude your `gh` token per request, over the ssh connection
+you're attached with, and keeps nothing on the box; `store` logs a token
+you provide (`BOXCTL_GITHUB_TOKEN`, or pasted when asked -- make it a
+fine-grained token for one repository with Contents and Pull requests
+read/write and an expiry) into the box's `gh`, where it stays until the
+box is destroyed; `off` gives the box nothing. A goal runs after you
+close your terminal, when nothing is left to ask for your token, so
+forward could never push the branch or open the PR; `--goal` therefore
+requires `--github store` and stops immediately, saying how to set it up,
+if it's missing.
 
 **Logging Claude in, once.** `boxctl claude login` runs `claude
 setup-token` here (one browser approval; Pro, Max, Team or Enterprise)
