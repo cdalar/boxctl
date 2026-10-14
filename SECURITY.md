@@ -58,8 +58,8 @@ whose Claude was running at that point. `--claude-auth api-key` works the
 same way with `ANTHROPIC_API_KEY`.
 
 This token is a `claude setup-token` token. It can make model requests and
-is not your normal Claude login. Revoke it from your Claude account if you
-think it leaked.
+is not your normal Claude login. If you think it leaked, make a new one with
+`claude setup-token` and run `boxctl claude login` again.
 
 ## GitHub credentials
 
@@ -132,5 +132,5 @@ repository, not here.
   project is copied to the box (git-tracked and untracked-not-ignored
   files, plus `.git`).
 - Revoke tokens you think leaked: your boxctl token on the dashboard's
-  tokens page, the Claude token in your Claude account, GitHub tokens in
-  GitHub's settings.
+  tokens page, the Claude token by making a new one, GitHub tokens in GitHub's
+  settings.
