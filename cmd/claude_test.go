@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestClaudeBoxName(t *testing.T) {
@@ -199,5 +201,26 @@ func TestBoxSettingsDropsMachineSpecificKeys(t *testing.T) {
 	}
 	if data, err := boxSettings(filepath.Join(t.TempDir(), "none.json")); err != nil || data != nil {
 		t.Fatalf("missing settings.json: %s %v", data, err)
+	}
+}
+
+// boxctl claude creates a 2 vCPU / 4 GiB box unless --size says otherwise;
+// kilo keeps the size it always had.
+func TestAgentDefaultSize(t *testing.T) {
+	for _, tc := range []struct {
+		a    *boxAgent
+		want string
+	}{
+		{claudeAgent, "claude"},
+		{kiloAgent, "medium"},
+	} {
+		c := &cobra.Command{Use: tc.a.name}
+		tc.a.addFlags(c)
+		if got := c.Flags().Lookup("size").DefValue; got != tc.want {
+			t.Errorf("%s default size = %q, want %q", tc.a.name, got, tc.want)
+		}
+		if err := c.Flags().Parse([]string{"--size", "large"}); err != nil || claudeSize != "large" {
+			t.Errorf("%s --size large: claudeSize = %q, err = %v", tc.a.name, claudeSize, err)
+		}
 	}
 }

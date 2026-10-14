@@ -23,11 +23,14 @@ type boxAgent struct {
 	// promptFlag is the flag a new session's first message goes after;
 	// "" when it's a plain argument.
 	promptFlag string
+	// size is the box size created when --size isn't given.
+	size string
 }
 
 var claudeAgent = &boxAgent{
 	name: "claude", title: "Claude", product: "Claude Code",
 	bin: "claude", binDir: ".local/bin", install: claudeInstall,
+	size: claudeDefaultSize,
 }
 
 // agent is the one the running command is for.
@@ -65,7 +68,7 @@ func (a *boxAgent) addFlags(c *cobra.Command) {
 	c.PersistentFlags().StringVar(&claudeProject, "project", "", "project directory (default: the git repository, or directory, you're in)")
 	c.PersistentFlags().StringVarP(&claudeTask, "task", "t", "", a.fill("work on a task in parallel: its own worktree (<dir>@<task>, branch <task>) and {Agent} on the box"))
 	c.PersistentFlags().BoolVar(&claudeOwnBox, "own-box", false, a.fill("with --task: give the task a box of its own ({agent}-<project>-<task>) instead of a worktree"))
-	c.Flags().StringVarP(&claudeSize, "size", "s", claudeDefaultSize, "size of a box created for this")
+	c.Flags().StringVarP(&claudeSize, "size", "s", a.size, "size of a box created for this")
 	_ = c.RegisterFlagCompletionFunc("size", completeSize)
 	c.Flags().StringVarP(&claudeImage, "image", "i", claudeDefaultImage, "image of a box created for this")
 	c.Flags().StringVarP(&claudePrompt, "prompt", "p", "", a.fill("first message for a newly started {Agent}"))
