@@ -185,6 +185,40 @@ func TestAddFilesKeepsModesAndLinks(t *testing.T) {
 	}
 }
 
+func TestConfigFilesSkipsBuildOutput(t *testing.T) {
+	src := t.TempDir()
+	write(t, filepath.Join(src, "CLAUDE.md"), "hi")
+	write(t, filepath.Join(src, "skills/s/SKILL.md"), "skill")
+	write(t, filepath.Join(src, "skills/s/node_modules/pkg/index.js"), "x")
+	write(t, filepath.Join(src, "skills/s/.git/HEAD"), "ref")
+	write(t, filepath.Join(src, "skills/.DS_Store"), "x")
+	write(t, filepath.Join(src, "projects/p.jsonl"), "not config")
+	files, size, err := configFiles(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"CLAUDE.md", "skills/s/SKILL.md"}; !reflect.DeepEqual(files, want) {
+		t.Errorf("files %v, want %v", files, want)
+	}
+	if size != 7 {
+		t.Errorf("size %d, want 7", size)
+	}
+}
+
+func TestUploadProgressLine(t *testing.T) {
+	p := &uploadProgress{label: "cfg", total: 4 << 20}
+	if _, err := p.Write(make([]byte, 1<<20)); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := p.line(), "cfg [######------------------] 1.0 MB / 4.0 MB  25%"; got != want {
+		t.Errorf("line %q, want %q", got, want)
+	}
+	p.done = 5 << 20 // tar headers can take it past total
+	if got, want := p.line(), "cfg [########################] 4.0 MB / 4.0 MB 100%"; got != want {
+		t.Errorf("line %q, want %q", got, want)
+	}
+}
+
 func TestBoxSettingsDropsMachineSpecificKeys(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.json")
 	write(t, p, `{"model":"opus","permissions":{"allow":["Bash(ls)"]},"hooks":{"Stop":[]},"statusLine":{"command":"~/bin/x"},"env":{"SECRET":"1"},"enabledPlugins":{"x@y":true}}`)

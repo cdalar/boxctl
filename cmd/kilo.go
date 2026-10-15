@@ -180,7 +180,7 @@ func copyKiloConfig(ctx context.Context, box *boxSSH, src string) error {
 	if len(files) == 0 {
 		return nil
 	}
-	return streamTar(ctx, box, "mkdir -p ~/.config/kilo && tar -xzf - -C ~/.config/kilo",
+	return streamTar(ctx, box, "mkdir -p ~/.config/kilo && tar -xzf - -C ~/.config/kilo", nil,
 		func(tw *tar.Writer) error { return addFiles(tw, src, files) })
 }
 

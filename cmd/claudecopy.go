@@ -16,6 +16,10 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/cdalar/boxctl/internal/client"
+	"golang.org/x/term"
 )
 
 // copyProject puts dir on the box at the same absolute path, as a
@@ -34,7 +38,7 @@ func copyProject(ctx context.Context, box *boxSSH, dir string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Copying %s to %s (%d files)...\n", dir, box.name, len(files))
-	return streamTar(ctx, box, "mkdir -p "+shellQuote(dir)+" && tar -xzf - -C "+shellQuote(dir),
+	return streamTar(ctx, box, "mkdir -p "+shellQuote(dir)+" && tar -xzf - -C "+shellQuote(dir), nil,
 		func(tw *tar.Writer) error { return addFiles(tw, dir, files) })
 }
 
@@ -190,12 +194,17 @@ func addFiles(tw *tar.Writer, dir string, files []string) error {
 }
 
 // streamTar runs remote on the box with a gzipped tar, written by fill,
-// as its stdin.
-func streamTar(ctx context.Context, box *boxSSH, remote string, fill func(*tar.Writer) error) error {
+// as its stdin -- counted by progress as it's written, unless nil. The
+// pipe to ssh doesn't buffer, so what's written is what's been sent.
+func streamTar(ctx context.Context, box *boxSSH, remote string, progress *uploadProgress, fill func(*tar.Writer) error) error {
 	pr, pw := io.Pipe()
 	go func() {
 		gz := gzip.NewWriter(pw)
-		tw := tar.NewWriter(gz)
+		var w io.Writer = gz
+		if progress != nil {
+			w = io.MultiWriter(gz, progress)
+		}
+		tw := tar.NewWriter(w)
 		err := fill(tw)
 		if err == nil {
 			err = tw.Close()
@@ -207,7 +216,61 @@ func streamTar(ctx context.Context, box *boxSSH, remote string, fill func(*tar.W
 	}()
 	err := box.run(ctx, remote, pr)
 	_ = pr.Close()
+	if progress != nil {
+		progress.finish(err == nil)
+	}
 	return err
+}
+
+// uploadProgress draws a progress bar on stderr for an upload of total
+// bytes, counted by its Write -- only on a terminal, where \r redraws
+// the line; elsewhere it's silent.
+type uploadProgress struct {
+	label     string
+	total     int64
+	done      int64
+	lastPrint time.Time
+	show      bool
+}
+
+func newUploadProgress(label string, total int64) *uploadProgress {
+	return &uploadProgress{label: label, total: total, show: term.IsTerminal(int(os.Stderr.Fd()))}
+}
+
+func (p *uploadProgress) Write(b []byte) (int, error) {
+	p.done += int64(len(b))
+	if p.show && time.Since(p.lastPrint) >= 200*time.Millisecond {
+		fmt.Fprint(os.Stderr, "\r\033[K"+p.line())
+		p.lastPrint = time.Now()
+	}
+	return len(b), nil
+}
+
+// finish draws the bar a last time, full when the upload succeeded, and
+// ends its line so what's printed next doesn't land on it.
+func (p *uploadProgress) finish(ok bool) {
+	if !p.show {
+		return
+	}
+	if ok {
+		p.done = p.total
+	}
+	fmt.Fprintln(os.Stderr, "\r\033[K"+p.line())
+}
+
+// line is the bar: label, [####----], bytes sent of total, percentage.
+// done counts tar headers too, so it can pass total a little: capped.
+func (p *uploadProgress) line() string {
+	const width = 24
+	done := min(p.done, p.total)
+	frac := 1.0
+	if p.total > 0 {
+		frac = float64(done) / float64(p.total)
+	}
+	filled := int(frac * width)
+	return fmt.Sprintf("%s [%s%s] %s / %s %3.0f%%", p.label,
+		strings.Repeat("#", filled), strings.Repeat("-", width-filled),
+		client.FormatBytes(done), client.FormatBytes(p.total), frac*100)
 }
 
 // claudeConfigEntries are the parts of ~/.claude that shape how Claude
@@ -231,13 +294,9 @@ func copyClaudeConfig(ctx context.Context, box *boxSSH) error {
 		return err
 	}
 	src := filepath.Join(home, ".claude")
-	var files []string
-	for _, entry := range claudeConfigEntries {
-		sub, err := walkFiles(src, entry)
-		if err != nil {
-			return err
-		}
-		files = append(files, sub...)
+	files, size, err := configFiles(src)
+	if err != nil {
+		return err
 	}
 	settings, err := boxSettings(filepath.Join(src, "settings.json"))
 	if err != nil {
@@ -246,7 +305,10 @@ func copyClaudeConfig(ctx context.Context, box *boxSSH) error {
 	if len(files) == 0 && settings == nil {
 		return nil
 	}
-	return streamTar(ctx, box, "mkdir -p ~/.claude && tar -xzf - -C ~/.claude", func(tw *tar.Writer) error {
+	total := size + int64(len(settings))
+	fmt.Fprintf(os.Stderr, "Copying your Claude configuration (%s) to %s...\n", client.FormatBytes(total), box.name)
+	progress := newUploadProgress("Claude configuration", total)
+	return streamTar(ctx, box, "mkdir -p ~/.claude && tar -xzf - -C ~/.claude", progress, func(tw *tar.Writer) error {
 		if err := addFiles(tw, src, files); err != nil {
 			return err
 		}
@@ -260,6 +322,53 @@ func copyClaudeConfig(ctx context.Context, box *boxSSH) error {
 		_, err := tw.Write(settings)
 		return err
 	})
+}
+
+// configSkippedDirs are directories under claudeConfigEntries that are
+// this machine's build output or history, not configuration: a skill's
+// node_modules or checkout can be hundreds of MB, and uploading it
+// every run is what made starting slow.
+var configSkippedDirs = map[string]bool{"node_modules": true, ".git": true}
+
+// configFiles lists the files of claudeConfigEntries under src, relative
+// to it, without configSkippedDirs or .DS_Store, and their total size.
+func configFiles(src string) ([]string, int64, error) {
+	var (
+		files []string
+		size  int64
+	)
+	for _, entry := range claudeConfigEntries {
+		err := filepath.WalkDir(filepath.Join(src, entry), func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil
+				}
+				return err
+			}
+			if d.IsDir() {
+				if configSkippedDirs[d.Name()] {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if d.Name() == ".DS_Store" {
+				return nil
+			}
+			if info, err := d.Info(); err == nil {
+				size += info.Size()
+			}
+			rel, err := filepath.Rel(src, p)
+			if err != nil {
+				return err
+			}
+			files = append(files, filepath.ToSlash(rel))
+			return nil
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	return files, size, nil
 }
 
 // boxSettings is settings.json without claudeSettingsDropped, or nil
@@ -343,6 +452,6 @@ func copyTranscript(ctx context.Context, box *boxSSH, dir, jsonl, id string) err
 	files = append(files, sub...)
 	key := claudeProjectKey(dir)
 	fmt.Fprintf(os.Stderr, "Copying this session (%s) to %s...\n", id, box.name)
-	return streamTar(ctx, box, "mkdir -p ~/.claude/projects/"+shellQuote(key)+" && tar -xzf - -C ~/.claude/projects/"+shellQuote(key),
+	return streamTar(ctx, box, "mkdir -p ~/.claude/projects/"+shellQuote(key)+" && tar -xzf - -C ~/.claude/projects/"+shellQuote(key), nil,
 		func(tw *tar.Writer) error { return addFiles(tw, src, files) })
 }
