@@ -32,10 +32,10 @@ func paint(style, s string) string {
 }
 
 func bold(s string) string { return paint(ansiBold, s) }
-func dim(s string) string { return paint(ansiDim, s) }
+func dim(s string) string  { return paint(ansiDim, s) }
 func cyan(s string) string { return paint(ansiCyan, s) }
-func okMark() string { return paint(ansiGreen, "✔") }
-func failMark() string { return paint(ansiRed, "✘") }
+func okMark() string       { return paint(ansiGreen, "✔") }
+func failMark() string     { return paint(ansiRed, "✘") }
 
 func stateText(s string) string {
 	switch s {
@@ -130,4 +130,4 @@ func (s *spinner) end(final string) {
 }
 
 func (s *spinner) finish(final string) { s.end(okMark() + " " + final) }
-func (s *spinner) fail(final string) { s.end(failMark() + " " + final) }
+func (s *spinner) fail(final string)   { s.end(failMark() + " " + final) }
