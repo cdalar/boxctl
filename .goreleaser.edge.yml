@@ -23,7 +23,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}'
+      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/cdalar/boxctl/cmd.BuildTime={{.Date}}'
 
 archives:
   - id: repl
