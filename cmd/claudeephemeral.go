@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -38,14 +37,16 @@ func saveBoxWork(ctx context.Context, t *claudeTarget) bool {
 		return true
 	}
 	g := &claudeGitTarget{t}
+	sp := startSpinner("Fetching " + bold(t.name) + "'s work")
 	err := g.ensureRemote(ctx)
 	if err == nil {
 		err = fetchBox(ctx, g)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Couldn't fetch %s's work (%v), so it's kept: get it with boxctl %s fetch --box %s, then boxctl rm %s.\n", t.name, err, agent.name, t.name, t.name)
+		sp.fail(fmt.Sprintf("Couldn't fetch %s's work (%v), so it's kept: get it with boxctl %s fetch --box %s, then boxctl rm %s.", t.name, err, agent.name, t.name, t.name))
 		return false
 	}
+	sp.end("")
 	return true
 }
 
@@ -69,10 +70,10 @@ func (t *claudeTarget) end() {
 func discardBox(name string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	fmt.Fprintf(os.Stderr, "Deleting %s...\n", name)
+	sp := startSpinner("Deleting " + bold(name))
 	if err := newClient().Destroy(ctx, name); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't delete %s: %v -- delete it with boxctl rm %s\n", name, err, name)
+		sp.fail(fmt.Sprintf("Couldn't delete %s: %v -- delete it with boxctl rm %s", name, err, name))
 		return
 	}
-	fmt.Fprintf(os.Stderr, "Deleted %s.\n", name)
+	sp.finish("Deleted " + bold(name))
 }

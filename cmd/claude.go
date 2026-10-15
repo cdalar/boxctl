@@ -171,7 +171,11 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	t, sess, err := openSession(ctx, cmd.Flags().Changed("idle-ttl"), func(box *boxSSH, sess taskSession) {
 		inParallel(
 			func() { configErr = copyClaudeConfig(ctx, box) },
-			func() { setupErr = box.run(ctx, agent.setupScript(), nil) },
+			func() {
+				if setupErr = box.run(ctx, agent.setupScript(), nil); setupErr == nil {
+					sayDone("Installed %s", agent.title)
+				}
+			},
 			func() {
 				stateErr = box.run(ctx, claudeStateScript([]string{sess.dir}, localClaudeTheme(), apiKey), nil)
 			},
@@ -185,13 +189,13 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	name, box := t.name, t.box
 
 	if configErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't copy your Claude configuration: %v\n", configErr)
+		sayWarn("couldn't copy your Claude configuration: %v", configErr)
 	}
 	if setupErr != nil {
 		return fmt.Errorf("installing Claude Code on %s: %w", name, setupErr)
 	}
 	if stateErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't skip Claude's first-run setup on %s: %v\n", name, stateErr)
+		sayWarn("couldn't skip Claude's first-run setup on %s: %v", name, stateErr)
 	}
 
 	if claudeHandoff != "" {
@@ -205,7 +209,7 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	}
 	if !running {
 		if env == "" && claudeAuth == claudeAuthAuto {
-			fmt.Fprintln(os.Stderr, "Log Claude in on the box with /login -- or run boxctl claude login once, and every box's Claude is logged in.")
+			sayNote("Log Claude in on the box with /login -- or run boxctl claude login once, and every box's Claude is logged in")
 		}
 		if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
 			return fmt.Errorf("passing Claude its credentials: %w", err)
@@ -256,7 +260,7 @@ func openSession(ctx context.Context, setTTL bool, alongside func(*boxSSH, taskS
 	}
 	t.ephemeral = ephemeral
 	if ephemeral {
-		fmt.Fprintf(os.Stderr, "%s is this run's box: it's deleted when %s exits or you detach, after its work is fetched here as box/* (--keep keeps it).\n", t.name, agent.title)
+		sayNote("Ephemeral: %s is deleted when %s exits or you detach, after its work is fetched here as box/* (--keep keeps it)", t.name, agent.title)
 	}
 	// Before the project, which a clone may need it for -- and before
 	// anything runs alongside, as it may ask for the token.
@@ -267,6 +271,8 @@ func openSession(ctx context.Context, setTTL bool, alongside func(*boxSSH, taskS
 		}
 	}
 	sess := newTaskSession(t.dir, claudeTask)
+	// Each step reports itself above the spinner as it finishes (sayDone).
+	sp := startSpinner("Setting up " + bold(t.name))
 	if alongside == nil {
 		err = prepareSession(ctx, t, sess)
 	} else {
@@ -274,6 +280,11 @@ func openSession(ctx context.Context, setTTL bool, alongside func(*boxSSH, taskS
 			func() { err = prepareSession(ctx, t, sess) },
 			func() { alongside(t.box, sess) },
 		)
+	}
+	if err != nil {
+		sp.end("")
+	} else {
+		sp.finish(bold(t.name) + " is ready")
 	}
 	if err != nil {
 		t.end()
@@ -292,7 +303,7 @@ func prepareSession(ctx context.Context, t *claudeTarget, sess taskSession) erro
 	go func() { identityErr <- copyGitIdentity(ctx, box, dir) }()
 	defer func() {
 		if err := <-identityErr; err != nil {
-			fmt.Fprintf(os.Stderr, "warning: couldn't set your git identity on %s: %v\n", name, err)
+			sayWarn("couldn't set your git identity on %s: %v", name, err)
 		}
 	}()
 	if t.needsCopy {
@@ -315,9 +326,9 @@ func prepareSession(ctx context.Context, t *claudeTarget, sess taskSession) erro
 		}
 		t.needsCopy = false
 	} else if claudeTask == "" {
-		fmt.Fprintf(os.Stderr, "%s is already on %s; working with the box's copy (it isn't copied again).\n", dir, name)
+		sayNote("%s is already on %s; working with the box's copy (it isn't copied again)", dir, name)
 		if claudeHandoff != "" {
-			fmt.Fprintf(os.Stderr, "Your local changes since then aren't on the box: commit them and run boxctl claude push, or hand off to a fresh box with --box.\n")
+			sayWarn("Your local changes since then aren't on the box: commit them and run boxctl claude push, or hand off to a fresh box with --box.")
 		}
 	}
 	if sess.task != "" {
@@ -361,7 +372,7 @@ func startSession(ctx context.Context, t *claudeTarget, sess taskSession, runnin
 				return fmt.Errorf("starting %s on %s: %w", agent.title, t.name, err)
 			}
 		}
-		fmt.Fprintf(os.Stderr, "%s is running on %s; attach with: %s\n", agent.title, t.name, sess.attachHint(t.name))
+		sayDone("%s is running on %s -- attach with: %s", agent.title, bold(t.name), sess.attachHint(t.name))
 		return nil
 	}
 	return attachClaude(ctx, t.box, sess, sess.tmuxCommand(line, false))
@@ -399,7 +410,7 @@ func attachClaude(ctx context.Context, box *boxSSH, sess taskSession, command st
 	logPath := githubLogPath()
 	srv, err := startTokenServer(box.name, logPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: not forwarding GitHub credentials: %v\n", err)
+		sayWarn("not forwarding GitHub credentials: %v", err)
 		return box.attach(ctx, command, nil)
 	}
 	// A socket a dropped connection left behind would stop sshd binding
@@ -410,11 +421,11 @@ func attachClaude(ctx context.Context, box *boxSSH, sess taskSession, command st
 	// than failing to reach a stale one.
 	_ = box.run(context.Background(), "rm -f "+shellQuote(sess.ghSocket), nil)
 	if given, refused := srv.close(); given+refused > 0 {
-		fmt.Fprintf(os.Stderr, "%s used your GitHub token %d time(s)", box.name, given)
+		used := fmt.Sprintf("%s used your GitHub token %d time(s)", box.name, given)
 		if refused > 0 {
-			fmt.Fprintf(os.Stderr, ", %d refused", refused)
+			used += fmt.Sprintf(", %d refused", refused)
 		}
-		fmt.Fprintf(os.Stderr, " (%s).\n", logPath)
+		sayNote("%s (%s)", used, logPath)
 	}
 	return err
 }
@@ -435,14 +446,14 @@ func githubLogPath() string {
 func (b *boxSSH) runForwarded(ctx context.Context, command, boxSocket string) error {
 	srv, err := startTokenServer(b.name, githubLogPath())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: not forwarding GitHub credentials: %v\n", err)
+		sayWarn("not forwarding GitHub credentials: %v", err)
 		return b.run(ctx, command, nil)
 	}
 	defer srv.close()
 	fwd := boxSocket + ":" + srv.socket
 	_ = b.run(ctx, "rm -f "+shellQuote(boxSocket), nil)
 	if err := b.control("forward", "-R", fwd); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: not forwarding GitHub credentials: %v\n", err)
+		sayWarn("not forwarding GitHub credentials: %v", err)
 		return b.run(ctx, command, nil)
 	}
 	defer func() { _ = b.control("cancel", "-R", fwd) }()
@@ -521,7 +532,7 @@ func connectClaudeBox(ctx context.Context, name string, create, setTTL bool) (*b
 		func() { authErr = authorizeKey(ctx, c, name, key) },
 	)
 	if ttlErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: couldn't set %s's idle TTL: %v\n", name, ttlErr)
+		sayWarn("couldn't set %s's idle TTL: %v", name, ttlErr)
 	}
 	if authErr != nil {
 		return nil, authErr
@@ -636,12 +647,18 @@ func ensureClaudeBox(ctx context.Context, c *client.Client, name string, create 
 	if !create {
 		return false, fmt.Errorf("no box %s -- start one with boxctl %s", name, agent.name)
 	}
-	fmt.Fprintf(os.Stderr, "Creating %s (%s, %s)...\n", name, claudeImage, claudeSize)
+	detail := dim("(" + claudeImage + ", " + claudeSize + ")")
+	sp := startSpinner(fmt.Sprintf("Creating %s %s", bold(name), detail))
 	if _, err := c.Create(ctx, name, "", claudeImage, claudeSize); err != nil {
+		sp.fail(fmt.Sprintf("%s: %v", name, err))
 		return false, fmt.Errorf("creating %s: %w", name, err)
 	}
-	_, err = c.WaitReady(ctx, name, claudeReadyTimeout)
-	return true, err
+	if _, err := c.WaitReady(ctx, name, claudeReadyTimeout); err != nil {
+		sp.fail(fmt.Sprintf("%s: %v", name, err))
+		return true, err
+	}
+	sp.finish(fmt.Sprintf("Created %s %s", bold(name), detail))
+	return true, nil
 }
 
 // ensureClaudeKey returns the private key boxctl uses for boxes it runs

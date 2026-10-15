@@ -111,6 +111,10 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   to a box port (22 by default) over the same `Client.DialPort` tunnel as
   `port-forward`, for ssh's `ProxyCommand` -- real ssh to a box with
   nothing listening locally. Resumes a paused box first.
+- `claude`'s progress output looks like `create`'s -- a spinner and ✔ lines --
+  through `cmd/ui.go`'s `say`/`sayDone`/`sayNote`/`sayWarn`, which print above the
+  live spinner (or on stderr without one); uploads feed the spinner's text
+  instead of drawing a bar. New steps use those, not bare `Fprintf(os.Stderr, ...)`.
 - `cmd/claude.go`, `cmd/claudecopy.go` — `claude`: Claude Code run *on* a
   box (boxctl-vms's `docs/plans/claude-on-the-box.md`). By default a run
   is ephemeral (`cmd/claudeephemeral.go`): a new `<dir>-<slug>-<id>`

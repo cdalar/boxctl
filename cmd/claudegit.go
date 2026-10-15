@@ -110,7 +110,7 @@ func fetchBox(ctx context.Context, t *claudeGitTarget) error {
 	// One fetch, so --prune sees each box/wip* as a snapshot's destination
 	// and keeps it while there is one -- and drops it, along with branches
 	// deleted on the box, once there isn't.
-	if err := t.git(ctx, append([]string{"fetch", "--prune", boxRemote}, refspecs...)...); err != nil {
+	if err := t.git(ctx, append([]string{"fetch", "-q", "--prune", boxRemote}, refspecs...)...); err != nil {
 		return err
 	}
 
@@ -119,16 +119,16 @@ func fetchBox(ctx context.Context, t *claudeGitTarget) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "From %s:\n", t.name)
+	sayDone("Fetched %s's work as %s", bold(t.name), cyan(boxRemote+"/*"))
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if line != "" {
-			fmt.Fprintf(os.Stderr, "  %s\n", strings.ReplaceAll(line, "\t", "  "))
+			say("    " + dim(strings.ReplaceAll(line, "\t", "  ")))
 		}
 	}
 	if len(withWip) == 0 {
-		fmt.Fprintln(os.Stderr, "No uncommitted work on the box.")
+		sayNote("No uncommitted work on the box")
 	} else {
-		fmt.Fprintf(os.Stderr, "Uncommitted work on the box: git show --stat %s\n", strings.Join(withWip, ", "))
+		sayWarn("Uncommitted work on the box: git show --stat %s", strings.Join(withWip, ", "))
 	}
 	return nil
 }
