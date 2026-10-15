@@ -196,7 +196,7 @@ rules for box runs only. The directory may hold:
  "allowManagedPermissionRulesOnly": true}
 ```
 
-with a `CLAUDE.md` saying "this is a disposable sandbox: read any
+(a ready-made one: `examples/harness/pr-only`) with a `CLAUDE.md` saying "this is a disposable sandbox: read any
 directory, install any tool; work on your branch, open a pull request with
 `gh pr create`, never merge it" gives `boxctl claude --harness pr-only` a
 "PR, never merge" run. The harness is validated before any box is created

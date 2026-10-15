@@ -62,3 +62,13 @@ func TestResolveHarnessName(t *testing.T) {
 		t.Error("an unknown name should fail")
 	}
 }
+
+func TestStarterHarnessLoads(t *testing.T) {
+	h, err := loadHarness(filepath.Join("..", "examples", "harness", "pr-only"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.managed) != 2 || len(h.config) != 1 {
+		t.Errorf("managed = %v, config = %v", h.managed, h.config)
+	}
+}
