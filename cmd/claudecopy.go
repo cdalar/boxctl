@@ -37,9 +37,12 @@ func copyProject(ctx context.Context, box *boxSSH, dir string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Copying %s to %s (%d files)...\n", dir, box.name, len(files))
-	return streamTar(ctx, box, "mkdir -p "+shellQuote(dir)+" && tar -xzf - -C "+shellQuote(dir), nil,
-		func(tw *tar.Writer) error { return addFiles(tw, dir, files) })
+	if err := streamTar(ctx, box, "mkdir -p "+shellQuote(dir)+" && tar -xzf - -C "+shellQuote(dir), nil,
+		func(tw *tar.Writer) error { return addFiles(tw, dir, files) }); err != nil {
+		return err
+	}
+	sayDone("Copied %s %s", bold(dir), dim(fmt.Sprintf("(%d files)", len(files))))
+	return nil
 }
 
 // cloneURL is the URL the box clones the project from: its origin, with
@@ -62,7 +65,6 @@ func cloneURL(dir string) string {
 // With --github forward, your GitHub token is lent for the clone, as it
 // is while you're attached.
 func cloneProject(ctx context.Context, box *boxSSH, dir, url, branch string) error {
-	fmt.Fprintf(os.Stderr, "Cloning %s to %s on %s, branch %s...\n", url, dir, box.name, branch)
 	script := cloneScript(url, dir, branch)
 	var err error
 	if claudeGitHub == githubForward {
@@ -73,6 +75,7 @@ func cloneProject(ctx context.Context, box *boxSSH, dir, url, branch string) err
 	if err != nil {
 		return fmt.Errorf("cloning %s on %s: %w", url, box.name, err)
 	}
+	sayDone("Cloned %s %s", bold(strings.TrimSuffix(strings.TrimPrefix(url, "https://github.com/"), ".git")), dim("on branch "+branch))
 	return nil
 }
 
@@ -239,6 +242,14 @@ func newUploadProgress(label string, total int64) *uploadProgress {
 
 func (p *uploadProgress) Write(b []byte) (int, error) {
 	p.done += int64(len(b))
+	// Under a spinner the progress is its text, not a bar of its own.
+	if sp := currentSpinner(); sp != nil {
+		if time.Since(p.lastPrint) >= 200*time.Millisecond {
+			sp.setMsg(p.spinText())
+			p.lastPrint = time.Now()
+		}
+		return len(b), nil
+	}
 	if p.show && time.Since(p.lastPrint) >= 200*time.Millisecond {
 		fmt.Fprint(os.Stderr, "\r\033[K"+p.line())
 		p.lastPrint = time.Now()
@@ -249,13 +260,24 @@ func (p *uploadProgress) Write(b []byte) (int, error) {
 // finish draws the bar a last time, full when the upload succeeded, and
 // ends its line so what's printed next doesn't land on it.
 func (p *uploadProgress) finish(ok bool) {
-	if !p.show {
+	if currentSpinner() != nil || !p.show {
 		return
 	}
 	if ok {
 		p.done = p.total
 	}
 	fmt.Fprintln(os.Stderr, "\r\033[K"+p.line())
+}
+
+// spinText is the progress as a spinner's text: "label 42% (2.1 MB / 5.0 MB)".
+func (p *uploadProgress) spinText() string {
+	done := min(p.done, p.total)
+	pct := 100.0
+	if p.total > 0 {
+		pct = float64(done) / float64(p.total) * 100
+	}
+	return fmt.Sprintf("%s %s %s", p.label, bold(fmt.Sprintf("%.0f%%", pct)),
+		dim(fmt.Sprintf("(%s / %s)", client.FormatBytes(done), client.FormatBytes(p.total))))
 }
 
 // line is the bar: label, [####----], bytes sent of total, percentage.
@@ -306,9 +328,8 @@ func copyClaudeConfig(ctx context.Context, box *boxSSH) error {
 		return nil
 	}
 	total := size + int64(len(settings))
-	fmt.Fprintf(os.Stderr, "Copying your Claude configuration (%s) to %s...\n", client.FormatBytes(total), box.name)
-	progress := newUploadProgress("Claude configuration", total)
-	return streamTar(ctx, box, "mkdir -p ~/.claude && tar -xzf - -C ~/.claude", progress, func(tw *tar.Writer) error {
+	progress := newUploadProgress("Copying your Claude configuration", total)
+	err = streamTar(ctx, box, "mkdir -p ~/.claude && tar -xzf - -C ~/.claude", progress, func(tw *tar.Writer) error {
 		if err := addFiles(tw, src, files); err != nil {
 			return err
 		}
@@ -322,6 +343,10 @@ func copyClaudeConfig(ctx context.Context, box *boxSSH) error {
 		_, err := tw.Write(settings)
 		return err
 	})
+	if err == nil {
+		sayDone("Copied your Claude configuration %s", dim("("+client.FormatBytes(total)+")"))
+	}
+	return err
 }
 
 // configSkippedDirs are directories under claudeConfigEntries that are

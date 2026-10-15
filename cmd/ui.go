@@ -70,6 +70,7 @@ type spinner struct {
 // startSpinner begins animating msg; call finish (or fail) exactly once.
 func startSpinner(msg string) *spinner {
 	s := &spinner{msg: msg, tty: isTTY() && os.Getenv("TERM") != "dumb"}
+	setLiveSpinner(s)
 	if !s.tty {
 		fmt.Println(msg + "...")
 		return s
@@ -108,8 +109,16 @@ func (s *spinner) println(line string) {
 	fmt.Println(line)
 }
 
+// setMsg changes the text next to the spinner.
+func (s *spinner) setMsg(msg string) {
+	s.mu.Lock()
+	s.msg = msg
+	s.mu.Unlock()
+}
+
 // end stops the animation and replaces the line with final (if any).
 func (s *spinner) end(final string) {
+	setLiveSpinner(nil)
 	if s.tty {
 		close(s.stop)
 		<-s.done
@@ -124,3 +133,44 @@ func (s *spinner) end(final string) {
 
 func (s *spinner) finish(final string) { s.end(okMark() + " " + final) }
 func (s *spinner) fail(final string)   { s.end(failMark() + " " + final) }
+
+// liveSpin is the spinner currently animating, so code far from where it
+// was started (an upload's progress, a step finishing in a goroutine) can
+// print above it or change its text without it being passed around.
+var (
+	liveMu   sync.Mutex
+	liveSpin *spinner
+)
+
+func setLiveSpinner(s *spinner) {
+	liveMu.Lock()
+	liveSpin = s
+	liveMu.Unlock()
+}
+
+func currentSpinner() *spinner {
+	liveMu.Lock()
+	defer liveMu.Unlock()
+	return liveSpin
+}
+
+// say prints a status line above the running spinner, or on stderr when
+// there is none (stdout is the session's, for the commands that attach).
+func say(line string) {
+	if s := currentSpinner(); s != nil {
+		s.println(line)
+		return
+	}
+	fmt.Fprintln(os.Stderr, line)
+}
+
+// sayDone prints a finished step: "✔ message".
+func sayDone(format string, a ...any) { say(okMark() + " " + fmt.Sprintf(format, a...)) }
+
+// sayNote prints a quiet aside: "• message", dimmed.
+func sayNote(format string, a ...any) { say(dim("• " + fmt.Sprintf(format, a...))) }
+
+// sayWarn prints a warning: "! message", in yellow.
+func sayWarn(format string, a ...any) {
+	say(paint(ansiYellow, "!") + " " + fmt.Sprintf(format, a...))
+}
