@@ -159,8 +159,9 @@ boxctl claude ls                        # this project's Claude sessions
 boxctl claude --handoff <session-id>    # carry on a local session on the box
 boxctl claude fetch                     # the box's branches and uncommitted work, as box/*
 boxctl claude push                      # this branch to the box
-boxctl claude --repo owner/name         # a fresh box with the repo cloned, on a new branch
+boxctl claude -R owner/name              # --repo for short: a fresh box with the repo cloned, on a new branch
 boxctl claude --repo owner/name --goal "bump Go to 1.24 and fix what breaks" --github store
+boxctl claude --repo owner/api --repo owner/web --goal "rename the /v1 route"  --github store   # several repos, a PR in each
 boxctl claude logs <box> [-f]           # how a --goal run is going
 ```
 
@@ -178,6 +179,16 @@ status (`running`, `done` or `failed`, with the PR's URL) is kept on the
 box, in `/root/.boxctl/goals/latest/status.json`, and `logs` prints it
 before the log. Claude must be logged in without you (`boxctl claude
 login`, or `--claude-auth api-key`).
+
+**Several repositories.** Repeat `--repo` (or comma-separate: `--repo a/api,a/web`) to
+work across repositories in one box. They are cloned side by side under
+`/root/workspace`, each on the same new branch, and Claude starts in that
+directory. With `--goal`, Claude opens one pull request in each repository
+it changed, linking them to each other; `status.json` has the first as
+`pr_url` and all of them in `pr_urls`. GitHub only; private repositories
+work too, so give `--github store` a token that covers every one. The
+repositories need different names, and `--repo` cannot be combined with
+`--project`.
 
 **`--github` forward, store, off -- and why a goal needs store.**
 `forward` lends Claude your `gh` token per request, over the ssh connection
