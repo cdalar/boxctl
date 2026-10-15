@@ -129,12 +129,16 @@ func init() {
 	claudeCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Claude Code session (its ID) on the box")
 	claudeCmd.Flags().StringVar(&claudeRepo, "repo", "", "GitHub repository (owner/name) to clone on a new box, on a new boxctl/... branch (with --goal: default is this directory's origin)")
 	claudeCmd.Flags().StringVar(&claudeGoal, "goal", "", "a goal for Claude to carry out unattended, ending in a pull request (needs --github store)")
+	claudeCmd.Flags().StringVar(&claudeHarnessArg, "harness", "", "directory of rules for Claude on the box: CLAUDE.md and managed-settings.json (enforced, see README), agents/ skills/ commands/ -- or a name under ~/.boxctl/harness")
 	claudeCmd.Flags().StringVar(&claudeAuth, "claude-auth", claudeAuthAuto, "how Claude on the box logs in: auto (the token boxctl claude login saved, else /login), token, login or api-key")
 	_ = claudeCmd.RegisterFlagCompletionFunc("claude-auth", cobra.FixedCompletions([]string{claudeAuthAuto, claudeAuthToken, claudeAuthLogin, claudeAuthAPIKey}, cobra.ShellCompDirectiveNoFileComp))
 	rootCmd.AddCommand(claudeCmd)
 }
 
 func runClaude(cmd *cobra.Command, args []string) error {
+	if err := prepareHarness(); err != nil {
+		return err
+	}
 	if claudeRepo != "" || claudeGoal != "" {
 		return runRepo(cmd, args)
 	}
@@ -165,12 +169,13 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	// they run while it's cloned or copied, sharing its time instead of
 	// adding to it (the ssh connection is shared, see boxSSH).
 	var (
-		configErr, setupErr, stateErr error
-		running                       bool
+		configErr, harnessErr, setupErr, stateErr error
+		running                                   bool
 	)
 	t, sess, err := openSession(ctx, cmd.Flags().Changed("idle-ttl"), func(box *boxSSH, sess taskSession) {
 		inParallel(
 			func() { configErr = copyClaudeConfig(ctx, box) },
+			func() { harnessErr = applyHarness(ctx, box) },
 			func() { setupErr = box.run(ctx, agent.setupScript(), nil) },
 			func() {
 				stateErr = box.run(ctx, claudeStateScript([]string{sess.dir}, localClaudeTheme(), apiKey), nil)
@@ -186,6 +191,10 @@ func runClaude(cmd *cobra.Command, args []string) error {
 
 	if configErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't copy your Claude configuration: %v\n", configErr)
+	}
+	// Rules that didn't arrive are not a warning: don't run Claude without them.
+	if harnessErr != nil {
+		return harnessErr
 	}
 	if setupErr != nil {
 		return fmt.Errorf("installing Claude Code on %s: %w", name, setupErr)

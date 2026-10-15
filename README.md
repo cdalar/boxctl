@@ -162,6 +162,7 @@ boxctl claude push                      # this branch to the box
 boxctl claude --repo owner/name         # a fresh box with the repo cloned, on a new branch
 boxctl claude --repo owner/name --goal "bump Go to 1.24 and fix what breaks" --github store
 boxctl claude logs <box> [-f]           # how a --goal run is going
+boxctl claude --harness pr-only         # extra rules for the box: CLAUDE.md, managed-settings.json (below)
 ```
 
 **A repository instead of a local copy.** `--repo owner/name` creates a
@@ -178,6 +179,35 @@ status (`running`, `done` or `failed`, with the PR's URL) is kept on the
 box, in `/root/.boxctl/goals/latest/status.json`, and `logs` prints it
 before the log. Claude must be logged in without you (`boxctl claude
 login`, or `--claude-auth api-key`).
+
+**A harness: rules for Claude on the box.** Your own `~/.claude` is copied
+to the box, but it also steers the Claude on this machine. `--harness
+<dir>` (or a bare name, looked up in `~/.boxctl/harness/<name>`) adds
+rules for box runs only. The directory may hold:
+
+| Entry | Goes to | Effect |
+| --- | --- | --- |
+| `CLAUDE.md` | `/etc/claude-code/CLAUDE.md` | managed memory, loaded in every session and not excludable |
+| `managed-settings.json` | `/etc/claude-code/managed-settings.json` | highest-precedence settings; user and project settings can't undo its permission rules |
+| `agents/`, `skills/`, `commands/` | `~/.claude`, on top of yours | e.g. an `/open-pr` command |
+
+```json
+{"permissions": {"deny": ["Bash(gh pr merge:*)", "Bash(git push --force*)", "Bash(git push*main*)"]},
+ "allowManagedPermissionRulesOnly": true}
+```
+
+with a `CLAUDE.md` saying "this is a disposable sandbox: read any
+directory, install any tool; work on your branch, open a pull request with
+`gh pr create`, never merge it" gives `boxctl claude --harness pr-only` a
+"PR, never merge" run. The harness is validated before any box is created
+and a harness that fails to arrive stops the run rather than starting
+Claude without it. Two limits: Claude runs as root on the box, so
+managed settings are a guardrail against mistakes, not against a
+determined agent -- the real boundary is the credentials (`--github store`
+with a one-repository fine-grained token, and branch protection on
+`main` so nothing merges without review). And whether deny rules hold
+under `--goal`'s `--dangerously-skip-permissions` is unverified against a
+real box.
 
 **`--github` forward, store, off -- and why a goal needs store.**
 `forward` lends Claude your `gh` token per request, over the ssh connection
