@@ -191,7 +191,10 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `prepareHarness` before any box exists; applied by `applyHarness` in
   both the normal and `--repo/--goal` paths, and a failure there aborts
   (unlike the plain config copy, which only warns). Claude is root on the
-  box, so this is a guardrail, not a boundary.
+  box, so this is a guardrail, not a boundary. Which harness: `--harness
+  none`, an explicit one, `~/.boxctl/harness/default`, or for `--goal` the
+  embedded `cmd/harness-pr-only` (extracted to a temp dir by
+  `prepareHarness`, whose returned func removes it).
 - `cmd/agent.go`, `cmd/kilo.go` — `kilo`: the same for the Kilo CLI.
   A `boxAgent` is the little that differs between the two (name -- also
   the box prefix and tmux session -- binary, install dir, installer,

@@ -64,11 +64,55 @@ func TestResolveHarnessName(t *testing.T) {
 }
 
 func TestStarterHarnessLoads(t *testing.T) {
-	h, err := loadHarness(filepath.Join("..", "examples", "harness", "pr-only"))
+	h, err := loadHarness("harness-pr-only")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(h.managed) != 2 || len(h.config) != 1 {
 		t.Errorf("managed = %v, config = %v", h.managed, h.config)
+	}
+}
+
+func TestPrepareHarnessChoice(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Cleanup(func() { claudeHarnessArg, claudeGoal, claudeHarness = "", "", nil })
+	pick := func(arg, goal string) *harness {
+		t.Helper()
+		claudeHarnessArg, claudeGoal = arg, goal
+		cleanup, err := prepareHarness()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cleanup()
+		return claudeHarness
+	}
+
+	if pick("", "") != nil {
+		t.Error("a plain run with no default gets no harness")
+	}
+	if h := pick("", "fix it"); h == nil || h.dir != "built-in pr-only" {
+		t.Errorf("--goal gets the built-in pr-only, got %+v", h)
+	}
+	if pick("none", "fix it") != nil {
+		t.Error("--harness none turns the goal default off")
+	}
+
+	def := filepath.Join(home, ".boxctl", "harness", "default")
+	writeHarnessFile(t, def, "CLAUDE.md", "mine")
+	if h := pick("", ""); h == nil || h.dir != def {
+		t.Errorf("a default directory applies to every run, got %+v", h)
+	}
+	if h := pick("", "fix it"); h == nil || h.dir != def {
+		t.Errorf("your default beats the built-in for --goal, got %+v", h)
+	}
+	if pick("none", "") != nil {
+		t.Error("--harness none turns your default off")
+	}
+	other := t.TempDir()
+	writeHarnessFile(t, other, "CLAUDE.md", "x")
+	if h := pick(other, "fix it"); h == nil || h.dir != other {
+		t.Errorf("an explicit --harness wins, got %+v", h)
 	}
 }

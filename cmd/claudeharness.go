@@ -3,6 +3,7 @@ package cmd
 import (
 	"archive/tar"
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -122,24 +123,96 @@ func (h *harness) apply(ctx context.Context, box *boxSSH) error {
 	return nil
 }
 
-// harnessFlag is --harness; claudeHarness what it loaded, nil without it.
+// Which harness a run gets, first match:
+//
+//	--harness none            none
+//	--harness <dir|name>      that one
+//	~/.boxctl/harness/default your default, for every run
+//	--goal                    the built-in pr-only: it runs unattended with
+//	                          --dangerously-skip-permissions, so it is the run
+//	                          that most needs a guardrail you didn't have to ask for
+//
+// Whatever is picked besides an explicit --harness is announced on stderr.
+
+const harnessNone = "none"
+
+//go:embed harness-pr-only
+var builtinPROnly embed.FS
+
 var (
 	claudeHarnessArg string
 	claudeHarness    *harness
 )
 
-// prepareHarness loads --harness, if given, into claudeHarness.
-func prepareHarness() error {
+// prepareHarness picks and loads the run's harness into claudeHarness.
+// The returned func removes anything it left in the temp directory.
+func prepareHarness() (func(), error) {
 	claudeHarness = nil
-	if claudeHarnessArg == "" {
-		return nil
+	nothing := func() {}
+	switch arg := claudeHarnessArg; {
+	case arg == harnessNone:
+		return nothing, nil
+	case arg != "":
+		dir, err := resolveHarness(arg)
+		if err != nil {
+			return nothing, err
+		}
+		claudeHarness, err = loadHarness(dir)
+		return nothing, err
 	}
-	dir, err := resolveHarness(claudeHarnessArg)
+	if home, err := os.UserHomeDir(); err == nil {
+		dir := filepath.Join(home, ".boxctl", "harness", "default")
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			var lerr error
+			if claudeHarness, lerr = loadHarness(dir); lerr != nil {
+				return nothing, lerr
+			}
+			fmt.Fprintf(os.Stderr, "Using your default harness %s (--harness %s to skip it)\n", dir, harnessNone)
+			return nothing, nil
+		}
+	}
+	if claudeGoal == "" {
+		return nothing, nil
+	}
+	tmp, err := os.MkdirTemp("", "boxctl-harness-")
 	if err != nil {
-		return err
+		return nothing, err
 	}
-	claudeHarness, err = loadHarness(dir)
-	return err
+	cleanup := func() { _ = os.RemoveAll(tmp) }
+	dir := filepath.Join(tmp, "pr-only")
+	if err := extractEmbedded(builtinPROnly, "harness-pr-only", dir); err != nil {
+		cleanup()
+		return nothing, err
+	}
+	if claudeHarness, err = loadHarness(dir); err != nil {
+		cleanup()
+		return nothing, err
+	}
+	claudeHarness.dir = "built-in pr-only"
+	fmt.Fprintf(os.Stderr, "An unattended goal runs with the built-in pr-only harness: pull request, never merge (--harness %s to skip it, or --harness <dir> for your own)\n", harnessNone)
+	return cleanup, nil
+}
+
+// extractEmbedded writes the tree of fsys under root to dst.
+func extractEmbedded(fsys embed.FS, root, dst string) error {
+	return fs.WalkDir(fsys, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		out := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(out, 0o755)
+		}
+		data, err := fsys.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(out, data, 0o644)
+	})
 }
 
 // applyHarness is the harness step of starting a box: a no-op without

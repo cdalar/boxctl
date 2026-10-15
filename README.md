@@ -196,7 +196,7 @@ rules for box runs only. The directory may hold:
  "allowManagedPermissionRulesOnly": true}
 ```
 
-(a ready-made one: `examples/harness/pr-only`) with a `CLAUDE.md` saying "this is a disposable sandbox: read any
+(a ready-made one: `cmd/harness-pr-only`) with a `CLAUDE.md` saying "this is a disposable sandbox: read any
 directory, install any tool; work on your branch, open a pull request with
 `gh pr create`, never merge it" gives `boxctl claude --harness pr-only` a
 "PR, never merge" run. The harness is validated before any box is created
@@ -208,6 +208,15 @@ with a one-repository fine-grained token, and branch protection on
 `main` so nothing merges without review). And whether deny rules hold
 under `--goal`'s `--dangerously-skip-permissions` is unverified against a
 real box.
+
+**Which harness a run gets.** `--harness none` means none; `--harness
+<dir|name>` means that one; otherwise `~/.boxctl/harness/default`, if it
+exists, applies to every run; otherwise a `--goal` run gets the built-in
+`pr-only` (pull request, never merge) -- it runs unattended with
+`--dangerously-skip-permissions`, so it's the run that most needs a
+guardrail you didn't have to ask for. Anything chosen implicitly is
+announced on stderr. An attended run with no default directory gets no
+harness.
 
 **`--github` forward, store, off -- and why a goal needs store.**
 `forward` lends Claude your `gh` token per request, over the ssh connection

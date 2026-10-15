@@ -129,14 +129,16 @@ func init() {
 	claudeCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Claude Code session (its ID) on the box")
 	claudeCmd.Flags().StringVar(&claudeRepo, "repo", "", "GitHub repository (owner/name) to clone on a new box, on a new boxctl/... branch (with --goal: default is this directory's origin)")
 	claudeCmd.Flags().StringVar(&claudeGoal, "goal", "", "a goal for Claude to carry out unattended, ending in a pull request (needs --github store)")
-	claudeCmd.Flags().StringVar(&claudeHarnessArg, "harness", "", "directory of rules for Claude on the box: CLAUDE.md and managed-settings.json (enforced, see README), agents/ skills/ commands/ -- or a name under ~/.boxctl/harness")
+	claudeCmd.Flags().StringVar(&claudeHarnessArg, "harness", "", "rules for Claude on the box: a directory (CLAUDE.md, managed-settings.json, agents/ skills/ commands/) or a name under ~/.boxctl/harness; none for no harness (default: ~/.boxctl/harness/default, else for --goal the built-in pr-only)")
 	claudeCmd.Flags().StringVar(&claudeAuth, "claude-auth", claudeAuthAuto, "how Claude on the box logs in: auto (the token boxctl claude login saved, else /login), token, login or api-key")
 	_ = claudeCmd.RegisterFlagCompletionFunc("claude-auth", cobra.FixedCompletions([]string{claudeAuthAuto, claudeAuthToken, claudeAuthLogin, claudeAuthAPIKey}, cobra.ShellCompDirectiveNoFileComp))
 	rootCmd.AddCommand(claudeCmd)
 }
 
 func runClaude(cmd *cobra.Command, args []string) error {
-	if err := prepareHarness(); err != nil {
+	cleanupHarness, err := prepareHarness()
+	defer cleanupHarness()
+	if err != nil {
 		return err
 	}
 	if claudeRepo != "" || claudeGoal != "" {
