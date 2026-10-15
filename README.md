@@ -111,8 +111,9 @@ local/dev `boxctl-vms` instance.
 **Unused boxes are paused, then deleted.** A running box nobody has used
 for its idle TTL (1 hour unless you set `--idle-ttl`) is paused, which
 loses nothing: `boxctl resume` brings it back exactly as it was. A box
-the server paused this way and that stays paused for 24 hours is deleted,
-disk and all. `boxctl keep <box>` holds that off for 24 hours from when
+the server paused this way and that stays paused for 24 hours is backed
+up and then deleted from the host -- only once the backup is safely
+uploaded, and `boxctl restore <box>` brings it back. `boxctl keep <box>` holds that off for 24 hours from when
 you run it (running it again restarts the 24 hours rather than adding to
 them), and resuming the box stops it altogether. A box you paused
 yourself with `boxctl pause` is never deleted.
