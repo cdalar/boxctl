@@ -235,7 +235,7 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
 - `.github/workflows/release.yml` + `.goreleaser.yml` — tagged (`v*`)
   releases, a copy of onctl's except macOS ships unsigned: Linux +
   Windows + plain darwin (`boxctl-darwin` build, not signed/notarized)
-  binaries with GPG-signed checksums, on the `onctl-4` runner, needing
+  binaries with GPG-signed checksums, on a GitHub-hosted runner, needing
   only the `GPG_PRIVATE_KEY` secret. The signed darwin build (quill
   sign-and-notarize on a self-hosted Mac), the Homebrew cask, and the
   Apple/`GORELEASER_GH_TOKEN` secrets are all present but commented out
