@@ -56,6 +56,7 @@ var (
 	claudeSize    string
 	claudeImage   string
 	claudePrompt  string
+	claudeBranch  string // set with a generated box name: the branch it goes with
 	claudeDetach  bool
 	claudeGitHub  string
 	claudeIdle    time.Duration
@@ -240,9 +241,11 @@ func openSession(ctx context.Context, setTTL bool, alongside func(*boxSSH, taskS
 		if err != nil {
 			return nil, taskSession{}, err
 		}
-		if claudeBox, err = ephemeralBoxName(dir); err != nil {
+		n, err := ephemeralBoxName(ctx, dir)
+		if err != nil {
 			return nil, taskSession{}, err
 		}
+		claudeBox, claudeBranch = n.box(), n.branch()
 	}
 	t, err := openClaudeBox(ctx, true, setTTL)
 	if err != nil {
@@ -294,10 +297,14 @@ func prepareSession(ctx context.Context, t *claudeTarget, sess taskSession) erro
 	}()
 	if t.needsCopy {
 		// A git repository with an origin is cloned there, not copied:
-		// the default branch, plus a branch of the box's own to work on,
-		// boxctl/<box name less the agent's>.
+		// the default branch, plus a branch of the box's own to work on:
+		// a generated name's, or boxctl/<box name less the agent's>.
 		if url := cloneURL(dir); url != "" {
-			if err := cloneProject(ctx, box, dir, url, "boxctl/"+strings.TrimPrefix(name, agent.name+"-")); err != nil {
+			branch := claudeBranch
+			if branch == "" {
+				branch = "boxctl/" + strings.TrimPrefix(name, agent.name+"-")
+			}
+			if err := cloneProject(ctx, box, dir, url, branch); err != nil {
 				return err
 			}
 		} else if err := copyProject(ctx, box, dir); err != nil {

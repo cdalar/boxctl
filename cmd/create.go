@@ -27,12 +27,22 @@ var (
 )
 
 var createCmd = &cobra.Command{
-	Use:     "create <name>",
+	Use:     "create [name]",
 	Aliases: []string{"up"},
 	Short:   "Create a new box",
-	Args:    cobra.ExactArgs(1),
+	Long:    `Creates a new box. Without a name it gets a free one like quiet-otter-1a2b.`,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name := args[0]
+		var name string
+		if len(args) == 1 {
+			name = args[0]
+		} else {
+			n, err := newBoxName(cmd.Context(), "", "")
+			if err != nil {
+				return err
+			}
+			name = n.box()
+		}
 		fmt.Printf("Creating %s...\n", name)
 
 		c := newClient()

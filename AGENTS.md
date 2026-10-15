@@ -112,11 +112,15 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   nothing listening locally. Resumes a paused box first.
 - `cmd/claude.go`, `cmd/claudecopy.go` — `claude`: Claude Code run *on* a
   box (boxctl-vms's `docs/plans/claude-on-the-box.md`). By default a run
-  is ephemeral (`cmd/claudeephemeral.go`): a new `claude-<dir>-<hex>`
-  box, and `claudeTarget.end` fetches its work as `box/*` (`fetchBox`)
+  is ephemeral (`cmd/claudeephemeral.go`): a new `<dir>-<slug>-<id>`
+  box (`cmd/boxname.go`'s `boxName`, also behind `--repo` and a nameless
+  `create`: the slug from `--prompt`/`--goal` or an adjective-noun pair
+  -- the dashboard's word lists, `boxctl-web`'s `lib/nameGenerator.ts` --
+  a fresh id while the name is taken, branch `boxctl/<slug>-<id>`), and `claudeTarget.end` fetches its work as `box/*` (`fetchBox`)
   and deletes it -- keeping it if that fetch fails. In either mode a
   git repository with an origin is cloned on the box (`cloneProject`:
-  default branch, then `boxctl/<box name less the agent's>`), not
+  default branch, then the generated name's branch, or `boxctl/<box name
+  less the agent's>` for `--keep`), not
   copied; the tar copy below is for everything else. `--keep` (implied by
   `--box`/`--detach`/`--task`, see `ephemeralRun`) creates or
   resumes `claude-<dir>`, authorizes `~/.boxctl/claude/id_ed25519` (the
