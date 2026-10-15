@@ -111,7 +111,38 @@ type apiError struct {
 	body   string
 }
 
+// refusal is the JSON body boxctl-vms answers a refused new box with:
+// 409 "box_limit" (the account's active-box limit) or 503 "capacity"
+// (no room on the fleet, and the account was put on the waitlist).
+type refusal struct {
+	Error      string   `json:"error"`
+	Limit      int      `json:"limit"`
+	Boxes      []string `json:"boxes"`
+	Waitlisted bool     `json:"waitlisted"`
+}
+
+// refusalMessage is what to tell the user about a refused new box, or ""
+// when body isn't one.
+func refusalMessage(status int, body string) string {
+	var r refusal
+	if json.Unmarshal([]byte(body), &r) != nil {
+		return ""
+	}
+	switch {
+	case status == http.StatusConflict && r.Error == "box_limit":
+		return fmt.Sprintf("You have %d active boxes (%s). Delete one with `boxctl rm <box>` or keep working in an existing one.", len(r.Boxes), strings.Join(r.Boxes, ", "))
+	case status == http.StatusServiceUnavailable && r.Error == "capacity" && r.Waitlisted:
+		return "We're at capacity right now. You're on the list -- we'll email you when a slot opens."
+	case status == http.StatusServiceUnavailable && r.Error == "capacity":
+		return "We're at capacity right now. Try again in a while."
+	}
+	return ""
+}
+
 func (e *apiError) Error() string {
+	if msg := refusalMessage(e.status, e.body); msg != "" {
+		return msg
+	}
 	body := strings.TrimSpace(e.body)
 	if body != "" {
 		return fmt.Sprintf("%s (HTTP %d)", body, e.status)

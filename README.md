@@ -82,6 +82,7 @@ boxctl ls -o json                 # for scripts; images and sizes take -o json t
 boxctl images
 boxctl create my-box
 boxctl create                     # a generated name, like quiet-otter-1a2b
+# an account has at most 2 active (running or paused) boxes; over that, create says which ones you have
 boxctl sizes                      # vCPU, memory and disk of small (default), ai-sandbox, medium, large
 boxctl create big-box --size large
 boxctl create long-job --idle-ttl 48h   # pause after 48h unused (default 6h)
