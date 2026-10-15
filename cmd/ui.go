@@ -98,13 +98,6 @@ func (s *spinner) draw(frame int) {
 	fmt.Printf("\r\033[K%s %s", cyan(spinnerFrames[frame%len(spinnerFrames)]), s.msg)
 }
 
-// set changes the message shown next to the spinner.
-func (s *spinner) set(msg string) {
-	s.mu.Lock()
-	s.msg = msg
-	s.mu.Unlock()
-}
-
 // println prints a line above the spinner without garbling it.
 func (s *spinner) println(line string) {
 	s.mu.Lock()
