@@ -61,7 +61,7 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   loading, and the "must be logged in" gate every command but
   `login`/`logout`/`version`/`help`/`completion` goes through.
 - `cmd/login.go`/`logout.go` — save/remove the personal token.
-- `cmd/ls.go`/`create.go`/`rm.go`/`pause.go`/`resume.go` — thin wrappers
+- `cmd/ls.go`/`create.go`/`rm.go`/`pause.go`/`resume.go`/`keep.go` — thin wrappers
   around `internal/client`'s matching methods.
   `ls` lists only live boxes (`stateRank` 0: provisioning, running,
   stopping) unless `-a`, in JSON too, and says on stderr how many it

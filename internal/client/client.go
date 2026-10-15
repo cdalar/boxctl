@@ -65,6 +65,12 @@ type VM struct {
 	// Ingress lists the box's publicly exposed ports, lowest first --
 	// absent when nothing is exposed or the server has no public ingress.
 	Ingress []Ingress `json:"ingress,omitempty"`
+	// DeleteAt is when the server's idle reaper will delete this box,
+	// which it paused for being unused, unless it's resumed or kept
+	// first; KeepUntil is how long Keep holds that off. Both absent when
+	// they don't apply, or from a server without idle delete.
+	DeleteAt  *time.Time `json:"delete_at,omitempty"`
+	KeepUntil *time.Time `json:"keep_until,omitempty"`
 }
 
 // Ingress is one port of a box exposed at a public URL, as boxctl-vms's
@@ -243,6 +249,15 @@ func (c *Client) SetIdleTTL(ctx context.Context, name string, ttl time.Duration)
 	body := map[string]int64{"idle_ttl_seconds": int64(ttl.Seconds())}
 	var vm VM
 	if err := c.do(ctx, http.MethodPut, "/api/vms/"+url.PathEscape(name)+"/idle-ttl", body, &vm); err != nil {
+		return nil, err
+	}
+	return &vm, nil
+}
+
+// Keep holds name off the idle reaper's deletion for a day from now.
+func (c *Client) Keep(ctx context.Context, name string) (*VM, error) {
+	var vm VM
+	if err := c.do(ctx, http.MethodPost, "/api/vms/"+url.PathEscape(name)+"/keep", nil, &vm); err != nil {
 		return nil, err
 	}
 	return &vm, nil

@@ -84,7 +84,7 @@ boxctl create my-box
 boxctl create                     # a generated name, like quiet-otter-1a2b
 boxctl sizes                      # vCPU, memory and disk of small (default), ai-sandbox, medium, large
 boxctl create big-box --size large
-boxctl create long-job --idle-ttl 48h   # pause after 48h unused (default 6h)
+boxctl create long-job --idle-ttl 48h   # pause after 48h unused (default 1h)
 boxctl ssh my-box
 boxctl ssh my-box -- ls -al   # run one command instead of a shell
 boxctl port-forward my-box 3000   # localhost:3000 -> port 3000 inside the box
@@ -95,6 +95,7 @@ boxctl claude                     # Claude Code on a box, with this project (see
 boxctl kilo                       # the same, for the Kilo CLI (see below)
 boxctl pause my-box
 boxctl resume my-box
+boxctl keep my-box                # don't let the idle reaper delete it for a day (below)
 boxctl backups                    # saved copies of paused boxes (made by `boxctl download` or the dashboard)
 boxctl restore my-box             # newest backup of my-box, back as a paused box
 boxctl restore my-box -n big-box --size large   # ...or booted fresh at another size (files kept, running programs not)
@@ -106,6 +107,15 @@ boxctl logout   # forgets the token locally; revoke it from the dashboard too
 Every command talks to `https://vms-backend.boxctl.io` by default; override
 with `--api-url` (or by passing a different one to `boxctl login`) for a
 local/dev `boxctl-vms` instance.
+
+**Unused boxes are paused, then deleted.** A running box nobody has used
+for its idle TTL (1 hour unless you set `--idle-ttl`) is paused, which
+loses nothing: `boxctl resume` brings it back exactly as it was. A box
+the server paused this way and that stays paused for 24 hours is deleted,
+disk and all. `boxctl keep <box>` holds that off for 24 hours from when
+you run it (running it again restarts the 24 hours rather than adding to
+them), and resuming the box stops it altogether. A box you paused
+yourself with `boxctl pause` is never deleted.
 
 ## Claude Code on a box (`boxctl claude`)
 
@@ -261,7 +271,7 @@ config below, plain `git fetch box` works as well.
 
 With `--keep`, Claude keeps running when you detach (`Ctrl-b d`) or the connection
 drops; `boxctl claude --keep` again attaches to it. Boxes it creates pause after
-`--idle-ttl` unused (default `24h`, not the server's 6h): a detached
+`--idle-ttl` unused (default `24h`, not the server's 1h): a detached
 Claude working on its own makes no traffic the idle reaper counts. Pass
 `--idle-ttl` to change an existing box's. A box holds one project -- the
 directory it was started from -- and `boxctl claude --box` from another
