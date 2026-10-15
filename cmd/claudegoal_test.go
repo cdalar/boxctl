@@ -22,22 +22,6 @@ func TestParseRepo(t *testing.T) {
 	}
 }
 
-func TestGoalBranch(t *testing.T) {
-	for goal, want := range map[string]string{
-		"Fix the flaky auth test!":                       "boxctl/fix-the-flaky-auth-test-ab12cd",
-		"bump Go to 1.24 and fix everything that breaks": "boxctl/bump-go-to-1-24-and-fix-ab12cd",
-		"  ***  ":         "boxctl/work-ab12cd",
-		"İstanbul'a taşı": "boxctl/istanbul-a-ta-ab12cd",
-	} {
-		if got := goalBranch(goal, "ab12cd"); got != want {
-			t.Errorf("goalBranch(%q) = %q, want %q", goal, got, want)
-		}
-	}
-	if a, b := newGoalID(), newGoalID(); len(a) != 6 || a == b {
-		t.Errorf("ids %q %q", a, b)
-	}
-}
-
 func TestCheckRepoFlags(t *testing.T) {
 	if err := checkRepoFlags("", githubForward, nil); err != nil {
 		t.Errorf("--repo alone with forward: %v", err)

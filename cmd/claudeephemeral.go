@@ -2,11 +2,10 @@ package cmd
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -24,13 +23,10 @@ func ephemeralRun() bool {
 }
 
 // ephemeralBoxName is a fresh box name for this project:
-// <agent>-<project>-<4 random hex characters>.
-func ephemeralBoxName(dir string) (string, error) {
-	b := make([]byte, 2)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return claudeBoxName(dir) + "-" + hex.EncodeToString(b), nil
+// <project>-<slug>-<id>, the slug from --prompt if there is one (see
+// boxName).
+func ephemeralBoxName(ctx context.Context, dir string) (boxName, error) {
+	return newBoxName(ctx, filepath.Base(dir), claudePrompt)
 }
 
 // saveBoxWork fetches the box's branches and uncommitted work as box/*,

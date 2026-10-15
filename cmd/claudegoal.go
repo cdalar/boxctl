@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -44,28 +42,6 @@ func parseRepo(s string) (owner, name string, err error) {
 }
 
 var branchUnsafe = regexp.MustCompile(`[^a-z0-9]+`)
-
-// goalSlug is a few words of text as a branch-name part: lowercase letters
-// and digits joined by dashes, at most 24 characters.
-func goalSlug(text string) string {
-	slug := strings.Trim(branchUnsafe.ReplaceAllString(strings.ToLower(text), "-"), "-")
-	if len(slug) > 24 {
-		slug = strings.Trim(slug[:24], "-")
-	}
-	if slug == "" {
-		slug = "work"
-	}
-	return slug
-}
-
-// goalBranch is the new branch's name.
-func goalBranch(text, id string) string { return "boxctl/" + goalSlug(text) + "-" + id }
-
-func newGoalID() string {
-	b := make([]byte, 3)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
 
 // checkRepoFlags checks what --repo/--goal can't be combined with, before
 // anything is done. conflicts names the other flags that were given.
@@ -202,10 +178,15 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if claudeGoal != "" && env == "" {
 		return errors.New("a goal runs without you, so Claude can't log in on the box with /login: run boxctl claude login once, or use --claude-auth api-key")
 	}
-	id := newGoalID()
-	name := claudeBox
-	if name == "" {
-		name = claudeBoxName("/"+repoName) + "-" + id
+	// A goal's words name the box and branch; without one, an
+	// adjective-noun pair does. --box names the box, not the branch.
+	gen, err := newBoxName(ctx, repoName, claudeGoal)
+	if err != nil {
+		return err
+	}
+	id, name := gen.id, gen.box()
+	if claudeBox != "" {
+		name = claudeBox
 	}
 	token := ""
 	if claudeGitHub == githubStore {
@@ -213,11 +194,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	text := claudeGoal
-	if text == "" {
-		text = repoName
-	}
-	branch := goalBranch(text, id)
+	branch := gen.branch()
 	dir := path.Join("/root", repoName)
 
 	box, err := connectClaudeBox(ctx, name, true, cmd.Flags().Changed("idle-ttl"))

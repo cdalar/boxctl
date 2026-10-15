@@ -81,6 +81,7 @@ boxctl ls -a                      # all of them, paused and stopped too
 boxctl ls -o json                 # for scripts; images and sizes take -o json too
 boxctl images
 boxctl create my-box
+boxctl create                     # a generated name, like quiet-otter-1a2b
 boxctl sizes                      # vCPU, memory and disk of small (default), ai-sandbox, medium, large
 boxctl create big-box --size large
 boxctl create long-job --idle-ttl 48h   # pause after 48h unused (default 6h)
@@ -114,11 +115,11 @@ the box's copy of the project, and nothing is synced.
 
 A box created for Claude (or Kilo) is the `ai-sandbox` size, 2 vCPU / 4 GiB RAM with a 10 GiB disk unless you pass `--size`.
 
-By default every run gets a fresh box (`claude-<directory>-<random>`)
+By default every run gets a fresh box (`<directory>-<slug>-<id>`)
 that lives only as long as the run. A git repository with an `origin`
 isn't copied: the box clones origin's default branch (your GitHub token
 lent for it, as below) and Claude works on a new branch,
-`boxctl/<directory>-<random>` -- so local uncommitted or unpushed work
+`boxctl/<slug>-<id>` -- so local uncommitted or unpushed work
 isn't there; push it first. Anything else is copied. When the run ends --
 Claude exits, you detach, or the connection drops -- the box's branches and uncommitted work are
 fetched here as `box/*` (what `boxctl claude fetch` does) and the box is
@@ -126,6 +127,12 @@ deleted -- or kept, with a message, if that fetch fails. Ctrl-C during
 setup deletes it too. `--keep` uses the project's long-lived box
 (`claude-<directory>`) instead, as described below; `--box`, `--detach`
 and `--task` imply it.
+
+A box you don't name gets a generated one, `<repository>-<slug>-<id>`
+(at most 40 characters): the slug is two or three words of `--goal` or
+`--prompt`, or an adjective-noun pair like `quiet-otter`, the id four
+random characters, and the branch Claude works on is `boxctl/<slug>-<id>`,
+so you can tell which box a branch came from; `--box` names it yourself.
 
 ```bash
 cd ~/src/myproject
