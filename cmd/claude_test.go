@@ -204,41 +204,16 @@ func TestBoxSettingsDropsMachineSpecificKeys(t *testing.T) {
 	}
 }
 
-// boxctl claude creates a 2 vCPU / 4 GiB box unless --size says otherwise;
-// kilo keeps the size it always had.
+// Every agent's box is ai-sandbox unless --size says otherwise.
 func TestAgentDefaultSize(t *testing.T) {
-	for _, tc := range []struct {
-		a    *boxAgent
-		want string
-	}{
-		{claudeAgent, "ai-sandbox"},
-		{kiloAgent, "medium"},
-	} {
-		c := &cobra.Command{Use: tc.a.name}
-		tc.a.addFlags(c)
-		if got := c.Flags().Lookup("size").DefValue; got != tc.want {
-			t.Errorf("%s default size = %q, want %q", tc.a.name, got, tc.want)
+	for _, a := range []*boxAgent{claudeAgent, kiloAgent} {
+		c := &cobra.Command{Use: a.name}
+		a.addFlags(c)
+		if got := c.Flags().Lookup("size").DefValue; got != "ai-sandbox" {
+			t.Errorf("%s default size = %q, want ai-sandbox", a.name, got)
 		}
 		if err := c.Flags().Parse([]string{"--size", "large"}); err != nil || claudeSize != "large" {
-			t.Errorf("%s --size large: claudeSize = %q, err = %v", tc.a.name, claudeSize, err)
-		}
-	}
-}
-
-// claude and kilo bind the same claudeSize, so the one registered last
-// used to set it for both; running a command must use its own agent's.
-func TestAgentRunsOwnSize(t *testing.T) {
-	defer func(a *boxAgent, s string) { agent, claudeSize = a, s }(agent, claudeSize)
-	for _, a := range []*boxAgent{claudeAgent, kiloAgent} {
-		for _, other := range []*boxAgent{claudeAgent, kiloAgent} {
-			c := &cobra.Command{Use: a.name}
-			a.addFlags(c)
-			other.addFlags(&cobra.Command{Use: other.name})
-			var got string
-			_ = a.runs(func(*cobra.Command, []string) error { got = claudeSize; return nil })(c, nil)
-			if got != a.size {
-				t.Errorf("%s after registering %s: size = %q, want %q", a.name, other.name, got, a.size)
-			}
+			t.Errorf("%s --size large: claudeSize = %q, err = %v", a.name, claudeSize, err)
 		}
 	}
 }

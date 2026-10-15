@@ -112,7 +112,7 @@ Runs Claude Code itself on a box instead of on your machine, attached to
 your terminal -- so its file edits and its shell both happen there, on
 the box's copy of the project, and nothing is synced.
 
-A box created for Claude is 2 vCPU / 4 GiB RAM with a 10 GiB disk unless you pass `--size`.
+A box created for Claude (or Kilo) is the `ai-sandbox` size, 2 vCPU / 4 GiB RAM with a 10 GiB disk unless you pass `--size`.
 
 By default every run gets a fresh box (`claude-<directory>-<random>`)
 that lives only as long as the run. A git repository with an `origin`
