@@ -47,16 +47,17 @@ var rmCmd = &cobra.Command{
 		// One by one, in the order given; a failure doesn't stop the rest.
 		failed := 0
 		for _, name := range names {
+			sp := startSpinner("Destroying " + name)
 			if err := c.Destroy(cmd.Context(), name); err != nil {
-				fmt.Printf("\033[31m✘\033[0m %s: %v\n", name, err)
+				sp.fail(fmt.Sprintf("%s: %v", name, err))
 				failed++
 				continue
 			}
 			if len(names) == 1 {
-				fmt.Printf("Destroyed %s\n", name)
+				sp.finish("Destroyed " + bold(name))
 				continue
 			}
-			fmt.Printf("\033[32m✔\033[0m %s\n", name)
+			sp.finish(name)
 		}
 		if failed > 0 {
 			if len(names) == 1 {
