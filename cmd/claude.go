@@ -33,7 +33,7 @@ import (
 
 const (
 	claudeDefaultImage = "claude-agent"
-	claudeDefaultSize  = "ai-sandbox" // 2 vCPU, 4 GiB, 10 GiB disk
+	claudeDefaultSize  = "ai-sandbox" // every agent's: 2 vCPU, 4 GiB, 10 GiB disk
 	// claudeInstall is Anthropic's installer, run on first use rather than
 	// baking Claude Code into the image (which would redistribute it). It
 	// installs to ~/.local/bin and keeps itself updated.

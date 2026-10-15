@@ -38,7 +38,6 @@ var kiloAgent = &boxAgent{
 	name: "kilo", title: "Kilo", product: "Kilo",
 	bin: "kilo", binDir: ".kilo/bin", install: kiloInstall,
 	promptFlag: "--prompt",
-	size:       "medium",
 }
 
 var (
