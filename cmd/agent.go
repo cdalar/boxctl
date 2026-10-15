@@ -46,6 +46,12 @@ func (a *boxAgent) fill(text string) string {
 func (a *boxAgent) runs(run func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		agent = a
+		// Every agent's command binds claudeSize, and registering a flag
+		// writes its default into the variable -- so without --size it
+		// holds whichever agent registered last, not this one's.
+		if !cmd.Flags().Changed("size") {
+			claudeSize = a.size
+		}
 		return run(cmd, args)
 	}
 }

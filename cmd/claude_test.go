@@ -224,3 +224,21 @@ func TestAgentDefaultSize(t *testing.T) {
 		}
 	}
 }
+
+// claude and kilo bind the same claudeSize, so the one registered last
+// used to set it for both; running a command must use its own agent's.
+func TestAgentRunsOwnSize(t *testing.T) {
+	defer func(a *boxAgent, s string) { agent, claudeSize = a, s }(agent, claudeSize)
+	for _, a := range []*boxAgent{claudeAgent, kiloAgent} {
+		for _, other := range []*boxAgent{claudeAgent, kiloAgent} {
+			c := &cobra.Command{Use: a.name}
+			a.addFlags(c)
+			other.addFlags(&cobra.Command{Use: other.name})
+			var got string
+			_ = a.runs(func(*cobra.Command, []string) error { got = claudeSize; return nil })(c, nil)
+			if got != a.size {
+				t.Errorf("%s after registering %s: size = %q, want %q", a.name, other.name, got, a.size)
+			}
+		}
+	}
+}
