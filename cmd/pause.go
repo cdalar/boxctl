@@ -22,12 +22,13 @@ var pauseCmd = &cobra.Command{
 				return err
 			})
 		}
-		fmt.Printf("Pausing %s (this can take a few minutes for a large box)...\n", name)
+		sp := startSpinner(fmt.Sprintf("Pausing %s %s", name, dim("(this can take a few minutes for a large box)")))
 		vm, err := c.Pause(cmd.Context(), name)
 		if err != nil {
+			sp.fail(fmt.Sprintf("%s: %v", name, err))
 			return err
 		}
-		fmt.Printf("%s is now %s\n", vm.Name, vm.State)
+		sp.finish(fmt.Sprintf("%s is now %s", bold(vm.Name), stateText(vm.State)))
 		return nil
 	},
 }

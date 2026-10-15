@@ -104,6 +104,17 @@ var lsCmd = &cobra.Command{
 		}
 		lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 		header, rows := lines[0], lines[1:]
+		// Colour after alignment (escape codes would throw the
+		// tabwriter's widths off): bold header, state word by state.
+		if useColor() {
+			header = bold(header)
+			for i, vm := range vms {
+				if i < len(rows) && len(rows[i]) >= len(vm.Name) {
+					n := len(vm.Name)
+					rows[i] = rows[i][:n] + strings.Replace(rows[i][n:], vm.State, stateText(vm.State), 1)
+				}
+			}
+		}
 
 		// Like `onctl ls`: with boxes in one state only, a plain table;
 		// otherwise a labelled section per state, each under its own

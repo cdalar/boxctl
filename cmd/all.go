@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/cdalar/boxctl/internal/client"
@@ -35,6 +36,7 @@ func forEachBox(ctx context.Context, c *client.Client, verb string, wantState []
 		return nil
 	}
 
+	sp := startSpinner(fmt.Sprintf("%s %s", strings.ToUpper(verb[:1])+verb[1:], boxCount(len(names))))
 	var (
 		wg     sync.WaitGroup
 		mu     sync.Mutex
@@ -46,14 +48,15 @@ func forEachBox(ctx context.Context, c *client.Client, verb string, wantState []
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
-				fmt.Printf("\033[31m✘\033[0m %s: %v\n", name, err)
+				sp.println(fmt.Sprintf("%s %s: %v", failMark(), name, err))
 				failed++
 				return
 			}
-			fmt.Printf("\033[32m✔\033[0m %s\n", name)
+			sp.println(fmt.Sprintf("%s %s", okMark(), name))
 		})
 	}
 	wg.Wait()
+	sp.end("")
 
 	if failed > 0 {
 		return fmt.Errorf("failed to %s %d of %d box(es)", verb, failed, len(names))

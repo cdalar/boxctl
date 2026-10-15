@@ -43,7 +43,14 @@ var createCmd = &cobra.Command{
 			}
 			name = n.box()
 		}
-		fmt.Printf("Creating %s...\n", name)
+		// The apply-script log tail prints to stdout while we wait, which
+		// a spinner would fight with, so that case keeps the plain line.
+		var sp *spinner
+		if createApplyFile == "" {
+			sp = startSpinner("Creating " + bold(name))
+		} else {
+			fmt.Printf("Creating %s...\n", name)
+		}
 
 		c := newClient()
 		// With an apply script the server answers only once it has
@@ -72,14 +79,22 @@ var createCmd = &cobra.Command{
 		vm, err := c.Create(cmd.Context(), name, createApplyFile, createImage, createSize)
 		stopTail()
 		if err != nil {
+			if sp != nil {
+				sp.fail(fmt.Sprintf("%s: %v", name, err))
+			}
 			return err
 		}
-		fmt.Printf("Created %s (%s, %s)\n", vm.Name, vm.State, sizeLabel(*vm))
+		created := fmt.Sprintf("Created %s (%s, %s)", bold(vm.Name), stateText(vm.State), sizeLabel(*vm))
+		if sp != nil {
+			sp.finish(created)
+		} else {
+			fmt.Println(okMark() + " " + created)
+		}
 		if cmd.Flags().Changed("idle-ttl") {
 			if _, err := c.SetIdleTTL(cmd.Context(), name, createIdleTTL); err != nil {
 				return fmt.Errorf("setting %s's idle TTL: %w", name, err)
 			}
-			fmt.Printf("%s pauses after %s unused\n", name, createIdleTTL)
+			fmt.Printf("%s %s\n", dim("•"), dim(fmt.Sprintf("%s pauses after %s unused", name, createIdleTTL)))
 		}
 		return nil
 	},
