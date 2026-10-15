@@ -144,6 +144,6 @@ func init() {
 	createCmd.Flags().StringVarP(&createImage, "image", "i", defaultImage, "boot image to use (list them with boxctl images)")
 	createCmd.Flags().StringVarP(&createSize, "size", "s", "", "box size: small, medium or large (list them with boxctl sizes; default small)")
 	_ = createCmd.RegisterFlagCompletionFunc("size", completeSize)
-	createCmd.Flags().DurationVar(&createIdleTTL, "idle-ttl", 0, "pause the box after this long unused, 10m to 720h (default: the server's, 6h; 0 never)")
+	createCmd.Flags().DurationVar(&createIdleTTL, "idle-ttl", 0, "pause the box after this long unused, 10m to 720h (default: the server's, 1h; 0 never)")
 	rootCmd.AddCommand(createCmd)
 }
