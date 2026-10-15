@@ -482,6 +482,7 @@ internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images 
 internal/config/         ~/.boxctl/config.json read/write
 claude-plugin/           Claude Code plugin: route Bash to a box (see "Claude Code plugin")
 .claude-plugin/          Marketplace manifest listing that plugin
+docs/media/              Screen recordings (terminal-output-preview: spinners and colours, PR #75)
 ```
 
 ## `ssh` / terminal protocol
