@@ -40,7 +40,7 @@ builds:
   #     - amd64
   #     - arm64
   #   ldflags:
-  #     - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}'
+  #     - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/cdalar/boxctl/cmd.BuildTime={{.Date}}'
   #   hooks:
   #     post:
   #       # --dry-run/--ad-hoc on snapshots so `goreleaser release --snapshot`
@@ -63,7 +63,7 @@ builds:
       - goos: windows
         goarch: arm64
     ldflags:
-      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}'
+      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/cdalar/boxctl/cmd.BuildTime={{.Date}}'
 
   # macOS, unsigned -- stands in for boxctl-macos above until signing is
   # set up; delete it when that's re-enabled (both would produce the same
@@ -79,7 +79,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}'
+      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/cdalar/boxctl/cmd.BuildTime={{.Date}}'
 
 archives:
   - id: repl
