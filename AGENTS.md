@@ -129,9 +129,10 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   copied; the tar copy below is for everything else.
   `checkCopy` vets that copy before a box is made (or, for `--keep`,
   before an existing box gets it): over 1 GB is refused, and a
-  directory that isn't a git repository at all is copied only after a
-  `[y/N]` (or `--yes`) -- run from a folder of repositories, it would
-  otherwise upload all of them. `--keep` (implied by
+  directory that isn't a git repository at all is refused at once,
+  before it's walked, unless `--yes` -- run from a folder of
+  repositories, it would otherwise upload all of them, and just sizing
+  one takes long enough to look hung. `--keep` (implied by
   `--box`/`--detach`/`--task`, see `ephemeralRun`) creates or
   resumes `claude-<dir>`, authorizes `~/.boxctl/claude/id_ed25519` (the
   plugin's key) over `Exec`, then does everything else over real ssh via

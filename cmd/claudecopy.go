@@ -50,29 +50,20 @@ func copyProject(ctx context.Context, box *boxSSH, dir string) error {
 // go to the box. A git repository with an origin is cloned there, so
 // there's nothing to check. Anything else is copied, and mustn't be over
 // maxProjectCopy -- and a directory that isn't a git repository at all
-// is copied whole, which is rarely what was meant (a folder of
-// repositories, a home directory), so it's only done once you say so,
-// or with --yes.
+// is refused outright, before walking it (a folder of repositories or a
+// home directory takes a while just to count), unless --yes says to copy
+// it whole anyway.
 func checkCopy(dir string) error {
 	if cloneURL(dir) != "" {
 		return nil
 	}
-	files, size, err := projectCopy(dir)
-	if err != nil {
-		return err
+	if exec.Command("git", "-C", dir, "rev-parse", "--git-dir").Run() != nil && !claudeYes {
+		return fmt.Errorf("%s isn't a git repository\n"+
+			"run boxctl %s in a project's directory, or use --repo owner/name\n"+
+			"or pass --yes to copy all of it to the box anyway", dir, agent.name)
 	}
-	if exec.Command("git", "-C", dir, "rev-parse", "--git-dir").Run() == nil || claudeYes {
-		return nil
-	}
-	what := fmt.Sprintf("%s isn't a git repository, so all of it -- %d files, %s -- would be copied to the box",
-		dir, len(files), client.FormatBytes(size))
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return fmt.Errorf("%s; pass --yes to copy it, or run boxctl %s in a repository", what, agent.name)
-	}
-	if !confirm(what + ". Copy it?") {
-		return fmt.Errorf("not copied: run boxctl %s in a repository, or use --repo owner/name", agent.name)
-	}
-	return nil
+	_, _, err := projectCopy(dir)
+	return err
 }
 
 // maxProjectCopy is the most a project copy sends. A directory past it
@@ -96,8 +87,9 @@ func projectCopy(dir string) ([]string, int64, error) {
 		}
 	}
 	if size > maxProjectCopy {
-		return nil, 0, fmt.Errorf("%s isn't a git repository with an origin, so it would be copied to the box -- %s in %d files, too much for one project; run boxctl %s in the project's own directory, or use --repo owner/name",
-			dir, client.FormatBytes(size), len(files), agent.name)
+		return nil, 0, fmt.Errorf("%s is too big to copy to the box (over %s)\n"+
+			"run boxctl %s in the project's own directory, or use --repo owner/name",
+			dir, client.FormatBytes(maxProjectCopy), agent.name)
 	}
 	return files, size, nil
 }
