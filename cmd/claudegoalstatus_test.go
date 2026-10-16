@@ -112,3 +112,20 @@ func TestRunInfoScript(t *testing.T) {
 		t.Errorf("workspace: %q", got)
 	}
 }
+
+func TestIsGoalBox(t *testing.T) {
+	long := boxName{prefix: nameSlug(goalBoxPrefix + "a-really-long-repository-name"), slug: "fix-flaky-login-test", id: "a1b2"}
+	if b := long.box(); len(b) > boxNameMax || !isGoalBox(b) {
+		t.Errorf("%q: cut short, it should still be a goal box", b)
+	}
+	for name, want := range map[string]bool{
+		"goal-onctl-runners-issue-29-0ca8": true,
+		"goal-boxctl-fix-login":            false, // no id
+		"boxctl-fix-login-a1b2":            false, // a run, not a goal
+		"onctl-runners-issue-29-0ca8":      false, // a goal from before goal- names: isRunBox's
+	} {
+		if got := isGoalBox(name); got != want {
+			t.Errorf("isGoalBox(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

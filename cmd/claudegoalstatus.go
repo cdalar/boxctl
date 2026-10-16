@@ -121,6 +121,18 @@ func findVM(ctx context.Context, c *client.Client, name string) (*client.VM, err
 // runBoxID is the -<id> a generated box name ends with.
 var runBoxID = regexp.MustCompile(`-[0-9a-f]{4}$`)
 
+// goalBoxPrefix starts a --goal (or --issue) run's generated box name:
+// goal-<repository>-<slug>-<id>. box() cuts the repository short before
+// it, never this.
+const goalBoxPrefix = "goal-"
+
+// isGoalBox reports whether name is a goal run's generated box name. Unlike
+// isRunBox it needs no project: claude ls lists every goal run, from any
+// directory, since a goal needs no checkout to start from.
+func isGoalBox(name string) bool {
+	return strings.HasPrefix(name, goalBoxPrefix) && runBoxID.MatchString(name)
+}
+
 // isRunBox reports whether name is a generated box name (boxName.box)
 // with one of prefixes: a --goal, --repo or ephemeral run's box. box()
 // may have cut the prefix short, but never below minPrefix: what's left

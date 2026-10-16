@@ -271,6 +271,10 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if len(repos) == 1 {
 		_, namePrefix, _ = strings.Cut(repos[0], "/")
 	}
+	// A goal's box says so, so claude ls finds it from anywhere.
+	if goal != "" {
+		namePrefix = goalBoxPrefix + namePrefix
+	}
 
 	// Everything that can fail fails before a box is made.
 	env, apiKey, err := claudeEnv(claudeAuth)
