@@ -246,6 +246,13 @@ func openSession(ctx context.Context, setTTL bool, alongside func(*boxSSH, taskS
 		if err != nil {
 			return nil, taskSession{}, err
 		}
+		// A new box always gets the project: refuse a copy that's too
+		// big now, not after the box is made.
+		if cloneURL(dir) == "" {
+			if _, _, err := projectCopy(dir); err != nil {
+				return nil, taskSession{}, err
+			}
+		}
 		n, err := ephemeralBoxName(ctx, dir)
 		if err != nil {
 			return nil, taskSession{}, err

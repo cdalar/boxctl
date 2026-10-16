@@ -33,16 +33,44 @@ import (
 // mean exactly what they mean to git. Outside a repository it's the
 // whole directory.
 func copyProject(ctx context.Context, box *boxSSH, dir string) error {
-	files, err := projectFiles(dir)
+	files, size, err := projectCopy(dir)
 	if err != nil {
 		return err
 	}
-	if err := streamTar(ctx, box, "mkdir -p "+shellQuote(dir)+" && tar -xzf - -C "+shellQuote(dir), nil,
+	progress := newUploadProgress("Copying "+bold(dir), size)
+	if err := streamTar(ctx, box, "mkdir -p "+shellQuote(dir)+" && tar -xzf - -C "+shellQuote(dir), progress,
 		func(tw *tar.Writer) error { return addFiles(tw, dir, files) }); err != nil {
 		return err
 	}
-	sayDone("Copied %s %s", bold(dir), dim(fmt.Sprintf("(%d files)", len(files))))
+	sayDone("Copied %s %s", bold(dir), dim(fmt.Sprintf("(%d files, %s)", len(files), client.FormatBytes(size))))
 	return nil
+}
+
+// maxProjectCopy is the most a project copy sends. A directory past it
+// is almost never one project but a folder of them, or a home directory
+// -- everything in it, node_modules and all, since it isn't a repository
+// whose ignore rules could leave things out -- and copying it takes long
+// enough to look hung.
+const maxProjectCopy = 1 << 30
+
+// projectCopy is what copyProject sends for dir: projectFiles and their
+// total size, or an error when that's over maxProjectCopy.
+func projectCopy(dir string) ([]string, int64, error) {
+	files, err := projectFiles(dir)
+	if err != nil {
+		return nil, 0, err
+	}
+	var size int64
+	for _, rel := range files {
+		if st, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(rel))); err == nil && st.Mode().IsRegular() {
+			size += st.Size()
+		}
+	}
+	if size > maxProjectCopy {
+		return nil, 0, fmt.Errorf("%s isn't a git repository with an origin, so it would be copied to the box -- %s in %d files, too much for one project; run boxctl %s in the project's own directory, or use --repo owner/name",
+			dir, client.FormatBytes(size), len(files), agent.name)
+	}
+	return files, size, nil
 }
 
 // cloneURL is the URL the box clones the project from: its origin, with
@@ -245,7 +273,7 @@ func (p *uploadProgress) Write(b []byte) (int, error) {
 	// Under a spinner the progress is its text, not a bar of its own.
 	if sp := currentSpinner(); sp != nil {
 		if time.Since(p.lastPrint) >= 200*time.Millisecond {
-			sp.setMsg(p.spinText())
+			sp.setDetail(p.spinText())
 			p.lastPrint = time.Now()
 		}
 		return len(b), nil
@@ -258,9 +286,15 @@ func (p *uploadProgress) Write(b []byte) (int, error) {
 }
 
 // finish draws the bar a last time, full when the upload succeeded, and
-// ends its line so what's printed next doesn't land on it.
+// ends its line so what's printed next doesn't land on it -- or, under a
+// spinner, gives it back its own message, so a finished upload's last
+// percentage isn't left there looking stuck.
 func (p *uploadProgress) finish(ok bool) {
-	if currentSpinner() != nil || !p.show {
+	if sp := currentSpinner(); sp != nil {
+		sp.setDetail("")
+		return
+	}
+	if !p.show {
 		return
 	}
 	if ok {
