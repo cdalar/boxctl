@@ -25,8 +25,9 @@ import (
 // directory, every repository gets the same new branch, and a goal ends in
 // one pull request per repository Claude changed.
 //
-// That status is on the box, read by `boxctl claude logs`: boxctl-vms has no
-// per-box metadata API to put it in yet.
+// That status is on the box, read by `boxctl claude logs` and `ls`
+// (claudegoalstatus.go): boxctl-vms has no per-box metadata API to put it
+// in yet.
 //
 // The run outlives the terminal, so the GitHub token can't be the
 // forwarded one, which is lent only while an ssh connection is up: goal
@@ -353,7 +354,8 @@ var claudeLogsCmd = &cobra.Command{
 	Short: "Show how a --goal run on a box is going",
 	Long: `Prints the status of the box's latest --goal run (running, done or failed,
 and the pull request's URL), then its log: Claude's output as JSON lines.
--f keeps following it.`,
+-f keeps following it until the run ends. A finished run's box is paused
+afterwards, if it was paused before or you followed it to the end.`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeBoxName,
 	RunE: claudeAgent.runs(func(cmd *cobra.Command, args []string) error {
@@ -362,26 +364,48 @@ and the pull request's URL), then its log: Claude's output as JSON lines.
 }
 
 func init() {
-	claudeLogsCmd.Flags().BoolVarP(&claudeLogsFollow, "follow", "f", false, "keep following the log")
+	claudeLogsCmd.Flags().BoolVarP(&claudeLogsFollow, "follow", "f", false, "keep following the log until the run ends")
 	claudeCmd.AddCommand(claudeLogsCmd)
 }
 
 func goalLogs(ctx context.Context, name string, follow bool) error {
+	c := newClient()
+	vm, err := findVM(ctx, c, name)
+	if err != nil {
+		return err
+	}
 	box, err := connectClaudeBox(ctx, name, false, false)
 	if err != nil {
 		return err
 	}
 	defer box.close()
-	return box.stream(ctx, logsScript(follow))
+	if err := box.stream(ctx, logsScript(follow)); err != nil {
+		return err
+	}
+	st, err := readGoalStatus(ctx, box)
+	if err != nil || !st.finished() {
+		return err
+	}
+	rememberGoals(map[string]goalStatus{name: *st}, nil)
+	// Followed to the end, or resumed just to read it: nobody else is
+	// using the box, so it needn't run on.
+	unused := follow || vm.State != "running"
+	_, err = pauseFinishedGoal(ctx, c, vm, st, unused)
+	return err
 }
 
+// logsScript prints the latest goal's status and log. Following, it
+// stops once the run has ended, with the status it ended with.
 func logsScript(follow bool) string {
-	tail := "tail -n 200"
-	if follow {
-		tail = "tail -n 200 -f"
-	}
 	d := boxGoalsDir + "/latest"
-	return `[ -d ` + d + ` ] || { echo "no --goal run on this box" >&2; exit 1; }
+	s := `[ -d ` + d + ` ] || { echo "no --goal run on this box" >&2; exit 1; }
 cat ` + d + `/status.json 2>/dev/null
-exec ` + tail + ` ` + d + `/claude.log`
+`
+	if !follow {
+		return s + `exec tail -n 200 ` + d + `/claude.log`
+	}
+	return s + `tail -n 200 -f ` + d + `/claude.log & t=$!
+while [ ! -f ` + d + `/status.json ] || grep -q '"status":"running"' ` + d + `/status.json; do sleep 5; done
+sleep 1; kill $t 2>/dev/null; wait $t 2>/dev/null
+echo; cat ` + d + `/status.json`
 }

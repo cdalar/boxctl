@@ -71,6 +71,10 @@ type VM struct {
 	// they don't apply, or from a server without idle delete.
 	DeleteAt  *time.Time `json:"delete_at,omitempty"`
 	KeepUntil *time.Time `json:"keep_until,omitempty"`
+	// LastActivityAt is when the box was last used through the server
+	// (a terminal, exec, port-forward -- not a list), as its idle reaper
+	// sees it; nil when the server doesn't track it.
+	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
 }
 
 // Ingress is one port of a box exposed at a public URL, as boxctl-vms's
