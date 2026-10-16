@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -179,4 +180,23 @@ func sayNote(format string, a ...any) { say(dim("• " + fmt.Sprintf(format, a..
 // sayWarn prints a warning: "! message", in yellow.
 func sayWarn(format string, a ...any) {
 	say(paint(ansiYellow, "!") + " " + fmt.Sprintf(format, a...))
+}
+
+// PrintError is main.go's one way of reporting a failed command: a red
+// "✘ Error:" and the first line of err, with any further lines -- what
+// to do about it -- indented under it. Plain "Error: ..." when stderr
+// isn't a terminal or NO_COLOR is set.
+func PrintError(err error) {
+	lines := strings.Split(strings.TrimRight(err.Error(), "\n"), "\n")
+	if os.Getenv("NO_COLOR") != "" || !term.IsTerminal(int(os.Stderr.Fd())) {
+		fmt.Fprintln(os.Stderr, "Error:", lines[0])
+		for _, l := range lines[1:] {
+			fmt.Fprintln(os.Stderr, "  "+l)
+		}
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s%s✘ Error:%s %s%s%s\n", ansiBold, ansiRed, ansiReset, ansiBold, lines[0], ansiReset)
+	for _, l := range lines[1:] {
+		fmt.Fprintf(os.Stderr, "  %s→%s %s\n", ansiCyan, ansiReset, l)
+	}
 }
