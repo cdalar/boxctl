@@ -86,6 +86,7 @@ boxctl create                     # a generated name, like quiet-otter-1a2b
 boxctl sizes                      # vCPU, memory and disk of small (default), ai-sandbox, medium, large
 boxctl create big-box --size large
 boxctl create long-job --idle-ttl 48h   # pause after 48h unused (default 1h)
+boxctl create k3s -a k3s/k3s-server.sh  # run an onctl-templates script on the new box, streaming its log
 boxctl ssh my-box
 boxctl ssh my-box -- ls -al   # run one command instead of a shell
 boxctl port-forward my-box 3000   # localhost:3000 -> port 3000 inside the box
@@ -100,7 +101,11 @@ boxctl keep my-box                # don't let the idle reaper delete it for a da
 boxctl backups                    # saved copies of paused boxes (made by `boxctl download` or the dashboard)
 boxctl restore my-box             # newest backup of my-box, back as a paused box
 boxctl restore my-box -n big-box --size large   # ...or booted fresh at another size (files kept, running programs not)
+boxctl exec 'uname -a'            # one command in a fresh, disposable box; prints JSON (--image, --size, --timeout)
+boxctl download my-box            # a paused box's snapshot bundle -> my-box.tar.zst
+boxctl import my-box.tar.zst      # ...and back as a new, paused box (-n to name it)
 boxctl rm my-box                  # several at once: boxctl rm a b c
+boxctl pause all                  # also resume all / rm all: every box it applies to (rm asks first; --force skips)
 
 boxctl logout   # forgets the token locally; revoke it from the dashboard too
 ```
