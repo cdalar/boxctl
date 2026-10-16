@@ -192,7 +192,10 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   lists the project's run boxes (`isRunBox`: a generated name with the
   project's prefix or `workspace`, confirmed by the box's project
   marker or, for a multi-repo workspace, its clones -- a `boxctl-web-*`
-  box matches `boxctl` by name alone). Nothing on the box
+  box matches `boxctl` by name alone), plus every goal run whatever
+  the cwd: a `--goal`/`--issue` box is `goal-<repo>-<slug>-<id>`
+  (`goalBoxPrefix`, `isGoalBox`), since a goal needs no local checkout
+  to start from. Nothing on the box
   can pause it (it has no boxctl token), so `ls` pauses a box whose goal
   has finished once the server's `last_activity_at` is 10 minutes old,
   and `logs` pauses it after following it to the end or resuming it to

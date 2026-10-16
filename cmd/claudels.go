@@ -25,8 +25,9 @@ func (a *boxAgent) lsCmd() *cobra.Command {
 		Long: a.fill(`Lists the {Agent} sessions working on this project: the main checkout and
 each --task worktree on the project's box (with its branch, whether
 {Agent} is running there, and when it last showed activity), plus the
-boxes of --own-box tasks. Then the project's run boxes -- --goal, --repo
-and ephemeral runs -- with how a goal went and its pull request. A box
+boxes of --own-box tasks. Then the run boxes: the project's --repo and
+ephemeral runs, and every --goal/--issue run (goal-... boxes) whatever
+its project, with how a goal went and its pull request. A box
 whose goal has finished and that nothing has used for 10 minutes is
 paused.`),
 		Args: cobra.NoArgs,
@@ -83,7 +84,7 @@ func claudeList(ctx context.Context) error {
 		case strings.HasPrefix(vm.Name, main+"-"):
 			_, _ = fmt.Fprintf(tw, "%s\t-\t-\t-\t%s (own box, %s)\n", strings.TrimPrefix(vm.Name, main+"-"), vm.Name, vm.State)
 			rows++
-		case isRunBox(vm.Name, prefixes):
+		case isGoalBox(vm.Name), isRunBox(vm.Name, prefixes):
 			runs = append(runs, vm)
 		}
 	}
@@ -109,8 +110,8 @@ func claudeList(ctx context.Context) error {
 	return nil
 }
 
-// listRuns is a table with a row per run box of the project's ("" for
-// none), reading each
+// listRuns is a table with a row per run box of the project's, and every
+// goal run's whatever its project ("" for none), reading each
 // running one's goal status and pausing it if the goal is over and nothing
 // uses the box. The name only says which project a box might be for (a
 // boxctl-web box's starts with boxctl-, too); a running box's project
@@ -155,7 +156,7 @@ func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]
 		if s, ok := cached[vm.Name]; ok && vm.State != "running" {
 			project[i] = s.Projects
 		}
-		if !ofProject(project[i], projects) {
+		if !isGoalBox(vm.Name) && !ofProject(project[i], projects) {
 			continue
 		}
 		rows++
