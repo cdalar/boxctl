@@ -51,16 +51,16 @@ func copyProject(ctx context.Context, box *boxSSH, dir string) error {
 // there's nothing to check. Anything else is copied, and mustn't be over
 // maxProjectCopy -- and a directory that isn't a git repository at all
 // is refused outright, before walking it (a folder of repositories or a
-// home directory takes a while just to count), unless --yes says to copy
+// home directory takes a while just to count), unless --force says to copy
 // it whole anyway.
 func checkCopy(dir string) error {
 	if cloneURL(dir) != "" {
 		return nil
 	}
-	if exec.Command("git", "-C", dir, "rev-parse", "--git-dir").Run() != nil && !claudeYes {
+	if exec.Command("git", "-C", dir, "rev-parse", "--git-dir").Run() != nil && !claudeForce {
 		return fmt.Errorf("%s isn't a git repository\n"+
 			"run boxctl %s in a project's directory, or use --repo owner/name\n"+
-			"or pass --yes to copy all of it to the box anyway", dir, agent.name)
+			"or pass --force to copy all of it to the box anyway", dir, agent.name)
 	}
 	_, _, err := projectCopy(dir)
 	return err

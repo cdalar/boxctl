@@ -73,6 +73,6 @@ func (a *boxAgent) addFlags(c *cobra.Command) {
 	c.Flags().StringVar(&claudeGitHub, "github", githubForward, "GitHub credentials for the box: forward (lent while attached), store (a token kept on the box) or off")
 	_ = c.RegisterFlagCompletionFunc("github", cobra.FixedCompletions([]string{githubForward, githubStore, githubOff}, cobra.ShellCompDirectiveNoFileComp))
 	c.Flags().BoolVarP(&claudeKeep, "keep", "k", false, a.fill("use the project's own box, {agent}-<project>, and keep it -- instead of a new box deleted when the run ends (--box, --detach and --task keep it too)"))
-	c.Flags().BoolVarP(&claudeYes, "yes", "y", false, "copy a project directory that isn't a git repository (refused otherwise)")
+	c.Flags().BoolVarP(&claudeForce, "force", "f", false, "copy a project directory even if it isn't a git repository")
 	c.Flags().DurationVar(&claudeIdle, "idle-ttl", claudeDefaultIdleTTL, "pause the box after this long unused, 10m to 720h (set on a new box, or on an existing one when given)")
 }

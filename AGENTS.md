@@ -130,7 +130,7 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `checkCopy` vets that copy before a box is made (or, for `--keep`,
   before an existing box gets it): over 1 GB is refused, and a
   directory that isn't a git repository at all is refused at once,
-  before it's walked, unless `--yes` -- run from a folder of
+  before it's walked, unless `--force` -- run from a folder of
   repositories, it would otherwise upload all of them, and just sizing
   one takes long enough to look hung. `--keep` (implied by
   `--box`/`--detach`/`--task`, see `ephemeralRun`) creates or
