@@ -68,6 +68,7 @@ var (
 	claudeRepos   []string
 	claudeGoal    string
 	claudeKeep    bool
+	claudeYes     bool
 )
 
 var claudeCmd = &cobra.Command{
@@ -246,12 +247,10 @@ func openSession(ctx context.Context, setTTL bool, alongside func(*boxSSH, taskS
 		if err != nil {
 			return nil, taskSession{}, err
 		}
-		// A new box always gets the project: refuse a copy that's too
-		// big now, not after the box is made.
-		if cloneURL(dir) == "" {
-			if _, _, err := projectCopy(dir); err != nil {
-				return nil, taskSession{}, err
-			}
+		// A new box always gets the project: check its copy now, not
+		// after the box is made.
+		if err := checkCopy(dir); err != nil {
+			return nil, taskSession{}, err
 		}
 		n, err := ephemeralBoxName(ctx, dir)
 		if err != nil {
@@ -267,6 +266,12 @@ func openSession(ctx context.Context, setTTL bool, alongside func(*boxSSH, taskS
 		return nil, taskSession{}, err
 	}
 	t.ephemeral = ephemeral
+	if t.needsCopy && !ephemeral {
+		if err := checkCopy(t.dir); err != nil {
+			t.end()
+			return nil, taskSession{}, err
+		}
+	}
 	if ephemeral {
 		sayNote("Ephemeral: %s is deleted when %s exits or you detach, after its work is fetched here as box/* (--keep keeps it)", t.name, agent.title)
 	}
