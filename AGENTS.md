@@ -182,6 +182,16 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `/root/.boxctl/goals/<id>/`, `latest` symlinked) that records
   `status.json` (running/done/failed, pr_url) -- on the box, because
   boxctl-vms has no per-box metadata API; move it there if one appears.
+  `cmd/claudegoalstatus.go` reads it for `claude ls`, whose second table
+  lists the project's run boxes (`isRunBox`: a generated name with the
+  project's prefix or `workspace`, confirmed by the box's project
+  marker or, for a multi-repo workspace, its clones -- a `boxctl-web-*`
+  box matches `boxctl` by name alone). Nothing on the box
+  can pause it (it has no boxctl token), so `ls` pauses a box whose goal
+  has finished once the server's `last_activity_at` is 10 minutes old,
+  and `logs` pauses it after following it to the end or resuming it to
+  read it. A paused box's status can't be read without resuming it, so
+  `ls` shows the last one it read, kept in `~/.boxctl/claude/goals.json`.
   Goal mode requires `--github store` (forward only lives while attached)
   and checks everything, token included, before creating a box. `--goal`
   without `--repo` takes the cwd's GitHub origin. Unverified against a
