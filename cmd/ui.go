@@ -60,11 +60,12 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 // spinner is an animated "⠋ message" line. On a non-terminal it just
 // prints "message..." once, like the plain output it replaces.
 type spinner struct {
-	mu   sync.Mutex
-	msg  string
-	tty  bool
-	stop chan struct{}
-	done chan struct{}
+	mu     sync.Mutex
+	msg    string
+	detail string // shown instead of msg while set: an upload's progress
+	tty    bool
+	stop   chan struct{}
+	done   chan struct{}
 }
 
 // startSpinner begins animating msg; call finish (or fail) exactly once.
@@ -96,7 +97,11 @@ func startSpinner(msg string) *spinner {
 }
 
 func (s *spinner) draw(frame int) {
-	fmt.Printf("\r\033[K%s %s", cyan(spinnerFrames[frame%len(spinnerFrames)]), s.msg)
+	msg := s.msg
+	if s.detail != "" {
+		msg = s.detail
+	}
+	fmt.Printf("\r\033[K%s %s", cyan(spinnerFrames[frame%len(spinnerFrames)]), msg)
 }
 
 // println prints a line above the spinner without garbling it.
@@ -109,10 +114,11 @@ func (s *spinner) println(line string) {
 	fmt.Println(line)
 }
 
-// setMsg changes the text next to the spinner.
-func (s *spinner) setMsg(msg string) {
+// setDetail shows detail next to the spinner instead of its message,
+// until it's set back to "".
+func (s *spinner) setDetail(detail string) {
 	s.mu.Lock()
-	s.msg = msg
+	s.detail = detail
 	s.mu.Unlock()
 }
 
