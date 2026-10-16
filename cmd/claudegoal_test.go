@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseRepo(t *testing.T) {
@@ -76,7 +78,13 @@ func TestCloneScript(t *testing.T) {
 // behave as given, and returns status.json and the staged env file's fate.
 func goalOutcome(t *testing.T, claude, gh string) (status, log string, envLeft bool) {
 	t.Helper()
-	root := t.TempDir()
+	return goalOutcomeIn(t, t.TempDir(), "", claude, gh)
+}
+
+// goalOutcomeIn is goalOutcome in root, with binDir (if any) first on
+// PATH.
+func goalOutcomeIn(t *testing.T, root, binDir, claude, gh string) (status, log string, envLeft bool) {
+	t.Helper()
 	home, project := filepath.Join(root, "home"), filepath.Join(root, "project")
 	goalDir := filepath.Join(root, "goal")
 	for _, d := range []string{filepath.Join(home, ".local", "bin"), project, goalDir} {
@@ -96,7 +104,11 @@ func goalOutcome(t *testing.T, claude, gh string) (status, log string, envLeft b
 	}
 	g := goalRun{dir: project, branch: "boxctl/x-ab12cd", goalDir: goalDir, envFile: envFile, args: []string{"--model", "opus"}, gh: filepath.Join(root, "gh")}
 	c := exec.Command("sh", "-c", g.runnerScript())
-	c.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
+	path := "/usr/bin:/bin"
+	if binDir != "" {
+		path = binDir + ":" + path
+	}
+	c.Env = []string{"HOME=" + home, "PATH=" + path}
 	if out, err := c.CombinedOutput(); err != nil {
 		t.Logf("runner: %v %s", err, out)
 	}
@@ -226,5 +238,65 @@ func TestIssueGoal(t *testing.T) {
 	// The slug a box and branch get is from "issue N".
 	if got := textSlug("issue 42"); got != "issue-42" {
 		t.Errorf("textSlug(issue 42) = %q", got)
+	}
+}
+
+// The runner reports each status to the control plane through the
+// image's boxctl-status, handing it status.json -- not a copy, so the
+// sender can re-read it (the newest status wins a race).
+func TestGoalRunnerReports(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := filepath.Join(root, "reports")
+	// setsid too: boxes have it, macOS doesn't.
+	write(t, filepath.Join(bin, "setsid"), "#!/bin/sh\nexec \"$@\"\n")
+	write(t, filepath.Join(bin, "boxctl-status"), "#!/bin/sh\necho \"$1 $(cat \"$1\")\" >>"+rec+"\n")
+	for _, f := range []string{"setsid", "boxctl-status"} {
+		if err := os.Chmod(filepath.Join(bin, f), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, _, _ := goalOutcomeIn(t, root, bin, `echo ok`, `echo https://github.com/o/n/pull/7`)
+	if !strings.Contains(status, `"status":"done"`) {
+		t.Fatalf("status = %s", status)
+	}
+	// The reports run in the background; give them a moment.
+	var got string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		b, _ := os.ReadFile(rec)
+		if got = string(b); strings.Count(got, "\n") >= 2 {
+			break
+		}
+	}
+	lines := strings.Split(strings.TrimSpace(got), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("reports: %q, want running then done", got)
+	}
+	for _, l := range lines {
+		if !strings.HasPrefix(l, filepath.Join(root, "goal", "status.json")+" {") {
+			t.Errorf("report %q: want status.json's path, then its content", l)
+		}
+	}
+	if !strings.Contains(lines[len(lines)-1], `"status":"done"`) {
+		t.Errorf("last report %q isn't done", lines[len(lines)-1])
+	}
+}
+
+func TestRunLabels(t *testing.T) {
+	agent = claudeAgent
+	got := runLabels(true, []string{"cdalar/onctl-runners"}, "boxctl/issue-29-0ca8", 29)
+	want := map[string]string{"boxctl.run": "goal", "boxctl.agent": "claude", "boxctl.branch": "boxctl/issue-29-0ca8", "boxctl.repo": "cdalar/onctl-runners", "boxctl.issue": "29"}
+	if !maps.Equal(got, want) {
+		t.Errorf("goal labels = %v, want %v", got, want)
+	}
+	got = runLabels(false, []string{"o/a", "o/b"}, "boxctl/x-1234", 0)
+	if got["boxctl.run"] != "repo" || got["boxctl.repo"] != "o/a,o/b" || got["boxctl.issue"] != "" {
+		t.Errorf("repo labels = %v", got)
+	}
+	if got = runLabels(false, []string{strings.Repeat("o/r", 100)}, "b", 0); got["boxctl.repo"] != "" {
+		t.Error("an over-long repo label was set")
 	}
 }

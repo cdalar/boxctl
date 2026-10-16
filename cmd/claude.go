@@ -683,7 +683,7 @@ func ensureClaudeBox(ctx context.Context, c *client.Client, name string, create 
 	}
 	detail := dim("(" + claudeImage + ", " + claudeSize + ")")
 	sp := startSpinner(fmt.Sprintf("Creating %s %s", bold(name), detail))
-	if _, err := c.Create(ctx, name, "", claudeImage, claudeSize); err != nil {
+	if _, err := c.Create(ctx, name, "", claudeImage, claudeSize, newBoxLabels); err != nil {
 		sp.fail(fmt.Sprintf("%s: %v", name, err))
 		return false, fmt.Errorf("creating %s: %w", name, err)
 	}

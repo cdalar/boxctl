@@ -71,7 +71,7 @@ func runExec(ctx context.Context, command string) (exitCode int, err error) {
 	name := "agent-exec-" + randomHex(8)
 
 	fmt.Fprintf(os.Stderr, "Creating %s...\n", name)
-	if _, err := c.Create(ctx, name, "", execImage, execSize); err != nil {
+	if _, err := c.Create(ctx, name, "", execImage, execSize, nil); err != nil {
 		return 0, fmt.Errorf("creating %s: %w", name, err)
 	}
 	defer func() {

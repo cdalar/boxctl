@@ -188,7 +188,7 @@ func run(name, box, size, image, model, task string, keep bool) error {
 // with -box.
 func newBox(ctx context.Context, bc *client.Client, name, size, image string) error {
 	log.Printf("creating box %s (%s, %s)", name, size, image)
-	if _, err := bc.Create(ctx, name, "", image, size); err != nil {
+	if _, err := bc.Create(ctx, name, "", image, size, nil); err != nil {
 		return fmt.Errorf("creating box: %w", err)
 	}
 	if _, err := bc.WaitReady(ctx, name, 3*time.Minute); err != nil {

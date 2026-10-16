@@ -76,7 +76,7 @@ var createCmd = &cobra.Command{
 			}
 		}
 
-		vm, err := c.Create(cmd.Context(), name, createApplyFile, createImage, createSize)
+		vm, err := c.Create(cmd.Context(), name, createApplyFile, createImage, createSize, nil)
 		stopTail()
 		if err != nil {
 			if sp != nil {
