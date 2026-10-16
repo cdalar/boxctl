@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -520,10 +521,18 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 	if err != nil {
 		return nil, err
 	}
-	needsCopy, err := checkProject(ctx, box, dir)
-	if err != nil {
+	needsCopy, other, err := checkProject(ctx, box, dir)
+	switch {
+	case err != nil:
 		box.close()
 		return nil, err
+	case other != "" && claudeBox != "" && claudeProject == "" && boxOnlyProject(other):
+		// A --repo box: its clone exists only on the box, so there's no
+		// local directory to run from. --box alone means that one.
+		dir = other
+	case other != "":
+		box.close()
+		return nil, fmt.Errorf("%s holds %s, not %s -- run boxctl %s from there, or pick another box with --box", box.name, other, dir, agent.name)
 	}
 	return &claudeTarget{dir: dir, name: name, box: box, needsCopy: needsCopy}, nil
 }
@@ -568,24 +577,29 @@ func connectClaudeBox(ctx context.Context, name string, create, setTTL bool) (*b
 	return box, nil
 }
 
-// checkProject reports whether dir still has to be copied to the box,
-// refusing a box that holds a different project. A box from before the
-// marker existed is taken to hold whichever project it has at dir.
-func checkProject(ctx context.Context, box *boxSSH, dir string) (needsCopy bool, err error) {
+// checkProject reports whether dir still has to be copied to the box, or
+// the other project the box holds instead. A box from before the marker
+// existed is taken to hold whichever project it has at dir.
+func checkProject(ctx context.Context, box *boxSSH, dir string) (needsCopy bool, other string, err error) {
 	out, err := box.output(ctx, projectCheckScript(dir))
 	switch status := strings.TrimSpace(string(out)); {
 	case err != nil:
-		return false, fmt.Errorf("checking %s's project: %w", box.name, err)
+		return false, "", fmt.Errorf("checking %s's project: %w", box.name, err)
 	case status == "copy":
-		return true, nil
+		return true, "", nil
 	case status == "ok":
-		return false, nil
+		return false, "", nil
 	case strings.HasPrefix(status, "other "):
-		other := strings.TrimPrefix(status, "other ")
-		return false, fmt.Errorf("%s holds %s, not %s -- run boxctl %s from there, or pick another box with --box", box.name, other, dir, agent.name)
+		return false, strings.TrimPrefix(status, "other "), nil
 	default:
-		return false, fmt.Errorf("checking %s's project: unexpected %q", box.name, status)
+		return false, "", fmt.Errorf("checking %s's project: unexpected %q", box.name, status)
 	}
+}
+
+// boxOnlyProject reports whether dir is where --repo clones on a box
+// (repoDirs): /root/<name> or the workspace, a path no project here has.
+func boxOnlyProject(dir string) bool {
+	return path.Dir(dir) == "/root" || dir == boxWorkspace
 }
 
 func projectCheckScript(dir string) string { return projectCheckScriptAt(projectMarker, dir) }
