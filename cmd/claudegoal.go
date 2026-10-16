@@ -346,7 +346,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 		if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
 			return fmt.Errorf("passing Claude its credentials: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "On branch %s. Come back to Claude with: boxctl ssh %s, then tmux attach -t %s\n", branch, name, sess.tmux)
+		fmt.Fprintf(os.Stderr, "On branch %s. Come back to Claude with: boxctl claude --box %s\n", branch, name)
 		return startSession(ctx, &claudeTarget{dir: workDir, name: name, box: box}, sess, false, args)
 	}
 
