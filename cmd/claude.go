@@ -68,7 +68,7 @@ var (
 	claudeRepos   []string
 	claudeGoal    string
 	claudeIssue   int
-	claudeKeep   bool
+	claudeKeep    bool
 )
 
 var claudeCmd = &cobra.Command{
