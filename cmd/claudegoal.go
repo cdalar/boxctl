@@ -20,6 +20,11 @@ import (
 // (<goalDir>/status.json: running, done or failed, and the PR's URL) beside
 // the log. Claude opens the pull request with gh.
 //
+// --repo can be given more than once (or comma-separated). The clones then
+// sit side by side under boxWorkspace, Claude starts in that parent
+// directory, every repository gets the same new branch, and a goal ends in
+// one pull request per repository Claude changed.
+//
 // That status is on the box, read by `boxctl claude logs`: boxctl-vms has no
 // per-box metadata API to put it in yet.
 //
@@ -28,6 +33,10 @@ import (
 // mode needs --github store.
 
 const boxGoalsDir = "/root/.boxctl/goals"
+
+// boxWorkspace is the parent directory of the clones when there is more than
+// one repository; a single one is cloned straight to /root/<name>.
+const boxWorkspace = "/root/workspace"
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
@@ -41,6 +50,46 @@ func parseRepo(s string) (owner, name string, err error) {
 	return owner, name, nil
 }
 
+// parseRepos parses every --repo value, dropping repeats. Two repositories
+// with the same name (a/x, b/x) would be cloned to the same directory, so
+// that is refused up front rather than halfway through cloning.
+func parseRepos(specs []string) ([]string, error) {
+	var repos []string
+	owners := map[string]string{} // name -> owner
+	for _, spec := range specs {
+		owner, name, err := parseRepo(spec)
+		if err != nil {
+			return nil, err
+		}
+		if prev, ok := owners[name]; ok {
+			if prev == owner {
+				continue
+			}
+			return nil, fmt.Errorf("--repo: %s/%s and %s/%s would both be cloned to a directory called %s", prev, name, owner, name, name)
+		}
+		owners[name] = owner
+		repos = append(repos, owner+"/"+name)
+	}
+	return repos, nil
+}
+
+// repoDirs is where each repository is cloned on the box, and the directory
+// Claude starts in: the one clone itself, or the workspace holding them all.
+func repoDirs(repos []string) (dirs []string, workDir string) {
+	for _, r := range repos {
+		_, name, _ := strings.Cut(r, "/")
+		if len(repos) == 1 {
+			dirs = append(dirs, path.Join("/root", name))
+		} else {
+			dirs = append(dirs, path.Join(boxWorkspace, name))
+		}
+	}
+	if len(repos) == 1 {
+		return dirs, dirs[0]
+	}
+	return dirs, boxWorkspace
+}
+
 var branchUnsafe = regexp.MustCompile(`[^a-z0-9]+`)
 
 // checkRepoFlags checks what --repo/--goal can't be combined with, before
@@ -51,22 +100,38 @@ func checkRepoFlags(goal, github string, conflicts []string) error {
 	}
 	if goal != "" && github != githubStore {
 		return fmt.Errorf(`--goal needs --github store, not %s: the run goes on after you close this terminal, and %s only works while you're attached.
-Give the box a token it keeps: set BOXCTL_GITHUB_TOKEN to a fine-grained token for just this repository (Contents and Pull requests read/write, with an expiry; https://github.com/settings/personal-access-tokens/new), or run from a terminal and paste it when asked, then add --github store`, github, github)
+Give the box a token it keeps: set BOXCTL_GITHUB_TOKEN to a fine-grained token for just the repository (or repositories) involved (Contents and Pull requests read/write, with an expiry; https://github.com/settings/personal-access-tokens/new), or run from a terminal and paste it when asked, then add --github store`, github, github)
 	}
 	return nil
 }
 
-// goalPrompt is what Claude is told: the goal, then how the run ends.
-func goalPrompt(goal, repo, branch string) string {
+// goalPrompt is what Claude is told: the goal, then how the run ends. dirs
+// are the clones of repos (parallel slices); with more than one, Claude is in
+// the directory above them.
+func goalPrompt(goal string, repos, dirs []string, branch string) string {
+	if len(repos) == 1 {
+		return goal + `
+
+---
+You're running unattended on a box, in a clone of ` + repos[0] + ` on the new branch ` + branch + `; nobody can answer questions, so make reasonable decisions and say what you assumed. When the goal is done: commit your work, push the branch (git push -u origin ` + branch + `), and open a pull request with gh pr create. Its body must contain the goal above, word for word, under "## Goal", and a summary of what you changed and anything left undone under "## Summary". If you can't get anywhere, don't open a pull request: say why in your final answer.`
+	}
+	var list []string
+	for i, r := range repos {
+		list = append(list, "- "+r+", in "+dirs[i])
+	}
 	return goal + `
 
 ---
-You're running unattended on a box, in a clone of ` + repo + ` on the new branch ` + branch + `; nobody can answer questions, so make reasonable decisions and say what you assumed. When the goal is done: commit your work, push the branch (git push -u origin ` + branch + `), and open a pull request with gh pr create. Its body must contain the goal above, word for word, under "## Goal", and a summary of what you changed and anything left undone under "## Summary". If you can't get anywhere, don't open a pull request: say why in your final answer.`
+You're running unattended on a box, in a directory that holds a clone of each of these repositories, every one on the new branch ` + branch + `:
+` + strings.Join(list, "\n") + `
+
+Nobody can answer questions, so make reasonable decisions and say what you assumed. Change only the repositories the goal needs. When the goal is done, for each repository you changed: commit your work, push the branch (git -C <its directory> push -u origin ` + branch + `), and open a pull request there with gh pr create, run inside that repository's directory. Each pull request's body must contain the goal above, word for word, under "## Goal", and under "## Summary" what you changed in that repository and anything left undone; when the change spans repositories, also link the other pull requests there. Leave a repository you didn't change alone: no commit, no pull request. If you can't get anywhere, don't open any pull request: say why in your final answer.`
 }
 
 // goalRun is one unattended run.
 type goalRun struct {
 	dir, branch string
+	repoDirs    []string // the clones to look for pull requests in; dir itself if empty
 	goalDir     string   // where its prompt, log and status live
 	envFile     string   // secrets to source and delete first
 	args        []string // extra arguments for claude
@@ -74,12 +139,21 @@ type goalRun struct {
 }
 
 // runnerScript is the shell script tmux runs: pick up the credentials, run
-// claude -p to the end, then find the pull request on the branch and write
-// down how it went.
+// claude -p to the end, then find the pull request on the branch in each
+// repository and write down how it went. status.json's pr_url is the first
+// pull request, pr_urls all of them.
 func (g goalRun) runnerScript() string {
 	gh := `gh=/usr/bin/gh; [ -x "$gh" ] || gh=gh`
 	if g.gh != "" {
 		gh = "gh=" + shellQuote(g.gh)
+	}
+	repoDirs := g.repoDirs
+	if len(repoDirs) == 0 {
+		repoDirs = []string{g.dir}
+	}
+	var quotedDirs []string
+	for _, d := range repoDirs {
+		quotedDirs = append(quotedDirs, shellQuote(d))
 	}
 	var extra []string
 	for _, a := range g.args {
@@ -93,17 +167,21 @@ PATH="$HOME/.local/bin:$PATH"; export PATH
 IS_SANDBOX=1; export IS_SANDBOX
 d=` + shellQuote(g.goalDir) + `
 ` + gh + `
-status() { # status pr_url error
-  printf '{"status":"%s","branch":"%s","pr_url":"%s","error":"%s","updated":"%s"}\n' "$1" ` + shellQuote(g.branch) + ` "$2" "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$d/status.json.tmp" && mv "$d/status.json.tmp" "$d/status.json"
+first=""; urls=""
+status() { # status error
+  printf '{"status":"%s","branch":"%s","pr_url":"%s","pr_urls":[%s],"error":"%s","updated":"%s"}\n' "$1" ` + shellQuote(g.branch) + ` "$first" "$urls" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$d/status.json.tmp" && mv "$d/status.json.tmp" "$d/status.json"
 }
-cd ` + shellQuote(g.dir) + ` || { status failed "" "no project directory"; exit 1; }
-status running "" ""
+cd ` + shellQuote(g.dir) + ` || { status failed "no project directory"; exit 1; }
+status running ""
 claude -p "$(cat "$d/prompt.txt")" --dangerously-skip-permissions --output-format stream-json --verbose ` + strings.Join(extra, " ") + ` >>"$d/claude.log" 2>&1
 rc=$?
-pr=$("$gh" pr list --head ` + shellQuote(g.branch) + ` --state all --json url --jq '.[0].url' 2>/dev/null)
-if [ "$rc" -ne 0 ]; then status failed "$pr" "claude exited with status $rc"
-elif [ -z "$pr" ]; then status failed "" "claude finished without opening a pull request"
-else status done "$pr" ""
+for r in ` + strings.Join(quotedDirs, " ") + `; do
+  u=$(cd "$r" 2>/dev/null && "$gh" pr list --head ` + shellQuote(g.branch) + ` --state all --json url --jq '.[0].url' 2>/dev/null)
+  if [ -n "$u" ]; then [ -n "$first" ] || first=$u; urls="$urls${urls:+,}\"$u\""; fi
+done
+if [ "$rc" -ne 0 ]; then status failed "claude exited with status $rc"
+elif [ -z "$first" ]; then status failed "claude finished without opening a pull request"
+else status done ""
 fi
 `
 }
@@ -118,34 +196,30 @@ git clone -q --single-branch ` + shellQuote(url) + ` ` + shellQuote(dir) + `
 git -C ` + shellQuote(dir) + ` checkout -q -b ` + shellQuote(branch)
 }
 
-// repoToUse is --repo, or this directory's GitHub repository.
-func repoToUse() (string, error) {
-	if claudeRepo != "" {
-		owner, name, err := parseRepo(claudeRepo)
-		if err != nil {
-			return "", err
-		}
-		return owner + "/" + name, nil
+// reposToUse is the --repo values, or this directory's GitHub repository.
+func reposToUse() ([]string, error) {
+	if len(claudeRepos) > 0 {
+		return parseRepos(claudeRepos)
 	}
 	dir, err := projectDir()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if repo := githubRepo(dir); repo != "" {
-		return repo, nil
+		return []string{repo}, nil
 	}
-	return "", fmt.Errorf("--goal needs a repository: pass --repo owner/name, or run it in a git repository whose origin is on GitHub (%s isn't)", dir)
+	return nil, fmt.Errorf("--goal needs a repository: pass --repo owner/name, or run it in a git repository whose origin is on GitHub (%s isn't)", dir)
 }
 
 func runRepo(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
-	if claudeRepo == "" && claudeGoal == "" {
+	if len(claudeRepos) == 0 && claudeGoal == "" {
 		return errors.New("nothing to do")
 	}
 	var conflicts []string
 	for flag, set := range map[string]bool{
 		"--task": claudeTask != "", "--own-box": claudeOwnBox, "--handoff": claudeHandoff != "",
-		"--prompt": claudePrompt != "", "--project": claudeProject != "" && claudeRepo != "",
+		"--prompt": claudePrompt != "", "--project": claudeProject != "" && len(claudeRepos) > 0,
 	} {
 		if set {
 			conflicts = append(conflicts, flag)
@@ -164,11 +238,16 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	default:
 		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
 	}
-	repo, err := repoToUse()
+	repos, err := reposToUse()
 	if err != nil {
 		return err
 	}
-	_, repoName, _ := strings.Cut(repo, "/")
+	dirs, workDir := repoDirs(repos)
+	// A box with several repositories is named for the workspace, not for one of them.
+	namePrefix := "workspace"
+	if len(repos) == 1 {
+		_, namePrefix, _ = strings.Cut(repos[0], "/")
+	}
 
 	// Everything that can fail fails before a box is made.
 	env, apiKey, err := claudeEnv(claudeAuth)
@@ -180,7 +259,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	}
 	// A goal's words name the box and branch; without one, an
 	// adjective-noun pair does. --box names the box, not the branch.
-	gen, err := newBoxName(ctx, repoName, claudeGoal)
+	gen, err := newBoxName(ctx, namePrefix, claudeGoal)
 	if err != nil {
 		return err
 	}
@@ -190,12 +269,11 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	}
 	token := ""
 	if claudeGitHub == githubStore {
-		if token, err = readGitHubToken(name, repo); err != nil {
+		if token, err = readGitHubToken(name, strings.Join(repos, ", ")); err != nil {
 			return err
 		}
 	}
 	branch := gen.branch()
-	dir := path.Join("/root", repoName)
 
 	box, err := connectClaudeBox(ctx, name, true, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {
@@ -211,17 +289,19 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err := copyGitIdentity(ctx, box, ""); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't set your git identity on %s: %v\n", name, err)
 	}
-	fmt.Fprintf(os.Stderr, "Cloning %s on %s...\n", repo, name)
-	clone := cloneScript("https://github.com/"+repo+".git", dir, branch)
-	if claudeGitHub == githubForward {
-		err = box.runForwarded(ctx, clone, boxGitHubSocket)
-	} else {
-		err = box.run(ctx, clone, nil)
+	for i, repo := range repos {
+		fmt.Fprintf(os.Stderr, "Cloning %s on %s...\n", repo, name)
+		clone := cloneScript("https://github.com/"+repo+".git", dirs[i], branch)
+		if claudeGitHub == githubForward {
+			err = box.runForwarded(ctx, clone, boxGitHubSocket)
+		} else {
+			err = box.run(ctx, clone, nil)
+		}
+		if err != nil {
+			return fmt.Errorf("cloning %s on %s: %w", repo, name, err)
+		}
 	}
-	if err != nil {
-		return fmt.Errorf("cloning %s on %s: %w", repo, name, err)
-	}
-	if err := markProject(ctx, box, dir); err != nil {
+	if err := markProject(ctx, box, workDir); err != nil {
 		return err
 	}
 	if err := copyClaudeConfig(ctx, box); err != nil {
@@ -230,25 +310,25 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err := box.run(ctx, agent.setupScript(), nil); err != nil {
 		return fmt.Errorf("installing Claude Code on %s: %w", name, err)
 	}
-	if err := box.run(ctx, claudeStateScript([]string{dir}, localClaudeTheme(), apiKey), nil); err != nil {
+	if err := box.run(ctx, claudeStateScript(append([]string{workDir}, dirs...), localClaudeTheme(), apiKey), nil); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't skip Claude's first-run setup on %s: %v\n", name, err)
 	}
 
-	sess := taskSession{dir: dir, tmux: agent.name, ghSocket: boxGitHubSocket}
+	sess := taskSession{dir: workDir, tmux: agent.name, ghSocket: boxGitHubSocket}
 	if claudeGoal == "" {
 		if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
 			return fmt.Errorf("passing Claude its credentials: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "On branch %s. Come back to Claude with: boxctl ssh %s, then tmux attach -t %s\n", branch, name, sess.tmux)
-		return startSession(ctx, &claudeTarget{dir: dir, name: name, box: box}, sess, false, args)
+		return startSession(ctx, &claudeTarget{dir: workDir, name: name, box: box}, sess, false, args)
 	}
 
 	sess.tmux = agent.name + "-goal-" + id
-	g := goalRun{dir: dir, branch: branch, goalDir: boxGoalsDir + "/" + id, envFile: sess.envFile(), args: args}
+	g := goalRun{dir: workDir, repoDirs: dirs, branch: branch, goalDir: boxGoalsDir + "/" + id, envFile: sess.envFile(), args: args}
 	if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
 		return fmt.Errorf("passing Claude its credentials: %w", err)
 	}
-	if err := box.run(ctx, "umask 077 && mkdir -p "+shellQuote(g.goalDir)+" && cat >"+shellQuote(g.goalDir+"/prompt.txt"), strings.NewReader(goalPrompt(claudeGoal, repo, branch))); err != nil {
+	if err := box.run(ctx, "umask 077 && mkdir -p "+shellQuote(g.goalDir)+" && cat >"+shellQuote(g.goalDir+"/prompt.txt"), strings.NewReader(goalPrompt(claudeGoal, repos, dirs, branch))); err != nil {
 		return fmt.Errorf("writing the goal on %s: %w", name, err)
 	}
 	if err := box.run(ctx, "cat >"+shellQuote(g.goalDir+"/run.sh")+" && ln -sfn "+shellQuote(g.goalDir)+" "+boxGoalsDir+"/latest", strings.NewReader(g.runnerScript())); err != nil {
@@ -256,6 +336,9 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	}
 	if err := box.run(ctx, sess.tmuxCommand("sh "+shellQuote(g.goalDir+"/run.sh"), true), nil); err != nil {
 		return fmt.Errorf("starting Claude on %s: %w", name, err)
+	}
+	if len(repos) > 1 {
+		fmt.Printf("Repos:  %s\n", strings.Join(repos, ", "))
 	}
 	fmt.Printf("Box:    %s\nBranch: %s\nLogs:   boxctl claude logs %s [-f]\n", name, branch, name)
 	return nil

@@ -65,7 +65,7 @@ var (
 	claudeTask    string
 	claudeOwnBox  bool
 	claudeAuth    string
-	claudeRepo    string
+	claudeRepos   []string
 	claudeGoal    string
 	claudeKeep    bool
 )
@@ -97,7 +97,7 @@ box. --box, --detach and --task keep their box too.
   boxctl claude --prompt "fix the flaky auth test"
   boxctl claude --detach --prompt "..."   # start it, don't attach (kept)
   boxctl claude -- --model opus           # arguments for claude itself
-  boxctl claude --repo owner/name         # a fresh box, the repo cloned, on a new branch
+  boxctl claude --repo owner/name         # a fresh box, the repo cloned, on a new branch (-R for short)
   boxctl claude --goal "bump Go and fix what breaks"   # unattended, ends in a PR
 
 The first time, log Claude in on the box with /login: it prints a URL to
@@ -112,7 +112,8 @@ you paste on the box -- make it a fine-grained one for this repository.
 --github off gives it nothing. Your git user.name and user.email are set
 on the box either way.
 
---repo owner/name needs no local copy: it creates a box, clones the
+--repo owner/name needs no local copy (repeat it for several repositories,
+cloned side by side under /root/workspace, a pull request in each): it creates a box, clones the
 repository's default branch and starts Claude on a new branch,
 boxctl/<slug>-<id>. With --goal, Claude instead runs unattended
 (claude -p) until the goal is done and opens a pull request; the command
@@ -127,7 +128,7 @@ boxctl claude logs <box> shows how it's going.`,
 func init() {
 	claudeAgent.addFlags(claudeCmd)
 	claudeCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Claude Code session (its ID) on the box")
-	claudeCmd.Flags().StringVar(&claudeRepo, "repo", "", "GitHub repository (owner/name) to clone on a new box, on a new boxctl/... branch (with --goal: default is this directory's origin)")
+	claudeCmd.Flags().StringSliceVarP(&claudeRepos, "repo", "R", nil, "GitHub repository (owner/name) to clone on a new box, on a new boxctl/... branch; repeat or comma-separate for several, cloned side by side (with --goal: default is this directory's origin)")
 	claudeCmd.Flags().StringVar(&claudeGoal, "goal", "", "a goal for Claude to carry out unattended, ending in a pull request (needs --github store)")
 	claudeCmd.Flags().StringVar(&claudeAuth, "claude-auth", claudeAuthAuto, "how Claude on the box logs in: auto (the token boxctl claude login saved, else /login), token, login or api-key")
 	_ = claudeCmd.RegisterFlagCompletionFunc("claude-auth", cobra.FixedCompletions([]string{claudeAuthAuto, claudeAuthToken, claudeAuthLogin, claudeAuthAPIKey}, cobra.ShellCompDirectiveNoFileComp))
@@ -135,7 +136,7 @@ func init() {
 }
 
 func runClaude(cmd *cobra.Command, args []string) error {
-	if claudeRepo != "" || claudeGoal != "" {
+	if len(claudeRepos) > 0 || claudeGoal != "" {
 		return runRepo(cmd, args)
 	}
 	ctx := cmd.Context()
