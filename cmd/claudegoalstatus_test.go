@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cdalar/boxctl/internal/client"
 )
 
 func TestIsRunBox(t *testing.T) {
@@ -126,6 +128,26 @@ func TestIsGoalBox(t *testing.T) {
 	} {
 		if got := isGoalBox(name); got != want {
 			t.Errorf("isGoalBox(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestLabeledRun(t *testing.T) {
+	vm := func(labels map[string]string) client.VM { return client.VM{Labels: labels} }
+	for _, c := range []struct {
+		vm   client.VM
+		repo string
+		want bool
+	}{
+		{vm(map[string]string{"boxctl.run": "goal", "boxctl.repo": "o/elsewhere"}), "cdalar/boxctl", true}, // every goal, from anywhere
+		{vm(map[string]string{"boxctl.run": "goal"}), "", true},
+		{vm(map[string]string{"boxctl.run": "repo", "boxctl.repo": "o/a,cdalar/boxctl"}), "cdalar/boxctl", true},
+		{vm(map[string]string{"boxctl.run": "repo", "boxctl.repo": "o/a"}), "cdalar/boxctl", false},
+		{vm(map[string]string{"boxctl.run": "repo", "boxctl.repo": "o/a"}), "", false},
+		{vm(nil), "cdalar/boxctl", false},
+	} {
+		if got := labeledRun(c.vm, c.repo); got != c.want {
+			t.Errorf("labeledRun(%v, %q) = %v, want %v", c.vm.Labels, c.repo, got, c.want)
 		}
 	}
 }

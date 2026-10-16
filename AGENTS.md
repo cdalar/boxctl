@@ -195,12 +195,21 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   box matches `boxctl` by name alone), plus every goal run whatever
   the cwd: a `--goal`/`--issue` box is `goal-<repo>-<slug>-<id>`
   (`goalBoxPrefix`, `isGoalBox`), since a goal needs no local checkout
-  to start from. Nothing on the box
+  to start from. A `--repo`/`--goal` box is also labeled at create
+  (`runLabels`: `boxctl.run`, `.repo`, `.branch`, `.issue`, `.agent` --
+  boxctl-vms's labels), and `labeledRun` lists it by those wherever its
+  name came from. The runner's `status()` also hands `status.json` to
+  the image's `boxctl-status`, which sends it over the box's vsock device
+  to the control plane (boxctl-vms's `docs/plans/run-status.md`); a row
+  with that `run_status` is read from it, running or paused, with no ssh,
+  and a box without it (no vsock device, an older image or server) falls
+  back to what follows. Nothing on the box
   can pause it (it has no boxctl token), so `ls` pauses a box whose goal
   has finished once the server's `last_activity_at` is 10 minutes old,
   and `logs` pauses it after following it to the end or resuming it to
   read it. A paused box's status can't be read without resuming it, so
   `ls` shows the last one it read, kept in `~/.boxctl/claude/goals.json`.
+  Only an `https://github.com/` `pr_url` is shown: the box wrote it.
   `--issue N` (`issueGoal`) is a goal that only names the repository's
   issue number: Claude reads it itself with `gh issue view` on the box
   (so it needs the stored token), and the PR body must say `Closes #N`.

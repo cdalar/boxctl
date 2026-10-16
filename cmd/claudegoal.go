@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -181,6 +182,12 @@ d=` + shellQuote(g.goalDir) + `
 first=""; urls=""
 status() { # status error
   printf '{"status":"%s","branch":"%s","pr_url":"%s","pr_urls":[%s],"error":"%s","updated":"%s"}\n' "$1" ` + shellQuote(g.branch) + ` "$first" "$urls" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$d/status.json.tmp" && mv "$d/status.json.tmp" "$d/status.json"
+  # And to the control plane, over the box's vsock device, if the image
+  # can (boxctl-vms's images/claude-agent/boxctl-status): best effort, in
+  # the background, outliving this script (setsid: tmux hangs up on its
+  # session when the run ends). It re-reads the file under a lock, so the
+  # last report through is the newest.
+  if command -v boxctl-status >/dev/null; then setsid boxctl-status "$d/status.json" >>"$d/status-report.log" 2>&1 </dev/null & fi
 }
 cd ` + shellQuote(g.dir) + ` || { status failed "no project directory"; exit 1; }
 status running ""
@@ -220,6 +227,31 @@ func reposToUse() ([]string, error) {
 		return []string{repo}, nil
 	}
 	return nil, fmt.Errorf("--goal/--issue needs a repository: pass --repo owner/name, or run it in a git repository whose origin is on GitHub (%s isn't)", dir)
+}
+
+// newBoxLabels, when set, are the labels ensureClaudeBox gives a box it
+// creates: runRepo's, for its run box.
+var newBoxLabels map[string]string
+
+// runLabels mark a --repo or --goal run's box for the server
+// (boxctl-vms's labels), so claude ls finds it -- and the repository,
+// branch and issue it's for -- without guessing from its name or
+// reaching into it.
+func runLabels(isGoal bool, repos []string, branch string, issue int) map[string]string {
+	run := "repo"
+	if isGoal {
+		run = "goal"
+	}
+	labels := map[string]string{"boxctl.run": run, "boxctl.agent": agent.name, "boxctl.branch": branch}
+	// A label value is at most 255 characters; a workspace of that many
+	// repositories goes without.
+	if r := strings.Join(repos, ","); len(r) <= 255 {
+		labels["boxctl.repo"] = r
+	}
+	if issue > 0 {
+		labels["boxctl.issue"] = strconv.Itoa(issue)
+	}
+	return labels
 }
 
 func runRepo(cmd *cobra.Command, args []string) error {
@@ -301,6 +333,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 		}
 	}
 	branch := gen.branch()
+	newBoxLabels = runLabels(goal != "", repos, branch, claudeIssue)
 
 	box, err := connectClaudeBox(ctx, name, true, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {

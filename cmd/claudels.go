@@ -63,7 +63,8 @@ func claudeList(ctx context.Context) error {
 	// Run boxes hold the project at its own path, or a --repo/--goal clone
 	// in /root/<repository> -- or, among others, in the workspace.
 	prefixes, projects := []string{filepath.Base(dir)}, map[string]bool{dir: true}
-	if repo := githubRepo(dir); repo != "" {
+	repo := githubRepo(dir)
+	if repo != "" {
 		name := path.Base(repo)
 		prefixes = append(prefixes, name, "workspace")
 		projects[path.Join("/root", name)] = true
@@ -84,7 +85,7 @@ func claudeList(ctx context.Context) error {
 		case strings.HasPrefix(vm.Name, main+"-"):
 			_, _ = fmt.Fprintf(tw, "%s\t-\t-\t-\t%s (own box, %s)\n", strings.TrimPrefix(vm.Name, main+"-"), vm.Name, vm.State)
 			rows++
-		case isGoalBox(vm.Name), isRunBox(vm.Name, prefixes):
+		case labeledRun(vm, repo), isGoalBox(vm.Name), isRunBox(vm.Name, prefixes):
 			runs = append(runs, vm)
 		}
 	}
@@ -124,6 +125,12 @@ func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]
 	errs := make([]error, len(runs))
 	var fns []func()
 	for i, vm := range runs {
+		// What the box last reported itself (boxctl-vms's run status):
+		// nothing to reach into it for, running or paused.
+		if len(vm.RunStatus) > 0 {
+			read[i], errs[i] = parseGoalStatus(vm.RunStatus)
+			continue
+		}
 		if vm.State != "running" {
 			continue
 		}
@@ -156,7 +163,8 @@ func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]
 		if s, ok := cached[vm.Name]; ok && vm.State != "running" {
 			project[i] = s.Projects
 		}
-		if !isGoalBox(vm.Name) && !ofProject(project[i], projects) {
+		labeled := vm.Labels["boxctl.run"] != ""
+		if !labeled && !isGoalBox(vm.Name) && !ofProject(project[i], projects) {
 			continue
 		}
 		rows++
@@ -166,12 +174,15 @@ func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]
 		case errs[i] != nil:
 			goal = "?"
 			fmt.Fprintf(os.Stderr, "warning: couldn't read %s's goal: %v\n", vm.Name, errs[i])
-		case st == nil && vm.State == "running":
+		case st == nil && vm.State == "running" && len(vm.RunStatus) == 0:
 			// No goal; remembered for its project.
 			fresh[vm.Name] = goalStatus{Projects: project[i]}
 		case st != nil:
 			st.Projects = project[i]
 			fresh[vm.Name] = *st
+			if vm.State != "running" {
+				break
+			}
 			if paused, err := pauseFinishedGoal(ctx, c, &vm, st, false); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 			} else if paused {
@@ -192,7 +203,8 @@ func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]
 			if st.Branch != "" {
 				branch = st.Branch
 			}
-			if st.PRURL != "" {
+			// The box wrote it; only a GitHub URL is shown as one.
+			if strings.HasPrefix(st.PRURL, "https://github.com/") {
 				pr = st.PRURL
 			}
 			if n := len(st.PRURLs); n > 1 {
@@ -255,6 +267,26 @@ func listBoxSessions(ctx context.Context, tw *tabwriter.Writer, dir string) (int
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", task, branch, state, active, t.name)
 	}
 	return len(worktrees), nil
+}
+
+// labeledRun reports whether vm is a run box claude ls lists by its
+// labels (runLabels): every goal run wherever it was started, and a
+// --repo run of repo, this directory's GitHub repository.
+func labeledRun(vm client.VM, repo string) bool {
+	switch vm.Labels["boxctl.run"] {
+	case "goal":
+		return true
+	case "repo":
+		if repo == "" {
+			return false
+		}
+		for _, r := range strings.Split(vm.Labels["boxctl.repo"], ",") {
+			if r == repo {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ofProject reports whether a run box with dirs is the project's, whose

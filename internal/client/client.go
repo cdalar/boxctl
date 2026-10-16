@@ -75,6 +75,15 @@ type VM struct {
 	// (a terminal, exec, port-forward -- not a list), as its idle reaper
 	// sees it; nil when the server doesn't track it.
 	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
+	// Labels are the box's own key/value tags, set at create. Absent from
+	// a server without labels.
+	Labels map[string]string `json:"labels,omitempty"`
+	// RunStatus is the latest status the box itself reported over vsock
+	// (boxctl-vms's docs/plans/run-status.md) -- for a `claude --goal`
+	// box, its status.json -- and RunStatusAt when the host got it. Both
+	// absent for a box that never reported, or from an older server.
+	RunStatus   json.RawMessage `json:"run_status,omitempty"`
+	RunStatusAt *time.Time      `json:"run_status_at,omitempty"`
 }
 
 // Ingress is one port of a box exposed at a public URL, as boxctl-vms's
@@ -239,13 +248,18 @@ func (c *Client) ListSizes(ctx context.Context) ([]Size, error) {
 // this token's owner prefix and returns the box with it already
 // stripped back off, so the caller never has to think about it. An
 // empty size leaves the choice to the server's default.
-func (c *Client) Create(ctx context.Context, name, template, image, size string) (*VM, error) {
-	body := map[string]string{"name": name, "image": image}
+// Create makes a box. labels may be nil; a server without labels
+// ignores them.
+func (c *Client) Create(ctx context.Context, name, template, image, size string, labels map[string]string) (*VM, error) {
+	body := map[string]any{"name": name, "image": image}
 	if template != "" {
 		body["template"] = template
 	}
 	if size != "" {
 		body["size"] = size
+	}
+	if len(labels) > 0 {
+		body["labels"] = labels
 	}
 	// The server answers only once `onctl create` finishes, including any
 	// template (a Rancher install runs for minutes), under its own 5 minute
