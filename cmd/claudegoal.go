@@ -184,9 +184,8 @@ status() { # status error
   printf '{"status":"%s","branch":"%s","pr_url":"%s","pr_urls":[%s],"error":"%s","updated":"%s"}\n' "$1" ` + shellQuote(g.branch) + ` "$first" "$urls" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$d/status.json.tmp" && mv "$d/status.json.tmp" "$d/status.json"
   # And to the control plane, over the box's vsock device, if the image
   # can (boxctl-vms's images/claude-agent/boxctl-status): best effort, in
-  # the background, outliving this script (setsid: tmux hangs up on its
-  # session when the run ends). It re-reads the file under a lock, so the
-  # last report through is the newest.
+  # the background, waited for at the end. It re-reads the file under a
+  # lock, so the last report through is the newest.
   if command -v boxctl-status >/dev/null; then setsid boxctl-status "$d/status.json" >>"$d/status-report.log" 2>&1 </dev/null & fi
 }
 cd ` + shellQuote(g.dir) + ` || { status failed "no project directory"; exit 1; }
@@ -201,6 +200,11 @@ if [ "$rc" -ne 0 ]; then status failed "claude exited with status $rc"
 elif [ -z "$first" ]; then status failed "claude finished without opening a pull request"
 else status done ""
 fi
+# Let the reports finish before the session ends: tmux hangs up on the
+# session's process group when this exits, which can catch the last
+# boxctl-status before setsid has moved it out -- the final report was
+# lost that way. Seconds usually; the sender gives up after two minutes.
+wait
 `
 }
 

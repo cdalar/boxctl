@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestParseRepo(t *testing.T) {
@@ -253,7 +252,8 @@ func TestGoalRunnerReports(t *testing.T) {
 	rec := filepath.Join(root, "reports")
 	// setsid too: boxes have it, macOS doesn't.
 	write(t, filepath.Join(bin, "setsid"), "#!/bin/sh\nexec \"$@\"\n")
-	write(t, filepath.Join(bin, "boxctl-status"), "#!/bin/sh\necho \"$1 $(cat \"$1\")\" >>"+rec+"\n")
+	// A slow sender: the runner must still wait for it.
+	write(t, filepath.Join(bin, "boxctl-status"), "#!/bin/sh\nsleep 0.3\necho \"$1 $(cat \"$1\")\" >>"+rec+"\n")
 	for _, f := range []string{"setsid", "boxctl-status"} {
 		if err := os.Chmod(filepath.Join(bin, f), 0o755); err != nil {
 			t.Fatal(err)
@@ -263,14 +263,10 @@ func TestGoalRunnerReports(t *testing.T) {
 	if !strings.Contains(status, `"status":"done"`) {
 		t.Fatalf("status = %s", status)
 	}
-	// The reports run in the background; give them a moment.
-	var got string
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		b, _ := os.ReadFile(rec)
-		if got = string(b); strings.Count(got, "\n") >= 2 {
-			break
-		}
-	}
+	// The runner waits for its reports, so both are in by the time it
+	// returns: a run that ends must not lose its last one.
+	b, _ := os.ReadFile(rec)
+	got := string(b)
 	lines := strings.Split(strings.TrimSpace(got), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("reports: %q, want running then done", got)
