@@ -69,7 +69,7 @@ var (
 	claudeGoal    string
 	claudeIssue   int
 	claudeKeep    bool
-	claudeYes     bool
+	claudeForce   bool
 )
 
 var claudeCmd = &cobra.Command{
