@@ -67,7 +67,8 @@ var (
 	claudeAuth    string
 	claudeRepos   []string
 	claudeGoal    string
-	claudeKeep    bool
+	claudeIssue   int
+	claudeKeep   bool
 )
 
 var claudeCmd = &cobra.Command{
@@ -99,6 +100,7 @@ box. --box, --detach and --task keep their box too.
   boxctl claude -- --model opus           # arguments for claude itself
   boxctl claude --repo owner/name         # a fresh box, the repo cloned, on a new branch (-R for short)
   boxctl claude --goal "bump Go and fix what breaks"   # unattended, ends in a PR
+  boxctl claude --repo owner/name --issue 42           # unattended: resolve issue #42, ends in a PR
 
 The first time, log Claude in on the box with /login: it prints a URL to
 open here and a code to paste back. That login stays on the box.
@@ -119,6 +121,10 @@ boxctl/<slug>-<id>. With --goal, Claude instead runs unattended
 (claude -p) until the goal is done and opens a pull request; the command
 prints the box, the branch and how to follow it, and returns. Without
 --repo, --goal uses this directory's git repository (its GitHub origin).
+--issue N is a goal that only names a GitHub issue of the repository: Claude
+reads it (and its comments) with gh, resolves it, and opens a pull request
+that closes it; --goal then adds instructions to it. The repository is
+--repo's, or this directory's origin.
 That run outlives this terminal, so it can't use --github forward, which
 only works while you're attached: it needs --github store.
 boxctl claude logs <box> shows how it's going.`,
@@ -130,13 +136,14 @@ func init() {
 	claudeCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Claude Code session (its ID) on the box")
 	claudeCmd.Flags().StringSliceVarP(&claudeRepos, "repo", "R", nil, "GitHub repository (owner/name) to clone on a new box, on a new boxctl/... branch; repeat or comma-separate for several, cloned side by side (with --goal: default is this directory's origin)")
 	claudeCmd.Flags().StringVar(&claudeGoal, "goal", "", "a goal for Claude to carry out unattended, ending in a pull request (needs --github store)")
+	claudeCmd.Flags().IntVar(&claudeIssue, "issue", 0, "number of a GitHub issue for Claude to resolve unattended, ending in a pull request that closes it (needs --github store; one repository)")
 	claudeCmd.Flags().StringVar(&claudeAuth, "claude-auth", claudeAuthAuto, "how Claude on the box logs in: auto (the token boxctl claude login saved, else /login), token, login or api-key")
 	_ = claudeCmd.RegisterFlagCompletionFunc("claude-auth", cobra.FixedCompletions([]string{claudeAuthAuto, claudeAuthToken, claudeAuthLogin, claudeAuthAPIKey}, cobra.ShellCompDirectiveNoFileComp))
 	rootCmd.AddCommand(claudeCmd)
 }
 
 func runClaude(cmd *cobra.Command, args []string) error {
-	if len(claudeRepos) > 0 || claudeGoal != "" {
+	if len(claudeRepos) > 0 || claudeGoal != "" || claudeIssue != 0 {
 		return runRepo(cmd, args)
 	}
 	ctx := cmd.Context()
