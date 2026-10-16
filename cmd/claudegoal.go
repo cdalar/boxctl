@@ -106,6 +106,16 @@ Give the box a token it keeps: set BOXCTL_GITHUB_TOKEN to a fine-grained token f
 	return nil
 }
 
+// issueGoal is the goal for resolving issue number of repo, plus any extra
+// instructions. Claude reads the issue itself, with the token the box has.
+func issueGoal(repo string, number int, extra string) string {
+	g := fmt.Sprintf("Resolve GitHub issue #%d of %s. Read it, and its comments, with gh issue view %d --repo %s --comments; implement what it asks for, and put \"Closes #%d\" in the pull request's body.", number, repo, number, repo, number)
+	if extra = strings.TrimSpace(extra); extra != "" {
+		g += "\n\n" + extra
+	}
+	return g
+}
+
 // goalPrompt is what Claude is told: the goal, then how the run ends. dirs
 // are the clones of repos (parallel slices); with more than one, Claude is in
 // the directory above them.
@@ -209,13 +219,16 @@ func reposToUse() ([]string, error) {
 	if repo := githubRepo(dir); repo != "" {
 		return []string{repo}, nil
 	}
-	return nil, fmt.Errorf("--goal needs a repository: pass --repo owner/name, or run it in a git repository whose origin is on GitHub (%s isn't)", dir)
+	return nil, fmt.Errorf("--goal/--issue needs a repository: pass --repo owner/name, or run it in a git repository whose origin is on GitHub (%s isn't)", dir)
 }
 
 func runRepo(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
-	if len(claudeRepos) == 0 && claudeGoal == "" {
+	if len(claudeRepos) == 0 && claudeGoal == "" && claudeIssue == 0 {
 		return errors.New("nothing to do")
+	}
+	if claudeIssue < 0 {
+		return fmt.Errorf("--issue %d: use an issue number", claudeIssue)
 	}
 	var conflicts []string
 	for flag, set := range map[string]bool{
@@ -226,22 +239,31 @@ func runRepo(cmd *cobra.Command, args []string) error {
 			conflicts = append(conflicts, flag)
 		}
 	}
-	if claudeGoal != "" {
+	if claudeGoal != "" || claudeIssue != 0 {
 		if claudeDetach {
 			conflicts = append(conflicts, "--detach (a goal always runs detached)")
 		}
 	}
-	if err := checkRepoFlags(claudeGoal, claudeGitHub, conflicts); err != nil {
+	repos, err := reposToUse()
+	if err != nil {
+		return err
+	}
+	// goal is what Claude is asked to do unattended; "" for an attended run.
+	goal, slugText := claudeGoal, claudeGoal
+	if claudeIssue != 0 {
+		if len(repos) != 1 {
+			return errors.New("--issue is an issue of one repository: pass a single --repo")
+		}
+		goal = issueGoal(repos[0], claudeIssue, claudeGoal)
+		slugText = fmt.Sprintf("issue %d", claudeIssue)
+	}
+	if err := checkRepoFlags(goal, claudeGitHub, conflicts); err != nil {
 		return err
 	}
 	switch claudeGitHub {
 	case githubForward, githubStore, githubOff:
 	default:
 		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
-	}
-	repos, err := reposToUse()
-	if err != nil {
-		return err
 	}
 	dirs, workDir := repoDirs(repos)
 	// A box with several repositories is named for the workspace, not for one of them.
@@ -255,12 +277,12 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if claudeGoal != "" && env == "" {
+	if goal != "" && env == "" {
 		return errors.New("a goal runs without you, so Claude can't log in on the box with /login: run boxctl claude login once, or use --claude-auth api-key")
 	}
 	// A goal's words name the box and branch; without one, an
 	// adjective-noun pair does. --box names the box, not the branch.
-	gen, err := newBoxName(ctx, namePrefix, claudeGoal)
+	gen, err := newBoxName(ctx, namePrefix, slugText)
 	if err != nil {
 		return err
 	}
@@ -316,7 +338,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	}
 
 	sess := taskSession{dir: workDir, tmux: agent.name, ghSocket: boxGitHubSocket}
-	if claudeGoal == "" {
+	if goal == "" {
 		if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
 			return fmt.Errorf("passing Claude its credentials: %w", err)
 		}
@@ -329,7 +351,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
 		return fmt.Errorf("passing Claude its credentials: %w", err)
 	}
-	if err := box.run(ctx, "umask 077 && mkdir -p "+shellQuote(g.goalDir)+" && cat >"+shellQuote(g.goalDir+"/prompt.txt"), strings.NewReader(goalPrompt(claudeGoal, repos, dirs, branch))); err != nil {
+	if err := box.run(ctx, "umask 077 && mkdir -p "+shellQuote(g.goalDir)+" && cat >"+shellQuote(g.goalDir+"/prompt.txt"), strings.NewReader(goalPrompt(goal, repos, dirs, branch))); err != nil {
 		return fmt.Errorf("writing the goal on %s: %w", name, err)
 	}
 	if err := box.run(ctx, "cat >"+shellQuote(g.goalDir+"/run.sh")+" && ln -sfn "+shellQuote(g.goalDir)+" "+boxGoalsDir+"/latest", strings.NewReader(g.runnerScript())); err != nil {

@@ -192,6 +192,11 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   and `logs` pauses it after following it to the end or resuming it to
   read it. A paused box's status can't be read without resuming it, so
   `ls` shows the last one it read, kept in `~/.boxctl/claude/goals.json`.
+  `--issue N` (`issueGoal`) is a goal that only names the repository's
+  issue number: Claude reads it itself with `gh issue view` on the box
+  (so it needs the stored token), and the PR body must say `Closes #N`.
+  One repository; `--goal` text is appended as extra instructions; the
+  box/branch slug is `issue-N`.
   Goal mode requires `--github store` (forward only lives while attached)
   and checks everything, token included, before creating a box. `--goal`
   without `--repo` takes the cwd's GitHub origin. Unverified against a

@@ -209,3 +209,22 @@ func TestGoalRunnerSeveralRepos(t *testing.T) {
 		}
 	}
 }
+
+func TestIssueGoal(t *testing.T) {
+	g := issueGoal("o/n", 42, "")
+	for _, want := range []string{"issue #42 of o/n", "gh issue view 42 --repo o/n --comments", `"Closes #42"`} {
+		if !strings.Contains(g, want) {
+			t.Errorf("goal lacks %q:\n%s", want, g)
+		}
+	}
+	if strings.HasSuffix(g, "\n") {
+		t.Errorf("goal without extra instructions ends in a newline: %q", g)
+	}
+	if g := issueGoal("o/n", 42, " keep it small \n"); !strings.HasSuffix(g, "\n\nkeep it small") {
+		t.Errorf("extra instructions not appended: %q", g)
+	}
+	// The slug a box and branch get is from "issue N".
+	if got := textSlug("issue 42"); got != "issue-42" {
+		t.Errorf("textSlug(issue 42) = %q", got)
+	}
+}
