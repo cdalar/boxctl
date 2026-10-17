@@ -83,14 +83,17 @@ with an origin is cloned from it -- the default branch, then a new
 branch boxctl/<project>-<random> for Claude to work on; nothing local,
 uncommitted or unpushed, goes -- and anything else is copied. Then it
 installs Claude Code and your Claude configuration, and starts Claude in
-it. When Claude exits, you
-detach (Ctrl-b d) or the connection drops, the box's branches and
-uncommitted work are fetched here as box/* (as boxctl claude fetch does)
-and the box is deleted.
+it. When Claude exits or you
+detach (Ctrl-b d), the box's branches and uncommitted work are fetched
+here as box/* (as boxctl claude fetch does) and the box is deleted.
+
+A dropped connection doesn't end the run: Claude keeps going on the box
+and boxctl reconnects as soon as it can reach it again. Ctrl-C while
+it's reconnecting gives up and keeps the box, to come back to with --box.
 
 --keep uses the project's own box (claude-<project>) instead, and keeps
-it: Claude runs in tmux, so it keeps going when you detach or the
-connection drops, and boxctl claude --keep comes back to it. The box's
+it: Claude runs in tmux, so it keeps going when you detach, and
+boxctl claude --keep comes back to it. The box's
 copy of the project is the one Claude works on: later runs don't copy it
 again, and nothing is synced back -- Claude commits and pushes from the
 box. --box, --detach and --task keep their box too.
@@ -397,7 +400,14 @@ func startSession(ctx context.Context, t *claudeTarget, sess taskSession, runnin
 		sayDone("%s is running on %s -- attach with: %s", agent.title, bold(t.name), sess.attachHint(t.name))
 		return nil
 	}
-	return attachClaude(ctx, t.box, sess, sess.tmuxCommand(line, false))
+	err := attachClaude(ctx, t.box, sess, sess.tmuxCommand(line, false))
+	if errors.Is(err, errConnectionLost) {
+		// The session is still running there, so its box isn't this
+		// run's to end: an ephemeral one is kept, work and all.
+		t.ephemeral = false
+		return fmt.Errorf("lost the connection to %s, where %s is still running -- attach again with: %s", t.name, agent.title, sess.attachHint(t.name))
+	}
+	return err
 }
 
 // resolveTask checks --task and --own-box, and turns --own-box into the
@@ -425,23 +435,31 @@ func resolveTask() error {
 
 // attachClaude attaches to Claude on the box, lending it GitHub
 // credentials for as long as the attach lasts unless --github says not to.
+// A dropped connection is reconnected (see reattach) rather than taken
+// for the end of the session; errConnectionLost means you gave up on
+// reconnecting, with Claude still running there.
 func attachClaude(ctx context.Context, box *boxSSH, sess taskSession, command string) error {
 	if claudeGitHub != githubForward {
-		return box.attach(ctx, command, nil)
+		return reattach(ctx, box, sess, func() error { return box.attach(ctx, command, nil) })
 	}
 	logPath := githubLogPath()
 	srv, err := startTokenServer(box.name, logPath)
 	if err != nil {
 		sayWarn("not forwarding GitHub credentials: %v", err)
-		return box.attach(ctx, command, nil)
+		return reattach(ctx, box, sess, func() error { return box.attach(ctx, command, nil) })
 	}
-	// A socket a dropped connection left behind would stop sshd binding
-	// the new one on an image without StreamLocalBindUnlink.
-	_ = box.run(ctx, "rm -f "+shellQuote(sess.ghSocket), nil)
-	err = box.attach(ctx, command, []string{"-R", sess.ghSocket + ":" + srv.socket})
+	err = reattach(ctx, box, sess, func() error {
+		// A socket a dropped connection left behind would stop sshd binding
+		// the new one on an image without StreamLocalBindUnlink.
+		_ = box.run(ctx, "rm -f "+shellQuote(sess.ghSocket), nil)
+		return box.attach(ctx, command, []string{"-R", sess.ghSocket + ":" + srv.socket})
+	})
 	// Without the socket the box's helpers say "attach to forward", rather
-	// than failing to reach a stale one.
-	_ = box.run(context.Background(), "rm -f "+shellQuote(sess.ghSocket), nil)
+	// than failing to reach a stale one. Not if the box can't be reached:
+	// that would only hang, and the next attach removes it first anyway.
+	if !errors.Is(err, errConnectionLost) {
+		_ = box.run(context.Background(), "rm -f "+shellQuote(sess.ghSocket), nil)
+	}
 	if given, refused := srv.close(); given+refused > 0 {
 		used := fmt.Sprintf("%s used your GitHub token %d time(s)", box.name, given)
 		if refused > 0 {
@@ -836,6 +854,11 @@ func (b *boxSSH) attach(ctx context.Context, command string, extra []string) err
 	err := cmd.Run()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
+		if exitErr.ExitCode() == 255 {
+			// ssh's own failure: the connection dropped under the attach.
+			resetTerminal()
+			return errConnectionLost
+		}
 		// Detaching or quitting Claude ends ssh normally; anything else
 		// was already printed by ssh or the box.
 		return nil
@@ -843,8 +866,12 @@ func (b *boxSSH) attach(ctx context.Context, command string, extra []string) err
 	return err
 }
 
+// attachArgs: a dead connection is given up on after 30s rather than
+// b.args' 90s (ssh takes an option's first value), so a train going
+// through a tunnel reconnects (see attachClaude) soon after it's out.
 func (b *boxSSH) attachArgs(command string, extra []string) []string {
-	argv := append([]string{"-t", "-o", "ControlPath=none", "-o", "ExitOnForwardFailure=no"}, extra...)
+	argv := append([]string{"-t", "-o", "ControlPath=none", "-o", "ExitOnForwardFailure=no",
+		"-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"}, extra...)
 	return append(append(argv, b.args...), command)
 }
 
