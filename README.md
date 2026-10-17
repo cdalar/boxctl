@@ -158,9 +158,12 @@ isn't copied: the box clones origin's default branch (your GitHub token
 lent for it, as below) and Claude works on a new branch,
 `boxctl/<slug>-<id>` -- so local uncommitted or unpushed work
 isn't there; push it first. Anything else is copied. When the run ends --
-Claude exits, you detach, or the connection drops -- the box's branches and uncommitted work are
+Claude exits or you detach -- the box's branches and uncommitted work are
 fetched here as `box/*` (what `boxctl claude fetch` does) and the box is
-deleted -- or kept, with a message, if that fetch fails. Ctrl-C during
+deleted -- or kept, with a message, if that fetch fails. A dropped
+connection (a train through a tunnel) doesn't end the run: Claude keeps
+going in tmux and boxctl reconnects once the box is reachable again;
+Ctrl-C while it waits keeps the box, to attach again with `--box`. Ctrl-C during
 setup deletes it too. `--keep` uses the project's long-lived box
 (`claude-<directory>`) instead, as described below; `--box`, `--detach`
 and `--task` imply it.

@@ -49,7 +49,8 @@ every target; it needs `goreleaser` on PATH.
 
 Tests are few -- this is a thin, mostly-I/O client -- and cover the
 pure parts (`go test ./...`: `boxctl claude`'s file selection, tar
-stream, settings filtering and shell quoting, `boxctl kilo`'s
+stream, settings filtering and shell quoting, reconnecting after a dropped connection (a fake
+`ssh` on PATH), `boxctl kilo`'s
 credential environment, `internal/client`'s messages for boxctl-vms's
 409 `box_limit` / 503 `capacity` refusals). Otherwise rely on `go
 vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
