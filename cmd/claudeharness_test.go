@@ -77,10 +77,10 @@ func TestPrepareHarnessChoice(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	t.Cleanup(func() { claudeHarnessArg, claudeGoal, claudeHarness = "", "", nil })
+	t.Cleanup(func() { claudeHarnessArg, claudeGoal, claudeIssue, claudeHarness = "", "", 0, nil })
 	pick := func(arg, goal string) *harness {
 		t.Helper()
-		claudeHarnessArg, claudeGoal = arg, goal
+		claudeHarnessArg, claudeGoal, claudeIssue = arg, goal, 0
 		cleanup, err := prepareHarness()
 		if err != nil {
 			t.Fatal(err)
@@ -97,6 +97,16 @@ func TestPrepareHarnessChoice(t *testing.T) {
 	}
 	if pick("none", "fix it") != nil {
 		t.Error("--harness none turns the goal default off")
+	}
+	// --issue is a goal that only names an issue: unattended all the same.
+	claudeHarnessArg, claudeGoal, claudeIssue = "", "", 7
+	cleanup, err := prepareHarness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	if claudeHarness == nil || claudeHarness.dir != "built-in pr-only" {
+		t.Errorf("--issue gets the built-in pr-only, got %+v", claudeHarness)
 	}
 
 	def := filepath.Join(home, ".boxctl", "harness", "default")

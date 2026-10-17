@@ -103,23 +103,25 @@ func loadHarness(dir string) (*harness, error) {
 	return h, nil
 }
 
-// apply puts the harness on the box.
+// apply puts the harness on the box. Its ~/.claude entries overwrite
+// your configuration's, so call it after copyClaudeConfig, not alongside.
 func (h *harness) apply(ctx context.Context, box *boxSSH) error {
-	fmt.Fprintf(os.Stderr, "Copying the harness %s (%s) to %s...\n", h.dir, client.FormatBytes(h.size), box.name)
+	progress := newUploadProgress("Copying the harness "+bold(h.dir), h.size)
 	if len(h.managed) > 0 {
-		err := streamTar(ctx, box, "mkdir -p "+harnessManagedDir+" && tar -xzf - -C "+harnessManagedDir+" && chmod 0644 "+harnessManagedDir+"/*", nil,
+		err := streamTar(ctx, box, "mkdir -p "+harnessManagedDir+" && tar -xzf - -C "+harnessManagedDir+" && chmod 0644 "+harnessManagedDir+"/*", progress,
 			func(tw *tar.Writer) error { return addFiles(tw, h.dir, h.managed) })
 		if err != nil {
 			return fmt.Errorf("harness: %w", err)
 		}
 	}
 	if len(h.config) > 0 {
-		err := streamTar(ctx, box, "mkdir -p ~/.claude && tar -xzf - -C ~/.claude", nil,
+		err := streamTar(ctx, box, "mkdir -p ~/.claude && tar -xzf - -C ~/.claude", progress,
 			func(tw *tar.Writer) error { return addFiles(tw, h.dir, h.config) })
 		if err != nil {
 			return fmt.Errorf("harness: %w", err)
 		}
 	}
+	sayDone("Copied the harness %s %s", bold(h.dir), dim("("+client.FormatBytes(h.size)+")"))
 	return nil
 }
 
@@ -128,11 +130,11 @@ func (h *harness) apply(ctx context.Context, box *boxSSH) error {
 //	--harness none            none
 //	--harness <dir|name>      that one
 //	~/.boxctl/harness/default your default, for every run
-//	--goal                    the built-in pr-only: it runs unattended with
+//	--goal / --issue          the built-in pr-only: it runs unattended with
 //	                          --dangerously-skip-permissions, so it is the run
 //	                          that most needs a guardrail you didn't have to ask for
 //
-// Whatever is picked besides an explicit --harness is announced on stderr.
+// Whatever is picked besides an explicit --harness is announced.
 
 const harnessNone = "none"
 
@@ -167,11 +169,11 @@ func prepareHarness() (func(), error) {
 			if claudeHarness, lerr = loadHarness(dir); lerr != nil {
 				return nothing, lerr
 			}
-			fmt.Fprintf(os.Stderr, "Using your default harness %s (--harness %s to skip it)\n", dir, harnessNone)
+			sayNote("Using your default harness %s (--harness %s to skip it)", dir, harnessNone)
 			return nothing, nil
 		}
 	}
-	if claudeGoal == "" {
+	if claudeGoal == "" && claudeIssue == 0 {
 		return nothing, nil
 	}
 	tmp, err := os.MkdirTemp("", "boxctl-harness-")
@@ -189,7 +191,7 @@ func prepareHarness() (func(), error) {
 		return nothing, err
 	}
 	claudeHarness.dir = "built-in pr-only"
-	fmt.Fprintf(os.Stderr, "An unattended goal runs with the built-in pr-only harness: pull request, never merge (--harness %s to skip it, or --harness <dir> for your own)\n", harnessNone)
+	sayNote("An unattended run gets the built-in pr-only harness: pull request, never merge (--harness %s to skip it, or --harness <dir> for your own)", harnessNone)
 	return cleanup, nil
 }
 
