@@ -37,6 +37,7 @@ func dim(s string) string  { return paint(ansiDim, s) }
 func cyan(s string) string { return paint(ansiCyan, s) }
 func okMark() string       { return paint(ansiGreen, "✔") }
 func failMark() string     { return paint(ansiRed, "✘") }
+func warnMark() string     { return paint(ansiYellow, "!") }
 
 func stateText(s string) string {
 	switch s {
