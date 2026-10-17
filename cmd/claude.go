@@ -502,6 +502,11 @@ type claudeTarget struct {
 	needsCopy bool
 	// ephemeral: the box is this run's, deleted by end.
 	ephemeral bool
+	// repoDirs, for a --repo run: the clones end checks are on GitHub
+	// (repoWorkPushed) instead of fetching them here; sess is the
+	// session that keeps the box while it runs.
+	repoDirs []string
+	sess     taskSession
 }
 
 // openClaudeBox resolves the project and its box (--box, or
