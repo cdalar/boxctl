@@ -90,6 +90,11 @@ func unfinishedRuns(ctx context.Context, c *client.Client, names []string) []cli
 		fmt.Fprintf(os.Stderr, "warning: couldn't check whether the runs are done: %v\n", err)
 		return nil
 	}
+	return filterUnfinished(vms, names)
+}
+
+// filterUnfinished is unfinishedRuns' selection, apart from the listing.
+func filterUnfinished(vms []client.VM, names []string) []client.VM {
 	var out []client.VM
 	for _, vm := range vms {
 		if len(names) > 0 && !slices.Contains(names, vm.Name) {
