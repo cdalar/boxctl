@@ -4,29 +4,44 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
-// addOutputFlag gives a listing command `-o/--output`, like `onctl ls`.
-func addOutputFlag(cmd *cobra.Command) {
-	cmd.Flags().StringP("output", "o", "table", "output format (table, json)")
+// addOutputFlag gives a listing command `-o/--output`, like `onctl ls`:
+// table or json, plus any of extra (ls's wide).
+func addOutputFlag(cmd *cobra.Command, extra ...string) {
+	formats := append([]string{"table"}, extra...)
+	formats = append(formats, "json")
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations["output"] = strings.Join(formats, ",")
+	cmd.Flags().StringP("output", "o", "table", "output format ("+strings.Join(formats, ", ")+")")
 	_ = cmd.RegisterFlagCompletionFunc("output", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
-		return []string{"table", "json"}, cobra.ShellCompDirectiveNoFileComp
+		return formats, cobra.ShellCompDirectiveNoFileComp
 	})
 }
 
-// wantJSON reports whether the command was run with `-o json`. Call it
-// before talking to the server, so a mistyped format fails right away.
-func wantJSON(cmd *cobra.Command) (bool, error) {
-	switch format, _ := cmd.Flags().GetString("output"); format {
-	case "table":
-		return false, nil
-	case "json":
-		return true, nil
-	default:
-		return false, fmt.Errorf("unknown output format %q (want table or json)", format)
+// outputFormat is the command's `-o`, one of those addOutputFlag gave
+// it. Call it before talking to the server, so a mistyped format fails
+// right away.
+func outputFormat(cmd *cobra.Command) (string, error) {
+	format, _ := cmd.Flags().GetString("output")
+	formats := strings.Split(cmd.Annotations["output"], ",")
+	if !slices.Contains(formats, format) {
+		return "", fmt.Errorf("unknown output format %q (want %s)", format, strings.Join(formats, ", "))
 	}
+	return format, nil
+}
+
+// wantJSON reports whether the command was run with `-o json`, as
+// outputFormat checks it.
+func wantJSON(cmd *cobra.Command) (bool, error) {
+	format, err := outputFormat(cmd)
+	return format == "json", err
 }
 
 // printJSON writes a listing as an indented JSON array, in the fields the

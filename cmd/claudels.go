@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"path"
-	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,15 +19,18 @@ import (
 func (a *boxAgent) lsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ls",
-		Short: a.fill("List this project's {Agent} sessions: the main one and its tasks"),
-		Long: a.fill(`Lists the {Agent} sessions working on this project: the main checkout and
-each --task worktree on the project's box (with its branch, whether
-{Agent} is running there, and when it last showed activity), plus the
-boxes of --own-box tasks. Then the run boxes: the project's --repo and
-ephemeral runs, and every --goal/--issue run (goal-... boxes) whatever
-its project, with how a goal went and its pull request. A box
-whose goal has finished and that nothing has used for 10 minutes is
-paused.`),
+		Short: a.fill("List this project's {Agent} tasks and boxes, and every goal run"),
+		Long: a.fill(`Lists the tasks on the project's box -- the main checkout and each --task
+worktree, with its branch, whether {Agent} is running there, and when it
+last showed activity -- then, as boxctl ls -p -a lists them, the
+project's boxes (its own, --own-box tasks', ephemeral and --repo runs')
+and every --goal/--issue run whatever its project, with how the goal is
+going and its pull request. Only the project's box is connected to, for
+its tasks; the rest is from what the boxes report to the server, so a
+paused box shows its real status too. Boxes are found by the labels
+boxctl gives them; boxctl label adds them to a box from before labels.
+The server pauses a box whose goal has finished and that nothing has
+used for 10 minutes.`),
 		Args: cobra.NoArgs,
 		RunE: a.runs(func(cmd *cobra.Command, _ []string) error {
 			return claudeList(cmd.Context())
@@ -55,180 +56,91 @@ func claudeList(ctx context.Context) error {
 		return err
 	}
 
+	// The tasks on the project's box: only it, and only running, is
+	// connected to.
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintf(tw, "TASK\tBRANCH\t%s\tACTIVE\tBOX\n", strings.ToUpper(agent.name))
-	// The project's box first, then the --own-box tasks' boxes.
-	sort.SliceStable(vms, func(i, j int) bool { return vms[i].Name == main && vms[j].Name != main })
 	rows := 0
-	// Run boxes hold the project at its own path, or a --repo/--goal clone
-	// in /root/<repository> -- or, among others, in the workspace.
-	prefixes, projects := []string{filepath.Base(dir)}, map[string]bool{dir: true}
-	repo := githubRepo(dir)
-	if repo != "" {
-		name := path.Base(repo)
-		prefixes = append(prefixes, name, "workspace")
-		projects[path.Join("/root", name)] = true
-		projects[path.Join(boxWorkspace, name)] = true
-	}
-	var runs []client.VM
-	for _, vm := range vms {
-		switch {
-		case vm.Name == main && vm.State == "running":
-			n, err := listBoxSessions(ctx, tw, dir)
-			if err != nil {
-				return err
-			}
-			rows += n
-		case vm.Name == main:
-			_, _ = fmt.Fprintf(tw, "(all)\t-\t-\t-\t%s (%s)\n", vm.Name, vm.State)
-			rows++
-		case strings.HasPrefix(vm.Name, main+"-"):
-			_, _ = fmt.Fprintf(tw, "%s\t-\t-\t-\t%s (own box, %s)\n", strings.TrimPrefix(vm.Name, main+"-"), vm.Name, vm.State)
-			rows++
-		case vm.Labels["boxctl.run"] != "":
-			// Labeled: the labels say whose it is; its name may only look
-			// like this project's.
-			if labeledRun(vm, repo, dir) {
-				runs = append(runs, vm)
-			}
-		case isGoalBox(vm.Name), isRunBox(vm.Name, prefixes):
-			runs = append(runs, vm)
+	if i := slices.IndexFunc(vms, func(vm client.VM) bool { return vm.Name == main }); i >= 0 && vms[i].State == "running" {
+		if rows, err = listBoxSessions(ctx, tw, dir); err != nil {
+			return err
 		}
-	}
-	boxes := map[string]bool{}
-	for _, vm := range vms {
-		boxes[vm.Name] = true
-	}
-	sort.SliceStable(runs, func(i, j int) bool { return runs[i].CreatedAt.After(runs[j].CreatedAt) })
-	runTable := listRuns(ctx, runs, projects, boxes)
-	if rows == 0 && runTable == "" {
-		fmt.Fprintf(os.Stderr, "No %s sessions for %s -- start one with boxctl %s.\n", agent.title, dir, agent.name)
-		return nil
 	}
 	if rows > 0 {
 		if err := tw.Flush(); err != nil {
 			return err
 		}
-		if runTable != "" {
-			fmt.Println()
-		}
 	}
-	fmt.Print(runTable)
-	return nil
+
+	// Then the boxes, as boxctl ls -p -a lists them, plus every goal
+	// run's: a goal needs no checkout to start from, so it's listed
+	// wherever ls runs.
+	repo := githubRepo(dir)
+	vms = slices.DeleteFunc(vms, func(vm client.VM) bool {
+		if a := vm.Labels["boxctl.agent"]; a != "" && a != agent.name {
+			return true
+		}
+		return !inProject(vm, dir, repo) && vm.Labels["boxctl.run"] != "goal"
+	})
+	if len(vms) == 0 {
+		fmt.Fprintf(os.Stderr, "No %s sessions for %s -- start one with boxctl %s.\n", agent.title, dir, agent.name)
+		return nil
+	}
+	if rows > 0 {
+		fmt.Println()
+	}
+	return printBoxes(vms, "table", true, "")
 }
 
-// listRuns is a table with a row per run box of the project's, and every
-// goal run's whatever its project ("" for none), reading each
-// running one's goal status and pausing it if the goal is over and nothing
-// uses the box. The name only says which project a box might be for (a
-// boxctl-web box's starts with boxctl-, too); a running box's project
-// marker says which it is, and a paused one's, if ls has seen it, is in
-// the cache.
-func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]bool) string {
-	cached := loadGoalCache()
-	read := make([]*goalStatus, len(runs))
-	project := make([][]string, len(runs))
-	errs := make([]error, len(runs))
-	var fns []func()
-	for i, vm := range runs {
-		// What the box last reported itself (boxctl-vms's run status):
-		// nothing to reach into it for, running or paused.
-		if len(vm.RunStatus) > 0 {
-			read[i], errs[i] = parseGoalStatus(vm.RunStatus)
-			continue
-		}
-		// Nothing to read from a running box either if its labels already
-		// say whose it is and it has no goal to report.
-		if vm.State != "running" || (vm.Labels["boxctl.run"] != "" && vm.Labels["boxctl.run"] != "goal") {
-			continue
-		}
-		// A finished goal's status won't change: a labeled one's project
-		// is in its labels, so what ls read last is all there is.
-		if s, ok := cached[vm.Name]; ok && vm.Labels["boxctl.run"] == "goal" && s.finished() {
-			read[i] = &s
-			continue
-		}
-		fns = append(fns, func() {
-			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
-			box, err := connectClaudeBox(ctx, vm.Name, false, false)
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			defer box.close()
-			out, err := box.output(ctx, runInfoScript)
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			project[i], read[i], errs[i] = parseRunInfo(out)
-		})
+// printRunStatus is claude status's report on one run box, from its
+// labels and run_status.
+func printRunStatus(vm client.VM) {
+	goal, updated, branch, pr := runRow(vm)
+	if updated != "-" {
+		goal += " (" + updated + ")"
 	}
-	inParallel(fns...)
+	fmt.Printf("Box:     %s (%s)\nRun:     %s\nGoal:    %s\nBranch:  %s\nPR:      %s\n", vm.Name, vm.State, runText(vm), goal, branch, pr)
+	if st, _ := parseGoalStatus(vm.RunStatus); st != nil && st.Error != "" {
+		fmt.Printf("Error:   %s\n", st.Error)
+	}
+}
 
-	fresh := map[string]goalStatus{}
-	var buf bytes.Buffer
-	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "RUN BOX\tSTATE\tGOAL\tUPDATED\tBRANCH\tPULL REQUEST")
-	rows := 0
-	for i, vm := range runs {
-		if s, ok := cached[vm.Name]; ok && vm.State != "running" {
-			project[i] = s.Projects
-		}
-		labeled := vm.Labels["boxctl.run"] != ""
-		if !labeled && !isGoalBox(vm.Name) && !ofProject(project[i], projects) {
-			continue
-		}
-		rows++
-		state, goal, updated, branch, pr := vm.State, "-", "-", "-", "-"
-		if b := vm.Labels["boxctl.branch"]; b != "" {
-			branch = b
-		}
-		st := read[i]
-		switch {
-		case labeled && vm.Labels["boxctl.run"] != "goal" && len(vm.RunStatus) == 0:
-			// No goal, running or paused: nothing to read or remember.
-		case errs[i] != nil:
+// runRow is a run box's goal, when it last changed, branch and pull request:
+// "-" where there's nothing to show, GOAL "?" for a goal box whose status
+// can't be told from its run_status.
+func runRow(vm client.VM) (goal, updated, branch, pr string) {
+	goal, updated, branch, pr = "-", "-", "-", "-"
+	if b := vm.Labels["boxctl.branch"]; b != "" {
+		branch = b
+	}
+	st, err := parseGoalStatus(vm.RunStatus)
+	switch {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "warning: %s: %v\n", vm.Name, err)
+		return "?", updated, branch, pr
+	case st == nil:
+		if vm.Labels["boxctl.run"] == "goal" {
 			goal = "?"
-			fmt.Fprintf(os.Stderr, "warning: couldn't read %s's goal: %v\n", vm.Name, errs[i])
-		case st == nil && vm.State == "running" && len(vm.RunStatus) == 0:
-			// No goal; remembered for its project.
-			fresh[vm.Name] = goalStatus{Projects: project[i]}
-		case st != nil:
-			st.Projects = project[i]
-			fresh[vm.Name] = *st
-		default: // not running: what ls saw last
-			if s, ok := cached[vm.Name]; !ok {
-				goal = "?"
-			} else if s.Status != "" {
-				st = &s
-			}
 		}
-		if st != nil {
-			goal = st.Status
-			if t, err := time.Parse(time.RFC3339, st.Updated); err == nil {
-				updated = ago(t)
-			}
-			if st.Branch != "" {
-				branch = st.Branch
-			}
-			// The box wrote it; only a GitHub URL is shown as one.
-			if strings.HasPrefix(st.PRURL, "https://github.com/") {
-				pr = st.PRURL
-			}
-			if n := len(st.PRURLs); n > 1 {
-				pr += fmt.Sprintf(" (+%d more)", n-1)
-			}
-		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, state, goal, updated, branch, pr)
+		return goal, updated, branch, pr
 	}
-	rememberGoals(fresh, boxes)
-	if rows == 0 {
-		return ""
+	if st.Status != "" {
+		goal = st.Status
 	}
-	_ = tw.Flush()
-	return buf.String()
+	if t, err := time.Parse(time.RFC3339, st.Updated); err == nil {
+		updated = ago(t)
+	}
+	if st.Branch != "" {
+		branch = st.Branch
+	}
+	// The box wrote it; only a GitHub URL is shown as one.
+	if strings.HasPrefix(st.PRURL, "https://github.com/") {
+		pr = st.PRURL
+	}
+	if n := len(st.PRURLs); n > 1 {
+		pr += fmt.Sprintf(" (+%d more)", n-1)
+	}
+	return goal, updated, branch, pr
 }
 
 // listBoxSessions writes a row per worktree on the project's (running)
@@ -277,45 +189,6 @@ func listBoxSessions(ctx context.Context, tw *tabwriter.Writer, dir string) (int
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", task, branch, state, active, t.name)
 	}
 	return len(worktrees), nil
-}
-
-// labeledRun reports whether vm is a run box claude ls lists by its
-// labels (runLabels, sessionLabels): every goal run wherever it was
-// started, a --repo run of repo, this directory's GitHub repository, and
-// an ephemeral run of dir. A project's own box ("box") isn't a run box:
-// claude ls lists it by name, first.
-func labeledRun(vm client.VM, repo, dir string) bool {
-	switch vm.Labels["boxctl.run"] {
-	case "goal":
-		return true
-	case "session":
-		return vm.Labels["boxctl.project"] == dir
-	case "repo":
-		if repo == "" {
-			return false
-		}
-		for _, r := range strings.Split(vm.Labels["boxctl.repo"], ",") {
-			if r == repo {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// ofProject reports whether a run box with dirs is the project's, whose
-// directories on a box are projects. Unknown (no dirs: a paused box ls
-// hasn't seen running) counts as yes -- its name already matched.
-func ofProject(dirs []string, projects map[string]bool) bool {
-	if len(dirs) == 0 {
-		return true
-	}
-	for _, d := range dirs {
-		if projects[d] {
-			return true
-		}
-	}
-	return false
 }
 
 // worktreeBranches maps each worktree's path to its branch, from `git

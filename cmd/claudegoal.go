@@ -8,9 +8,12 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/cdalar/boxctl/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -27,9 +30,10 @@ import (
 // directory, every repository gets the same new branch, and a goal ends in
 // one pull request per repository Claude changed.
 //
-// That status is on the box, read by `boxctl claude logs` and `ls`
-// (claudegoalstatus.go): boxctl-vms has no per-box metadata API to put it
-// in yet.
+// The box also reports that status to the server over vsock
+// (boxctl-status), which keeps it as the box's run_status: `boxctl claude
+// status`, `claude ls` and `boxctl ls` read it from there, never from the
+// box (claudegoalstatus.go). `boxctl claude logs` reads the file.
 //
 // The run outlives the terminal, so the GitHub token can't be the
 // forwarded one, which is lent only while an ssh connection is up: goal
@@ -433,8 +437,97 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if len(repos) > 1 {
 		fmt.Printf("Repos:  %s\n", strings.Join(repos, ", "))
 	}
-	fmt.Printf("Box:    %s\nBranch: %s\nLogs:   boxctl claude logs %s [-f]\n", name, branch, name)
+	fmt.Printf("Box:    %s\nBranch: %s\nLogs:   boxctl claude logs %s [-f]\nStatus: boxctl claude status %s [--wait]\n", name, branch, name, name)
 	return nil
+}
+
+// --- boxctl claude status -------------------------------------------------
+
+var claudeStatusWait bool
+
+var claudeStatusCmd = &cobra.Command{
+	Use:   "status <box>",
+	Short: "Show how a --goal run on a box is going, without connecting to it",
+	Long: `Prints the box's row from claude ls: its state, how its goal is going,
+when that last changed, its branch and its pull request -- from what the
+box reports to the server, so it works on a paused box too.
+
+--wait waits for the goal to finish, then exits 0 if it's done and 1 if
+it failed, so a script can wait for a run:
+
+  boxctl claude status --wait goal-boxctl-fix-login-a1b2 && echo merged`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeBoxName,
+	RunE: claudeAgent.runs(func(cmd *cobra.Command, args []string) error {
+		return goalStatusOf(cmd.Context(), args[0], claudeStatusWait)
+	}),
+}
+
+func init() {
+	claudeStatusCmd.Flags().BoolVar(&claudeStatusWait, "wait", false, "wait for the goal to finish; exit 1 if it failed")
+	claudeCmd.AddCommand(claudeStatusCmd)
+}
+
+// goalStatusPoll is how often status --wait lists the boxes again. A box
+// reports within a second of a change (boxctl-vms's run-status.md).
+var goalStatusPoll = 5 * time.Second
+
+func goalStatusOf(ctx context.Context, name string, wait bool) error {
+	c := newClient()
+	var sp *spinner
+	stop := func() {
+		if sp != nil {
+			sp.end("")
+			sp = nil
+		}
+	}
+	defer stop()
+	for {
+		vms, err := c.List(ctx)
+		if err != nil {
+			return err
+		}
+		i := slices.IndexFunc(vms, func(vm client.VM) bool { return vm.Name == name })
+		if i < 0 {
+			return fmt.Errorf("no box %s", name)
+		}
+		vm := vms[i]
+		st, err := parseGoalStatus(vm.RunStatus)
+		switch {
+		case err != nil:
+			return fmt.Errorf("%s: %w", name, err)
+		case !wait || (st != nil && st.finished()):
+			stop()
+			printRunStatus(vm)
+			if wait && st.Status == "failed" {
+				return fmt.Errorf("%s's goal failed%s", name, goalError(st))
+			}
+			return nil
+		case st == nil && vm.Labels["boxctl.run"] != "goal":
+			return fmt.Errorf("%s isn't running a goal", name)
+		case st == nil:
+			return fmt.Errorf("%s reports no goal status (an image from before boxctl-status)\nboxctl claude logs -f %s follows it on the box", name, name)
+		}
+		msg := fmt.Sprintf("Waiting for %s's goal (%s)", name, st.Status)
+		if sp == nil {
+			sp = startSpinner(msg)
+		} else {
+			sp.setDetail(msg)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(goalStatusPoll):
+		}
+	}
+}
+
+// goalError is ": <error>" for a failed goal that said why, "" otherwise.
+func goalError(st *goalStatus) string {
+	if st.Error == "" {
+		return ""
+	}
+	return ": " + st.Error
 }
 
 // --- boxctl claude logs ---------------------------------------------------
@@ -479,15 +572,7 @@ func goalLogs(ctx context.Context, name string, follow bool) error {
 			err = ferr
 		}
 	}
-	if err != nil {
-		return err
-	}
-	st, err := readGoalStatus(ctx, box)
-	if err != nil || !st.finished() {
-		return err
-	}
-	rememberGoals(map[string]goalStatus{name: *st}, nil)
-	return nil
+	return err
 }
 
 // logsScript prints the latest goal's status and log. Following, it

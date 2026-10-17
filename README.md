@@ -78,6 +78,7 @@ boxctl login
 
 boxctl ls                         # running boxes
 boxctl ls -a                      # all of them, paused and stopped too
+boxctl ls -p                      # this directory's project's boxes: its own, its runs and goals
 boxctl ls -o json                 # for scripts; images and sizes take -o json too
 boxctl images
 boxctl create my-box
@@ -161,7 +162,8 @@ boxctl claude --detach --prompt "..."   # start it without attaching
 boxctl claude -- --model opus           # arguments for claude itself
 boxctl claude login                     # once: every box's Claude is logged in (below)
 boxctl claude --task auth               # a second Claude, in parallel, on its own branch
-boxctl claude ls                        # this project's Claude sessions
+boxctl claude ls                        # this project's tasks and boxes, and every goal run
+boxctl claude status <box> [--wait]     # how a goal run is going, without connecting to it
 boxctl claude --handoff <session-id>    # carry on a local session on the box
 boxctl claude fetch                     # the box's branches and uncommitted work, as box/*
 boxctl claude push                      # this branch to the box

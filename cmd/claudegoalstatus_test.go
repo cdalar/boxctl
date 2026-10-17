@@ -4,34 +4,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cdalar/boxctl/internal/client"
 )
-
-func TestIsRunBox(t *testing.T) {
-	long := boxName{prefix: nameSlug("a-really-long-repository-name"), slug: "fix-flaky-login-test", id: "a1b2"}
-	for _, c := range []struct {
-		name string
-		want bool
-	}{
-		{"boxctl-fix-login-a1b2", true},
-		{"boxctl-zesty-comet-f959", true},
-		{long.box(), true},
-		{"boxctl-fix-login", false},         // no id
-		{"claude-boxctl", false},            // the project's own box
-		{"other-fix-login-a1b2", false},     // another project's
-		{"box-fix-login-a1b2", false},       // a prefix of the prefix isn't it
-		{"boxctl-web-fix-login-a1b2", true}, // can't tell boxctl-web's apart by name
-	} {
-		if got := isRunBox(c.name, []string{"boxctl", "a-really-long-repository-name"}); got != c.want {
-			t.Errorf("isRunBox(%q) = %v, want %v", c.name, got, c.want)
-		}
-	}
-}
 
 func TestParseGoalStatus(t *testing.T) {
 	if s, err := parseGoalStatus([]byte("\n")); s != nil || err != nil {
@@ -78,80 +56,52 @@ func TestLogsFollowStops(t *testing.T) {
 	}
 }
 
-// TestRunInfoScript runs ls's probe against a single clone and a
-// workspace of two.
-func TestRunInfoScript(t *testing.T) {
-	probe := func(marker string, clones ...string) []string {
-		root := t.TempDir()
-		ws := filepath.Join(root, "workspace")
-		for _, c := range clones {
-			if err := os.MkdirAll(filepath.Join(ws, c), 0o755); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if marker == boxWorkspace {
-			marker = ws
-		}
-		write(t, filepath.Join(root, "project"), marker)
-		r := strings.NewReplacer(projectMarker, filepath.Join(root, "project"), boxWorkspace, ws, boxGoalsDir, filepath.Join(root, "goals"))
-		out, err := exec.Command("sh", "-c", r.Replace(runInfoScript)).Output()
-		if err != nil {
-			t.Fatal(err)
-		}
-		dirs, st, err := parseRunInfo(out)
-		if err != nil || st != nil {
-			t.Fatalf("status %v, %v", st, err)
-		}
-		for i, d := range dirs {
-			dirs[i] = strings.TrimPrefix(d, ws+"/")
-		}
-		return dirs
-	}
-	if got := probe("/root/boxctl"); len(got) != 1 || got[0] != "/root/boxctl" {
-		t.Errorf("one clone: %q", got)
-	}
-	if got := probe(boxWorkspace, "boxctl", "boxctl-web"); len(got) != 2 || !slices.Contains(got, "boxctl") || !slices.Contains(got, "boxctl-web") {
-		t.Errorf("workspace: %q", got)
-	}
-}
-
-func TestIsGoalBox(t *testing.T) {
+// TestGoalBoxName: cut short, a goal box's name still starts goal-.
+func TestGoalBoxName(t *testing.T) {
 	long := boxName{prefix: nameSlug(goalBoxPrefix + "a-really-long-repository-name"), slug: "fix-flaky-login-test", id: "a1b2"}
-	if b := long.box(); len(b) > boxNameMax || !isGoalBox(b) {
-		t.Errorf("%q: cut short, it should still be a goal box", b)
-	}
-	for name, want := range map[string]bool{
-		"goal-onctl-runners-issue-29-0ca8": true,
-		"goal-boxctl-fix-login":            false, // no id
-		"boxctl-fix-login-a1b2":            false, // a run, not a goal
-		"onctl-runners-issue-29-0ca8":      false, // a goal from before goal- names: isRunBox's
-	} {
-		if got := isGoalBox(name); got != want {
-			t.Errorf("isGoalBox(%q) = %v, want %v", name, got, want)
-		}
+	if b := long.box(); len(b) > boxNameMax || !strings.HasPrefix(b, goalBoxPrefix) {
+		t.Errorf("%q: cut short, it should still start %s", b, goalBoxPrefix)
 	}
 }
 
-func TestLabeledRun(t *testing.T) {
-	vm := func(labels map[string]string) client.VM { return client.VM{Labels: labels} }
+func TestRunText(t *testing.T) {
 	for _, c := range []struct {
 		vm   client.VM
-		repo string
-		want bool
+		want string
 	}{
-		{vm(map[string]string{"boxctl.run": "goal", "boxctl.repo": "o/elsewhere"}), "cdalar/boxctl", true}, // every goal, from anywhere
-		{vm(map[string]string{"boxctl.run": "goal"}), "", true},
-		{vm(map[string]string{"boxctl.run": "repo", "boxctl.repo": "o/a,cdalar/boxctl"}), "cdalar/boxctl", true},
-		{vm(map[string]string{"boxctl.run": "repo", "boxctl.repo": "o/a"}), "cdalar/boxctl", false},
-		{vm(map[string]string{"boxctl.run": "repo", "boxctl.repo": "o/a"}), "", false},
-		{vm(nil), "cdalar/boxctl", false},
-		// An ephemeral run: this directory's, not one whose name looks like it.
-		{vm(map[string]string{"boxctl.run": "session", "boxctl.project": "/Users/x/boxctl", "boxctl.repo": "cdalar/boxctl"}), "cdalar/boxctl", true},
-		{vm(map[string]string{"boxctl.run": "session", "boxctl.project": "/Users/x/boxctl-web", "boxctl.repo": "cdalar/boxctl-web"}), "cdalar/boxctl", false},
-		{vm(map[string]string{"boxctl.run": "box", "boxctl.project": "/Users/x/boxctl"}), "cdalar/boxctl", false}, // listed by name
+		{client.VM{}, "-"},
+		{client.VM{Labels: map[string]string{"boxctl.run": "box", "boxctl.agent": "claude"}}, "claude box"},
+		{client.VM{Labels: map[string]string{"boxctl.run": "session"}}, "session"},
+		{client.VM{Labels: map[string]string{"boxctl.run": "goal", "boxctl.agent": "claude"}, RunStatus: []byte(`{"status":"done"}`)}, "claude goal: done"},
+		{client.VM{Labels: map[string]string{"boxctl.run": "goal", "boxctl.agent": "claude"}}, "claude goal: ?"}, // never reported
+		{client.VM{Labels: map[string]string{"boxctl.run": "goal"}, RunStatus: []byte(`not json`)}, "goal: ?"},
 	} {
-		if got := labeledRun(c.vm, c.repo, "/Users/x/boxctl"); got != c.want {
-			t.Errorf("labeledRun(%v, %q) = %v, want %v", c.vm.Labels, c.repo, got, c.want)
+		if got := runText(c.vm); got != c.want {
+			t.Errorf("runText(%v) = %q, want %q", c.vm.Labels, got, c.want)
 		}
+	}
+}
+
+func TestRunRow(t *testing.T) {
+	goal := client.VM{
+		Labels:    map[string]string{"boxctl.run": "goal", "boxctl.branch": "boxctl/x-ab12"},
+		RunStatus: []byte(`{"status":"done","branch":"boxctl/x-cd34","pr_url":"https://github.com/o/n/pull/7","pr_urls":["https://github.com/o/n/pull/7","https://github.com/o/m/pull/8"],"updated":"` + time.Now().UTC().Format(time.RFC3339) + `"}`),
+	}
+	if g, u, b, pr := runRow(goal); g != "done" || u != "just now" || b != "boxctl/x-cd34" || pr != "https://github.com/o/n/pull/7 (+1 more)" {
+		t.Errorf("goal: %q %q %q %q", g, u, b, pr)
+	}
+	// Not reported: the branch from its label, the goal unknown.
+	goal.RunStatus = nil
+	if g, _, b, pr := runRow(goal); g != "?" || b != "boxctl/x-ab12" || pr != "-" {
+		t.Errorf("unreported goal: %q %q %q", g, b, pr)
+	}
+	// A --repo run has no goal to report.
+	if g, _, _, _ := runRow(client.VM{Labels: map[string]string{"boxctl.run": "repo"}}); g != "-" {
+		t.Errorf("repo run: %q", g)
+	}
+	// Only a GitHub URL is shown as one.
+	evil := client.VM{Labels: map[string]string{"boxctl.run": "goal"}, RunStatus: []byte(`{"status":"done","pr_url":"https://evil.example/x"}`)}
+	if _, _, _, pr := runRow(evil); pr != "-" {
+		t.Errorf("non-GitHub PR shown: %q", pr)
 	}
 }
