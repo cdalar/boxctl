@@ -67,7 +67,7 @@ func (a *boxAgent) addFlags(c *cobra.Command) {
 	c.PersistentFlags().BoolVar(&claudeOwnBox, "own-box", false, a.fill("with --task: give the task a box of its own ({agent}-<project>-<task>) instead of a worktree"))
 	c.Flags().StringVarP(&claudeSize, "size", "s", claudeDefaultSize, "size of a box created for this")
 	_ = c.RegisterFlagCompletionFunc("size", completeSize)
-	c.Flags().StringVarP(&claudeImage, "image", "i", claudeDefaultImage, "image of a box created for this")
+	c.Flags().StringVarP(&claudeImage, "image", "i", "", "image of a box created for this (default: one for the project's language if there is one, else "+claudeDefaultImage+")")
 	c.Flags().StringVarP(&claudePrompt, "prompt", "p", "", a.fill("first message for a newly started {Agent}"))
 	c.Flags().BoolVarP(&claudeDetach, "detach", "d", false, a.fill("start {Agent} on the box without attaching to it"))
 	c.Flags().StringVar(&claudeGitHub, "github", githubForward, "GitHub credentials for the box: forward (lent while attached), store (a token kept on the box) or off")

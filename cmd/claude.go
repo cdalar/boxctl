@@ -521,7 +521,7 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 	if create && newBoxLabels == nil {
 		newBoxLabels = sessionLabels("box", dir, "")
 	}
-	box, err := connectClaudeBox(ctx, name, create, setTTL)
+	box, err := connectClaudeBox(ctx, name, dir, create, setTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -544,9 +544,9 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 // connectClaudeBox makes sure the box name is running (created first when
 // create is set), authorized for boxctl's key and reachable over ssh,
 // with its idle TTL set when it's new or setTTL says to.
-func connectClaudeBox(ctx context.Context, name string, create, setTTL bool) (*boxSSH, error) {
+func connectClaudeBox(ctx context.Context, name, dir string, create, setTTL bool) (*boxSSH, error) {
 	c := newClient()
-	created, err := ensureClaudeBox(ctx, c, name, create)
+	created, err := ensureClaudeBox(ctx, c, name, dir, create)
 	if err != nil {
 		return nil, err
 	}
@@ -677,8 +677,9 @@ func projectSlug(dir string) string {
 }
 
 // ensureClaudeBox resumes name if it exists, or creates it when create
-// is set, reporting whether it did.
-func ensureClaudeBox(ctx context.Context, c *client.Client, name string, create bool) (created bool, err error) {
+// is set, reporting whether it did. dir is the local project, whose stack
+// picks the image when --image isn't given ("" for none).
+func ensureClaudeBox(ctx context.Context, c *client.Client, name, dir string, create bool) (created bool, err error) {
 	vms, err := c.List(ctx)
 	if err != nil {
 		return false, err
@@ -691,9 +692,10 @@ func ensureClaudeBox(ctx context.Context, c *client.Client, name string, create 
 	if !create {
 		return false, fmt.Errorf("no box %s -- start one with boxctl %s", name, agent.name)
 	}
-	detail := dim("(" + claudeImage + ", " + claudeSize + ")")
+	image := imageFor(ctx, c, dir)
+	detail := dim("(" + image + ", " + claudeSize + ")")
 	sp := startSpinner(fmt.Sprintf("Creating %s %s", bold(name), detail))
-	if _, err := c.Create(ctx, name, "", claudeImage, claudeSize, newBoxLabels); err != nil {
+	if _, err := c.Create(ctx, name, "", image, claudeSize, newBoxLabels); err != nil {
 		sp.fail(fmt.Sprintf("%s: %v", name, err))
 		return false, fmt.Errorf("creating %s: %w", name, err)
 	}
