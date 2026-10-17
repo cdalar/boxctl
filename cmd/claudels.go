@@ -183,18 +183,11 @@ func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]
 			if vm.State != "running" {
 				break
 			}
-			out, err := settleFinishedGoal(ctx, c, &vm, st, false)
+			out, err := settleFinishedGoal(ctx, c, &vm, st, false, false)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-			}
-			switch out {
-			case goalPaused:
+			} else if out == goalPaused {
 				state = "paused"
-			case goalDeleted:
-				delete(fresh, vm.Name)
-				delete(boxes, vm.Name)
-				rows--
-				continue
 			}
 		default: // not running: what ls saw last
 			if s, ok := cached[vm.Name]; !ok {

@@ -108,16 +108,17 @@ func (s goalStatus) hasPR() bool {
 // settleFinishedGoal deals with vm, whose goal has finished, when it's
 // running and unused: either the caller knows it is, or the server hasn't
 // seen it used for goalPauseAfter. A run that opened a pull request has
-// its work on GitHub, so its box is deleted; any other (failed, or done
-// without a PR) is paused, its log and branch still on it.
-func settleFinishedGoal(ctx context.Context, c *client.Client, vm *client.VM, st *goalStatus, unused bool) (goalSettled, error) {
+// its work on GitHub, so its box is deleted -- when mayDelete: `claude ls`
+// only ever pauses. Any other (failed, or done without a PR) is paused,
+// its log and branch still on it.
+func settleFinishedGoal(ctx context.Context, c *client.Client, vm *client.VM, st *goalStatus, unused, mayDelete bool) (goalSettled, error) {
 	if !st.finished() {
 		return goalKept, nil
 	}
 	if !unused && (vm.LastActivityAt == nil || time.Since(*vm.LastActivityAt) < goalPauseAfter) {
 		return goalKept, nil
 	}
-	if st.hasPR() {
+	if mayDelete && st.hasPR() {
 		if err := c.Destroy(ctx, vm.Name); err != nil {
 			return goalKept, fmt.Errorf("deleting %s: %w", vm.Name, err)
 		}

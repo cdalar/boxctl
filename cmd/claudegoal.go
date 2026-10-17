@@ -454,7 +454,7 @@ func goalLogs(ctx context.Context, name string, follow bool) error {
 	// Followed to the end, or resumed just to read it: nobody else is
 	// using the box, so it needn't run on.
 	unused := follow || vm.State != "running"
-	out, err := settleFinishedGoal(ctx, c, vm, st, unused)
+	out, err := settleFinishedGoal(ctx, c, vm, st, unused, true)
 	if out == goalDeleted {
 		forgetGoal(name)
 	}
