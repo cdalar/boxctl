@@ -787,11 +787,11 @@ func (b *boxSSH) output(ctx context.Context, command string) ([]byte, error) {
 	return cmd.Output()
 }
 
-// stream runs a command on the box with its output on ours, until it ends
-// or ctx is cancelled.
-func (b *boxSSH) stream(ctx context.Context, command string) error {
+// streamTo runs a command on the box with its stdout going to w and its
+// stderr to ours, until it ends or ctx is cancelled.
+func (b *boxSSH) streamTo(ctx context.Context, command string, w io.Writer) error {
 	cmd := exec.CommandContext(ctx, "ssh", append(append([]string{"-o", "BatchMode=yes"}, b.args...), command)...)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	cmd.Stdout, cmd.Stderr = w, os.Stderr
 	return cmd.Run()
 }
 
