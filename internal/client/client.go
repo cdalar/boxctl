@@ -303,6 +303,20 @@ func (c *Client) SetIdleTTL(ctx context.Context, name string, ttl time.Duration)
 	return &vm, nil
 }
 
+// SetLabels replaces name's labels with labels (none for an empty map)
+// and returns the box.
+func (c *Client) SetLabels(ctx context.Context, name string, labels map[string]string) (*VM, error) {
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	body := map[string]any{"labels": labels}
+	var vm VM
+	if err := c.do(ctx, http.MethodPut, "/api/vms/"+url.PathEscape(name)+"/labels", body, &vm); err != nil {
+		return nil, err
+	}
+	return &vm, nil
+}
+
 // Keep holds name off the idle reaper's deletion for a day from now.
 func (c *Client) Keep(ctx context.Context, name string) (*VM, error) {
 	var vm VM

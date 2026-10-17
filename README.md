@@ -98,6 +98,7 @@ boxctl kilo                       # the same, for the Kilo CLI (see below)
 boxctl pause my-box
 boxctl resume my-box
 boxctl keep my-box                # don't let the idle reaper delete it for a day (below)
+boxctl label my-box team=web old- # show, set or remove a box's labels
 boxctl backups                    # saved copies of paused boxes (made by `boxctl download` or the dashboard)
 boxctl restore my-box             # newest backup of my-box, back as a paused box
 boxctl restore my-box -n big-box --size large   # ...or booted fresh at another size (files kept, running programs not)

@@ -142,6 +142,12 @@ func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]
 		if vm.State != "running" || (vm.Labels["boxctl.run"] != "" && vm.Labels["boxctl.run"] != "goal") {
 			continue
 		}
+		// A finished goal's status won't change: a labeled one's project
+		// is in its labels, so what ls read last is all there is.
+		if s, ok := cached[vm.Name]; ok && vm.Labels["boxctl.run"] == "goal" && s.finished() {
+			read[i] = &s
+			continue
+		}
 		fns = append(fns, func() {
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
