@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"regexp"
@@ -418,13 +419,14 @@ func runRepo(cmd *cobra.Command, args []string) error {
 
 // --- boxctl claude logs ---------------------------------------------------
 
-var claudeLogsFollow bool
+var claudeLogsFollow, claudeLogsRaw bool
 
 var claudeLogsCmd = &cobra.Command{
 	Use:   "logs <box>",
 	Short: "Show how a --goal run on a box is going",
 	Long: `Prints the status of the box's latest --goal run (running, done or failed,
-and the pull request's URL), then its log: Claude's output as JSON lines.
+and the pull request's URL), then its log: what Claude said and did, one
+step per line (--raw for Claude's JSON lines).
 -f keeps following it until the run ends.`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeBoxName,
@@ -435,6 +437,7 @@ and the pull request's URL), then its log: Claude's output as JSON lines.
 
 func init() {
 	claudeLogsCmd.Flags().BoolVarP(&claudeLogsFollow, "follow", "f", false, "keep following the log until the run ends")
+	claudeLogsCmd.Flags().BoolVar(&claudeLogsRaw, "raw", false, "print the log as Claude's JSON lines")
 	claudeCmd.AddCommand(claudeLogsCmd)
 }
 
@@ -444,7 +447,19 @@ func goalLogs(ctx context.Context, name string, follow bool) error {
 		return err
 	}
 	defer box.close()
-	if err := box.stream(ctx, logsScript(follow)); err != nil {
+	var out io.Writer = os.Stdout
+	var fm *logFormatter
+	if !claudeLogsRaw {
+		fm = &logFormatter{w: os.Stdout}
+		out = fm
+	}
+	err = box.streamTo(ctx, logsScript(follow), out)
+	if fm != nil {
+		if ferr := fm.Flush(); err == nil {
+			err = ferr
+		}
+	}
+	if err != nil {
 		return err
 	}
 	st, err := readGoalStatus(ctx, box)
