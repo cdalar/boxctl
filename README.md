@@ -189,8 +189,8 @@ boxctl claude --handoff <session-id>    # carry on a local session on the box
 boxctl claude fetch                     # the box's branches and uncommitted work, as box/*
 boxctl claude push                      # this branch to the box
 boxctl claude -R owner/name              # --repo for short: a fresh box with the repo cloned, on a new branch
-boxctl claude --repo owner/name --goal "bump Go to 1.24 and fix what breaks" --github store
-boxctl claude --repo owner/api --repo owner/web --goal "rename the /v1 route"  --github store   # several repos, a PR in each
+boxctl claude --repo owner/name --goal "bump Go to 1.24 and fix what breaks"
+boxctl claude --repo owner/api --repo owner/web --goal "rename the /v1 route"   # several repos, a PR in each
 boxctl claude logs <box> [-f]           # how a --goal run is going
 ```
 
@@ -219,21 +219,19 @@ work across repositories in one box. They are cloned side by side under
 directory. With `--goal`, Claude opens one pull request in each repository
 it changed, linking them to each other; `status.json` has the first as
 `pr_url` and all of them in `pr_urls`. GitHub only; private repositories
-work too, so give `--github store` a token that covers every one. The
+work too, as long as the box's GitHub token covers every one. The
 repositories need different names, and `--repo` cannot be combined with
 `--project`.
 
-**`--github` forward, store, off -- and why a goal needs store.**
-`forward` lends Claude your `gh` token per request, over the ssh connection
-you're attached with, and keeps nothing on the box; `store` logs a token
-you provide (`BOXCTL_GITHUB_TOKEN`, or pasted when asked -- make it a
-fine-grained token for one repository with Contents and Pull requests
-read/write and an expiry) into the box's `gh`, where it stays until the
-box is destroyed; `off` gives the box nothing. A goal runs after you
-close your terminal, when nothing is left to ask for your token, so
-forward could never push the branch or open the PR; `--goal` therefore
-requires `--github store` and stops immediately, saying how to set it up,
-if it's missing.
+**`--github` store, off -- and why a goal needs store.** `store` (the
+default) logs a token into the box's `gh`, where it stays until the box
+is destroyed: `BOXCTL_GITHUB_TOKEN` if set -- make it a fine-grained
+token for the repositories involved, with Contents and Pull requests
+read/write and an expiry -- and otherwise the token `gh` has on this
+machine. `off` gives the box nothing. A goal runs after you close your
+terminal and ends by pushing a branch and opening a PR, which it can't do
+without a token; `--goal` therefore refuses `--github off`, and stops
+before making a box if no token can be found.
 
 **Logging Claude in, once.** `boxctl claude login` runs `claude
 setup-token` here (one browser approval; Pro, Max, Team or Enterprise)
@@ -274,19 +272,15 @@ machine), and starts `claude` in tmux. Log it in once with `/login`: it
 prints a URL to open here and a code to paste back, and the login stays
 on the box.
 
-**GitHub.** While you're attached, Claude on the box can `git push` and
-`gh pr create`/`merge` as you: the box asks this machine for your `gh`
-token each time it needs one, over the ssh connection, and keeps nothing
-(`--github forward`, the default). Each use is logged to
-`~/.boxctl/claude/github.log`, and detaching prints a count. Detached,
-the box has no GitHub access. For work that has to reach GitHub while
-you're away, `--github store` keeps a token on the box until it's
-destroyed -- it asks you for one (or reads `BOXCTL_GITHUB_TOKEN`) rather
-than using your gh token, so make it a fine-grained token for just that
-repository. `--github off` gives the box nothing. Your git `user.name`
-and `user.email` are set on the box either way, so its commits are yours.
-Forwarding needs the `claude-agent` image's credential helper and `gh`
-wrapper (boxctl-vms `images/claude-agent/`).
+**GitHub.** Claude on the box can `git push` and `gh pr create`/`merge`
+as you, attached or not: a token is logged in to the box's `gh` when the
+box is set up and stays there until the box is destroyed (`--github
+store`, the default). It's `BOXCTL_GITHUB_TOKEN` if you set it -- the
+place for a fine-grained token for just that repository -- and otherwise
+the token `gh` has on this machine (`gh auth token`). With neither, the
+run goes on with a warning and the box can't reach GitHub. `--github off`
+gives the box nothing. Your git `user.name` and `user.email` are set on
+the box either way, so its commits are yours.
 
 **Handing off a session.** `--handoff <session-id>` (what the plugin's
 `/boxctl:handoff` runs) moves a local Claude Code session to the box:
@@ -497,16 +491,16 @@ report a vulnerability (security@boxctl.io).
   deletes before Claude starts. It's not in argv, not on the box's disk,
   not in an image, and not logged. Claude's process still holds it in its
   environment while it runs.
-- **GitHub (`--github`).** `forward` (default) lends your `gh auth token`
-  over a Unix socket only while you're attached; each use is logged to
-  `~/.boxctl/claude/github.log`. `store` (needed for `--goal` and other
-  work while you're away) keeps a token on the box until it's destroyed:
-  pass a fine-grained, single-repository token in `BOXCTL_GITHUB_TOKEN`.
-  `off` gives the box nothing.
+- **GitHub (`--github`).** `store` (default) keeps a token on the box
+  until it's destroyed -- in backups taken meanwhile too. It's
+  `BOXCTL_GITHUB_TOKEN` if set, else your `gh auth token`, which usually
+  reaches every repository you can: for anything long-lived, or a goal
+  box the idle reaper parks rather than deletes, set `BOXCTL_GITHUB_TOKEN`
+  to a fine-grained, single-repository token. `off` gives the box nothing.
 - **Where things live.** Locally: `~/.boxctl/config.json` (`0600`), the
-  Claude token, an ssh key, and the log above. On the box: the tmpfs
-  file only until Claude starts; a stored GitHub token if you chose
-  `store`. The Claude and GitHub tokens are not sent to the boxctl API.
+  Claude token and an ssh key. On the box: the tmpfs file only until
+  Claude starts; the stored GitHub token unless you chose `off`. The
+  Claude and GitHub tokens are not sent to the boxctl API.
 - **Server side.** The control plane stores only a SHA-256 hash of your
   boxctl token. `boxctl rm` stops the microVM and deletes its rootfs from
   the host; earlier backups are separate copies.

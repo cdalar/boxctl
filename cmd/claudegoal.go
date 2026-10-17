@@ -35,9 +35,8 @@ import (
 // status`, `claude ls` and `boxctl ls` read it from there, never from the
 // box (claudegoalstatus.go). `boxctl claude logs` reads the file.
 //
-// The run outlives the terminal, so the GitHub token can't be the
-// forwarded one, which is lent only while an ssh connection is up: goal
-// mode needs --github store.
+// The run outlives the terminal and ends in a pull request, so it needs
+// the GitHub token stored on the box: goal mode refuses --github off.
 
 const boxGoalsDir = "/root/.boxctl/goals"
 
@@ -106,8 +105,8 @@ func checkRepoFlags(goal, github string, conflicts []string) error {
 		return fmt.Errorf("--repo/--goal can't be combined with %s", strings.Join(conflicts, ", "))
 	}
 	if goal != "" && github != githubStore {
-		return fmt.Errorf(`--goal needs --github store, not %s: the run goes on after you close this terminal, and %s only works while you're attached.
-Give the box a token it keeps: set BOXCTL_GITHUB_TOKEN to a fine-grained token for just the repository (or repositories) involved (Contents and Pull requests read/write, with an expiry; https://github.com/settings/personal-access-tokens/new), or run from a terminal and paste it when asked, then add --github store`, github, github)
+		return fmt.Errorf(`--goal needs a GitHub token on the box to push its branch and open the pull request, so it can't run with --github %s.
+Leave --github at store: the box gets BOXCTL_GITHUB_TOKEN -- ideally a fine-grained token for just the repository (or repositories) involved, with Contents and Pull requests read/write and an expiry (https://github.com/settings/personal-access-tokens/new) -- or else the token gh has on this machine`, github)
 	}
 	return nil
 }
@@ -334,9 +333,9 @@ func runRepo(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	switch claudeGitHub {
-	case githubForward, githubStore, githubOff:
+	case githubStore, githubOff:
 	default:
-		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
+		return fmt.Errorf("--github must be %s or %s", githubStore, githubOff)
 	}
 	dirs, workDir := repoDirs(repos)
 	// A box with several repositories is named for the workspace, not for one of them.
@@ -369,7 +368,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	}
 	token := ""
 	if claudeGitHub == githubStore {
-		if token, err = readGitHubToken(name, strings.Join(repos, ", ")); err != nil {
+		if token, err = readGitHubToken(ctx); err != nil {
 			return err
 		}
 	}
@@ -380,7 +379,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	sess := taskSession{dir: workDir, tmux: agent.name, ghSocket: boxGitHubSocket}
+	sess := taskSession{dir: workDir, tmux: agent.name}
 	// An attended run's box goes when it ends, once its work is on GitHub
 	// (repoWorkPushed); a goal's stays until the server pauses it.
 	t := &claudeTarget{dir: workDir, name: name, box: box, ephemeral: goal == "" && ephemeralRun(), repoDirs: dirs, sess: sess}
@@ -397,12 +396,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	for i, repo := range repos {
 		fmt.Fprintf(os.Stderr, "Cloning %s on %s...\n", repo, name)
 		clone := cloneScript("https://github.com/"+repo+".git", dirs[i], branch)
-		if claudeGitHub == githubForward {
-			err = box.runForwarded(ctx, clone, boxGitHubSocket)
-		} else {
-			err = box.run(ctx, clone, nil)
-		}
-		if err != nil {
+		if err := box.run(ctx, clone, nil); err != nil {
 			return fmt.Errorf("cloning %s on %s: %w", repo, name, err)
 		}
 	}

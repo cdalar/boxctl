@@ -25,19 +25,17 @@ func TestParseRepo(t *testing.T) {
 }
 
 func TestCheckRepoFlags(t *testing.T) {
-	if err := checkRepoFlags("", githubForward, nil); err != nil {
-		t.Errorf("--repo alone with forward: %v", err)
+	if err := checkRepoFlags("", githubOff, nil); err != nil {
+		t.Errorf("--repo alone with off: %v", err)
 	}
 	if err := checkRepoFlags("do it", githubStore, nil); err != nil {
 		t.Errorf("goal with store: %v", err)
 	}
-	for _, gh := range []string{githubForward, githubOff} {
-		err := checkRepoFlags("do it", gh, nil)
-		if err == nil || !strings.Contains(err.Error(), "--github store") || !strings.Contains(err.Error(), "BOXCTL_GITHUB_TOKEN") {
-			t.Errorf("goal with %s: %v", gh, err)
-		}
+	err := checkRepoFlags("do it", githubOff, nil)
+	if err == nil || !strings.Contains(err.Error(), "--github off") || !strings.Contains(err.Error(), "BOXCTL_GITHUB_TOKEN") {
+		t.Errorf("goal with off: %v", err)
 	}
-	if err := checkRepoFlags("", githubForward, []string{"--task", "--handoff"}); err == nil || !strings.Contains(err.Error(), "--task, --handoff") {
+	if err := checkRepoFlags("", githubStore, []string{"--task", "--handoff"}); err == nil || !strings.Contains(err.Error(), "--task, --handoff") {
 		t.Errorf("conflicts: %v", err)
 	}
 }

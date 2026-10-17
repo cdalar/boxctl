@@ -12,14 +12,14 @@ import (
 
 func TestTaskSession(t *testing.T) {
 	main := newTaskSession("/w/app", "")
-	if main.dir != "/w/app" || main.tmux != "claude" || main.ghSocket != boxGitHubSocket {
+	if main.dir != "/w/app" || main.tmux != "claude" {
 		t.Errorf("main: %+v", main)
 	}
 	if main.attachHint("claude-app") != "boxctl claude --box claude-app" {
 		t.Error(main.attachHint("claude-app"))
 	}
 	auth := newTaskSession("/w/app", "auth")
-	if auth.dir != "/w/app@auth" || auth.tmux != "claude-auth" || auth.ghSocket != "/root/.boxctl/gh-auth.sock" {
+	if auth.dir != "/w/app@auth" || auth.tmux != "claude-auth" {
 		t.Errorf("task: %+v", auth)
 	}
 	if auth.attachHint("claude-app") != "boxctl claude --box claude-app --task auth" {
@@ -31,9 +31,8 @@ func TestTaskSession(t *testing.T) {
 }
 
 // TestSessionCommandTakesItsSecrets runs a session's command for real: it
-// must source the staged env file, delete it, point the GitHub helpers at
-// its socket, and run claude with the token in its environment -- never
-// in its arguments.
+// must source the staged env file, delete it, and run claude with the
+// token in its environment -- never in its arguments.
 func TestSessionCommandTakesItsSecrets(t *testing.T) {
 	root := t.TempDir()
 	s := newTaskSession("/w/app", "auth")
@@ -43,7 +42,7 @@ func TestSessionCommandTakesItsSecrets(t *testing.T) {
 
 	bin := t.TempDir()
 	write(t, filepath.Join(bin, "claude"), `#!/bin/sh
-echo "token=$CLAUDE_CODE_OAUTH_TOKEN socket=$BOXCTL_GH_SOCKET args=$*"
+echo "token=$CLAUDE_CODE_OAUTH_TOKEN args=$*"
 `)
 	if err := os.Chmod(filepath.Join(bin, "claude"), 0o755); err != nil {
 		t.Fatal(err)
@@ -54,7 +53,7 @@ echo "token=$CLAUDE_CODE_OAUTH_TOKEN socket=$BOXCTL_GH_SOCKET args=$*"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(string(out)); got != "token=sk-ant-oat01-secret socket=/root/.boxctl/gh-auth.sock args=" {
+	if got := strings.TrimSpace(string(out)); got != "token=sk-ant-oat01-secret args=" {
 		t.Errorf("claude saw %q", got)
 	}
 	if _, err := os.Stat(envFile); !os.IsNotExist(err) {
