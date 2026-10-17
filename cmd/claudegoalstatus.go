@@ -8,16 +8,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
-
-	"github.com/cdalar/boxctl/internal/client"
 )
 
 // How a --goal run went, as the box's runner records it
 // (<goalDir>/status.json, written by goalRun.runnerScript), and what
-// boxctl does with that: `claude ls` lists it, and a finished run's box is
-// paused once nothing uses it (deleted, if it opened a pull request),
-// rather than running on until its idle TTL.
+// boxctl does with that: `claude ls` lists it. Neither ls nor logs pauses
+// or deletes a box: a finished run's box is left to its idle TTL.
 //
 // The status lives on the box, so a paused box's can't be read without
 // resuming it. Each one read is kept in ~/.boxctl/claude/goals.json, which
@@ -37,11 +33,6 @@ type goalStatus struct {
 }
 
 func (s goalStatus) finished() bool { return s.Status == "done" || s.Status == "failed" }
-
-// goalPauseAfter is how long a finished goal's box has to have gone
-// unused before `claude ls` pauses it, so a box someone is looking into
-// isn't paused under them.
-const goalPauseAfter = 10 * time.Minute
 
 // goalStatusScript prints the latest goal's status.json, or nothing for a
 // box without a goal.
@@ -87,77 +78,6 @@ func readGoalStatus(ctx context.Context, box *boxSSH) (*goalStatus, error) {
 		return nil, err
 	}
 	return parseGoalStatus(out)
-}
-
-// goalSettled is what settleFinishedGoal did with a finished goal's box.
-type goalSettled int
-
-const (
-	goalKept goalSettled = iota
-	goalPaused
-	goalDeleted
-)
-
-// hasPR reports whether the run opened a pull request: its work is on
-// GitHub then, and the box has nothing left that isn't. The box wrote the
-// URL, so only a GitHub one counts.
-func (s goalStatus) hasPR() bool {
-	return s.Status == "done" && strings.HasPrefix(s.PRURL, "https://github.com/")
-}
-
-// settleFinishedGoal deals with vm, whose goal has finished, when it's
-// running and unused: either the caller knows it is, or the server hasn't
-// seen it used for goalPauseAfter. A run that opened a pull request has
-// its work on GitHub, so its box is deleted; any other (failed, or done
-// without a PR) is paused, its log and branch still on it.
-func settleFinishedGoal(ctx context.Context, c *client.Client, vm *client.VM, st *goalStatus, unused bool) (goalSettled, error) {
-	if !st.finished() {
-		return goalKept, nil
-	}
-	if !unused && (vm.LastActivityAt == nil || time.Since(*vm.LastActivityAt) < goalPauseAfter) {
-		return goalKept, nil
-	}
-	if st.hasPR() {
-		if err := c.Destroy(ctx, vm.Name); err != nil {
-			return goalKept, fmt.Errorf("deleting %s: %w", vm.Name, err)
-		}
-		fmt.Fprintf(os.Stderr, "Deleted %s: its goal is done and the pull request is open (%s).\n", vm.Name, st.PRURL)
-		return goalDeleted, nil
-	}
-	if _, err := c.Pause(ctx, vm.Name); err != nil {
-		return goalKept, fmt.Errorf("pausing %s: %w", vm.Name, err)
-	}
-	fmt.Fprintf(os.Stderr, "Paused %s: its goal is %s. boxctl resume %s to look at it again.\n", vm.Name, st.Status, vm.Name)
-	return goalPaused, nil
-}
-
-// forgetGoal drops a deleted box's remembered status.
-func forgetGoal(name string) {
-	p := goalCachePath()
-	if p == "" {
-		return
-	}
-	m := loadGoalCache()
-	if _, ok := m[name]; !ok {
-		return
-	}
-	delete(m, name)
-	if b, err := json.MarshalIndent(m, "", "  "); err == nil {
-		_ = os.WriteFile(p, b, 0o600)
-	}
-}
-
-func findVM(ctx context.Context, c *client.Client, name string) (*client.VM, error) {
-	vms, err := c.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for i := range vms {
-		if vms[i].Name == name {
-			return &vms[i], nil
-		}
-	}
-	return nil, fmt.Errorf("no box %s", name)
 }
 
 // runBoxID is the -<id> a generated box name ends with.

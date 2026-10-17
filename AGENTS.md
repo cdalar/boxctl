@@ -203,14 +203,11 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   to the control plane (boxctl-vms's `docs/plans/run-status.md`); a row
   with that `run_status` is read from it, running or paused, with no ssh,
   and a box without it (no vsock device, an older image or server) falls
-  back to what follows. Nothing on the box
-  can pause it (it has no boxctl token), so `ls` pauses a box whose goal
-  has finished once the server's `last_activity_at` is 10 minutes old,
-  and `logs` pauses it after following it to the end or resuming it to
-  read it (`settleFinishedGoal`). A run that opened a PR (`hasPR`: done,
-  GitHub `pr_url`) has its work on GitHub, so its box is deleted
-  instead; failed runs and done-without-a-PR ones are only paused, their
-  log still on them. A paused box's status can't be read without resuming it, so
+  back to what follows. `ls` and `logs` only read: neither pauses nor
+  deletes a box. A goal box's `boxctl.pause-when-done=10m` label
+  (`goalPauseWhenDone`) has boxctl-vms's idle reaper pause it once its
+  `run_status` is done/failed and it's gone 10 minutes unused. A paused box's
+  status can't be read without resuming it, so
   `ls` shows the last one it read, kept in `~/.boxctl/claude/goals.json`.
   Only an `https://github.com/` `pr_url` is shown: the box wrote it.
   `--issue N` (`issueGoal`) is a goal that only names the repository's
