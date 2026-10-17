@@ -417,9 +417,7 @@ var claudeLogsCmd = &cobra.Command{
 	Short: "Show how a --goal run on a box is going",
 	Long: `Prints the status of the box's latest --goal run (running, done or failed,
 and the pull request's URL), then its log: Claude's output as JSON lines.
--f keeps following it until the run ends. A finished run's box is paused
-afterwards, if it was paused before or you followed it to the end -- or
-deleted, when the run opened a pull request.`,
+-f keeps following it until the run ends.`,
 	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeBoxName,
 	RunE: claudeAgent.runs(func(cmd *cobra.Command, args []string) error {
@@ -433,11 +431,6 @@ func init() {
 }
 
 func goalLogs(ctx context.Context, name string, follow bool) error {
-	c := newClient()
-	vm, err := findVM(ctx, c, name)
-	if err != nil {
-		return err
-	}
 	box, err := connectClaudeBox(ctx, name, false, false)
 	if err != nil {
 		return err
@@ -451,14 +444,7 @@ func goalLogs(ctx context.Context, name string, follow bool) error {
 		return err
 	}
 	rememberGoals(map[string]goalStatus{name: *st}, nil)
-	// Followed to the end, or resumed just to read it: nobody else is
-	// using the box, so it needn't run on.
-	unused := follow || vm.State != "running"
-	out, err := settleFinishedGoal(ctx, c, vm, st, unused, true)
-	if out == goalDeleted {
-		forgetGoal(name)
-	}
-	return err
+	return nil
 }
 
 // logsScript prints the latest goal's status and log. Following, it

@@ -154,7 +154,6 @@ func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]
 	inParallel(fns...)
 
 	fresh := map[string]goalStatus{}
-	c := newClient()
 	var buf bytes.Buffer
 	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "RUN BOX\tSTATE\tGOAL\tUPDATED\tBRANCH\tPULL REQUEST")
@@ -180,15 +179,6 @@ func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]
 		case st != nil:
 			st.Projects = project[i]
 			fresh[vm.Name] = *st
-			if vm.State != "running" {
-				break
-			}
-			out, err := settleFinishedGoal(ctx, c, &vm, st, false, false)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-			} else if out == goalPaused {
-				state = "paused"
-			}
 		default: // not running: what ls saw last
 			if s, ok := cached[vm.Name]; !ok {
 				goal = "?"
