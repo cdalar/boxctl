@@ -83,14 +83,17 @@ with an origin is cloned from it -- the default branch, then a new
 branch boxctl/<project>-<random> for Claude to work on; nothing local,
 uncommitted or unpushed, goes -- and anything else is copied. Then it
 installs Claude Code and your Claude configuration, and starts Claude in
-it. When Claude exits, you
-detach (Ctrl-b d) or the connection drops, the box's branches and
-uncommitted work are fetched here as box/* (as boxctl claude fetch does)
-and the box is deleted.
+it. When Claude exits or you
+detach (Ctrl-b d), the box's branches and uncommitted work are fetched
+here as box/* (as boxctl claude fetch does) and the box is deleted.
+
+A dropped connection doesn't end the run: Claude keeps going on the box
+and boxctl reconnects as soon as it can reach it again. Ctrl-C while
+it's reconnecting gives up and keeps the box, to come back to with --box.
 
 --keep uses the project's own box (claude-<project>) instead, and keeps
-it: Claude runs in tmux, so it keeps going when you detach or the
-connection drops, and boxctl claude --keep comes back to it. The box's
+it: Claude runs in tmux, so it keeps going when you detach, and
+boxctl claude --keep comes back to it. The box's
 copy of the project is the one Claude works on: later runs don't copy it
 again, and nothing is synced back -- Claude commits and pushes from the
 box. --box, --detach and --task keep their box too.
@@ -107,12 +110,10 @@ box. --box, --detach and --task keep their box too.
 The first time, log Claude in on the box with /login: it prints a URL to
 open here and a code to paste back. That login stays on the box.
 
-GitHub: while you're attached, the box borrows your gh token for git
-push and gh pr ... -- it asks this machine per use, over the ssh
-connection, and keeps nothing (--github forward, the default; each use is
-logged to ~/.boxctl/claude/github.log). Detached, it has none. For work
-that must reach GitHub while you're away, --github store keeps a token
-you paste on the box -- make it a fine-grained one for this repository.
+GitHub: the box gets a token for git push and gh pr ..., logged in to
+its gh and kept until the box is destroyed (--github store, the default):
+BOXCTL_GITHUB_TOKEN if set -- the place for a fine-grained token scoped
+to this repository -- and otherwise the token gh has on this machine.
 --github off gives it nothing. Your git user.name and user.email are set
 on the box either way.
 
@@ -127,8 +128,6 @@ prints the box, the branch and how to follow it, and returns. Without
 reads it (and its comments) with gh, resolves it, and opens a pull request
 that closes it; --goal then adds instructions to it. The repository is
 --repo's, or this directory's origin.
-That run outlives this terminal, so it can't use --github forward, which
-only works while you're attached: it needs --github store.
 boxctl claude logs <box> shows how it's going.`,
 	RunE: claudeAgent.runs(runClaude),
 }
@@ -137,9 +136,9 @@ func init() {
 	claudeAgent.addFlags(claudeCmd)
 	claudeCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Claude Code session (its ID) on the box")
 	claudeCmd.Flags().StringSliceVarP(&claudeRepos, "repo", "R", nil, "GitHub repository (owner/name) to clone on a new box, on a new boxctl/... branch; repeat or comma-separate for several, cloned side by side (with --goal: default is this directory's origin)")
-	claudeCmd.Flags().StringVar(&claudeGoal, "goal", "", "a goal for Claude to carry out unattended, ending in a pull request (needs --github store)")
-	claudeCmd.Flags().IntVar(&claudeIssue, "issue", 0, "number of a GitHub issue for Claude to resolve unattended, ending in a pull request that closes it (needs --github store; one repository)")
 	claudeCmd.Flags().StringVar(&claudeHarnessArg, "harness", "", "rules for Claude on the box: a directory (CLAUDE.md, managed-settings.json, agents/ skills/ commands/) or a name under ~/.boxctl/harness; none for no harness (default: ~/.boxctl/harness/default, else for --goal/--issue the built-in pr-only)")
+	claudeCmd.Flags().StringVar(&claudeGoal, "goal", "", "a goal for Claude to carry out unattended, ending in a pull request")
+	claudeCmd.Flags().IntVar(&claudeIssue, "issue", 0, "number of a GitHub issue for Claude to resolve unattended, ending in a pull request that closes it (one repository)")
 	claudeCmd.Flags().StringVar(&claudeAuth, "claude-auth", claudeAuthAuto, "how Claude on the box logs in: auto (the token boxctl claude login saved, else /login), token, login or api-key")
 	_ = claudeCmd.RegisterFlagCompletionFunc("claude-auth", cobra.FixedCompletions([]string{claudeAuthAuto, claudeAuthToken, claudeAuthLogin, claudeAuthAPIKey}, cobra.ShellCompDirectiveNoFileComp))
 	rootCmd.AddCommand(claudeCmd)
@@ -247,9 +246,9 @@ func runClaude(cmd *cobra.Command, args []string) error {
 // anything is done.
 func checkSessionFlags() error {
 	switch claudeGitHub {
-	case githubForward, githubStore, githubOff:
+	case githubStore, githubOff:
 	default:
-		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
+		return fmt.Errorf("--github must be %s or %s", githubStore, githubOff)
 	}
 	return resolveTask()
 }
@@ -300,11 +299,11 @@ func openSession(ctx context.Context, setTTL bool, alongside func(*boxSSH, taskS
 		sayNote("Ephemeral: %s is deleted when %s exits or you detach, after its work is fetched here as box/* (--keep keeps it)", t.name, agent.title)
 	}
 	// Before the project, which a clone may need it for -- and before
-	// anything runs alongside, as it may ask for the token.
+	// anything runs alongside, as it may ask for the token. Without one
+	// the run goes on: the box just can't reach GitHub.
 	if claudeGitHub == githubStore {
-		if err := storeGitHubToken(ctx, t.box, githubRepo(t.dir)); err != nil {
-			t.end()
-			return nil, taskSession{}, err
+		if err := storeGitHubToken(ctx, t.box); err != nil {
+			sayWarn("%v", err)
 		}
 	}
 	sess := newTaskSession(t.dir, claudeTask)
@@ -412,7 +411,14 @@ func startSession(ctx context.Context, t *claudeTarget, sess taskSession, runnin
 		sayDone("%s is running on %s -- attach with: %s", agent.title, bold(t.name), sess.attachHint(t.name))
 		return nil
 	}
-	return attachClaude(ctx, t.box, sess, sess.tmuxCommand(line, false))
+	err := attachClaude(ctx, t.box, sess, sess.tmuxCommand(line, false))
+	if errors.Is(err, errConnectionLost) {
+		// The session is still running there, so its box isn't this
+		// run's to end: an ephemeral one is kept, work and all.
+		t.ephemeral = false
+		return fmt.Errorf("lost the connection to %s, where %s is still running -- attach again with: %s", t.name, agent.title, sess.attachHint(t.name))
+	}
+	return err
 }
 
 // resolveTask checks --task and --own-box, and turns --own-box into the
@@ -438,75 +444,12 @@ func resolveTask() error {
 	return nil
 }
 
-// attachClaude attaches to Claude on the box, lending it GitHub
-// credentials for as long as the attach lasts unless --github says not to.
+// attachClaude attaches to Claude on the box. A dropped connection is
+// reconnected (see reattach) rather than taken for the end of the
+// session; errConnectionLost means you gave up on reconnecting, with
+// Claude still running there.
 func attachClaude(ctx context.Context, box *boxSSH, sess taskSession, command string) error {
-	if claudeGitHub != githubForward {
-		return box.attach(ctx, command, nil)
-	}
-	logPath := githubLogPath()
-	srv, err := startTokenServer(box.name, logPath)
-	if err != nil {
-		sayWarn("not forwarding GitHub credentials: %v", err)
-		return box.attach(ctx, command, nil)
-	}
-	// A socket a dropped connection left behind would stop sshd binding
-	// the new one on an image without StreamLocalBindUnlink.
-	_ = box.run(ctx, "rm -f "+shellQuote(sess.ghSocket), nil)
-	err = box.attach(ctx, command, []string{"-R", sess.ghSocket + ":" + srv.socket})
-	// Without the socket the box's helpers say "attach to forward", rather
-	// than failing to reach a stale one.
-	_ = box.run(context.Background(), "rm -f "+shellQuote(sess.ghSocket), nil)
-	if given, refused := srv.close(); given+refused > 0 {
-		used := fmt.Sprintf("%s used your GitHub token %d time(s)", box.name, given)
-		if refused > 0 {
-			used += fmt.Sprintf(", %d refused", refused)
-		}
-		sayNote("%s (%s)", used, logPath)
-	}
-	return err
-}
-
-// githubLogPath is where each use of the forwarded token is logged.
-func githubLogPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".boxctl", "claude", "github.log")
-}
-
-// runForwarded runs command on the box with your gh token lent to it for
-// as long as it runs (--github forward). The forward is added to the
-// shared connection for that time (ssh -O forward) rather than given a
-// connection of its own, which would cost a new tunnel and handshake.
-func (b *boxSSH) runForwarded(ctx context.Context, command, boxSocket string) error {
-	srv, err := startTokenServer(b.name, githubLogPath())
-	if err != nil {
-		sayWarn("not forwarding GitHub credentials: %v", err)
-		return b.run(ctx, command, nil)
-	}
-	defer srv.close()
-	fwd := boxSocket + ":" + srv.socket
-	_ = b.run(ctx, "rm -f "+shellQuote(boxSocket), nil)
-	if err := b.control("forward", "-R", fwd); err != nil {
-		sayWarn("not forwarding GitHub credentials: %v", err)
-		return b.run(ctx, command, nil)
-	}
-	defer func() { _ = b.control("cancel", "-R", fwd) }()
-	// Without the socket the box's helpers say "attach to forward", rather
-	// than failing to reach a stale one.
-	return b.run(ctx, "trap "+shellQuote("rm -f "+shellQuote(boxSocket))+" EXIT\n"+command, nil)
-}
-
-// control asks the shared connection's master to do op (ssh -O op).
-func (b *boxSSH) control(op string, extra ...string) error {
-	argv := append(append([]string{"-O", op}, extra...), b.args...)
-	out, err := exec.Command("ssh", argv...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("ssh -O %s: %w: %s", op, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return reattach(ctx, box, sess, func() error { return box.attach(ctx, command) })
 }
 
 // claudeTarget is the project here and its box, reachable over ssh.
@@ -517,6 +460,11 @@ type claudeTarget struct {
 	needsCopy bool
 	// ephemeral: the box is this run's, deleted by end.
 	ephemeral bool
+	// repoDirs, for a --repo run: the clones end checks are on GitHub
+	// (repoWorkPushed) instead of fetching them here; sess is the
+	// session that keeps the box while it runs.
+	repoDirs []string
+	sess     taskSession
 }
 
 // openClaudeBox resolves the project and its box (--box, or
@@ -536,7 +484,7 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 	if create && newBoxLabels == nil {
 		newBoxLabels = sessionLabels("box", dir, "")
 	}
-	box, err := connectClaudeBox(ctx, name, create, setTTL)
+	box, err := connectClaudeBox(ctx, name, dir, create, setTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -559,9 +507,9 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 // connectClaudeBox makes sure the box name is running (created first when
 // create is set), authorized for boxctl's key and reachable over ssh,
 // with its idle TTL set when it's new or setTTL says to.
-func connectClaudeBox(ctx context.Context, name string, create, setTTL bool) (*boxSSH, error) {
+func connectClaudeBox(ctx context.Context, name, dir string, create, setTTL bool) (*boxSSH, error) {
 	c := newClient()
-	created, err := ensureClaudeBox(ctx, c, name, create)
+	created, err := ensureClaudeBox(ctx, c, name, dir, create)
 	if err != nil {
 		return nil, err
 	}
@@ -674,6 +622,12 @@ var slugUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)
 // <agent>-<directory name, slugged, at most 20 chars>, so claude-<dir>
 // for Claude.
 func claudeBoxName(dir string) string {
+	return agent.name + "-" + projectSlug(dir)
+}
+
+// projectSlug is dir's name as the project's box has it: slugged, at
+// most 20 characters.
+func projectSlug(dir string) string {
 	slug := slugUnsafe.ReplaceAllString(strings.ToLower(filepath.Base(dir)), "-")
 	if len(slug) > 20 {
 		slug = slug[:20]
@@ -682,12 +636,13 @@ func claudeBoxName(dir string) string {
 	if slug == "" {
 		slug = "project"
 	}
-	return agent.name + "-" + slug
+	return slug
 }
 
 // ensureClaudeBox resumes name if it exists, or creates it when create
-// is set, reporting whether it did.
-func ensureClaudeBox(ctx context.Context, c *client.Client, name string, create bool) (created bool, err error) {
+// is set, reporting whether it did. dir is the local project, whose stack
+// picks the image when --image isn't given ("" for none).
+func ensureClaudeBox(ctx context.Context, c *client.Client, name, dir string, create bool) (created bool, err error) {
 	vms, err := c.List(ctx)
 	if err != nil {
 		return false, err
@@ -700,9 +655,10 @@ func ensureClaudeBox(ctx context.Context, c *client.Client, name string, create 
 	if !create {
 		return false, fmt.Errorf("no box %s -- start one with boxctl %s", name, agent.name)
 	}
-	detail := dim("(" + claudeImage + ", " + claudeSize + ")")
+	image := imageFor(ctx, c, dir)
+	detail := dim("(" + image + ", " + claudeSize + ")")
 	sp := startSpinner(fmt.Sprintf("Creating %s %s", bold(name), detail))
-	if _, err := c.Create(ctx, name, "", claudeImage, claudeSize, newBoxLabels); err != nil {
+	if _, err := c.Create(ctx, name, "", image, claudeSize, newBoxLabels); err != nil {
 		sp.fail(fmt.Sprintf("%s: %v", name, err))
 		return false, fmt.Errorf("creating %s: %w", name, err)
 	}
@@ -824,13 +780,13 @@ func (b *boxSSH) gitSSHCommand() string {
 	return strings.Join(words, " ")
 }
 
-// attach runs command on the box with a terminal, returning when it ends,
-// with extra ssh arguments (a socket forward). It gets a connection of its
-// own rather than sharing the control master, so a forward lives exactly
-// as long as the attach: ssh takes the first value of an option it's
+// attach runs command on the box with a terminal, returning when it ends.
+// It gets a connection of its own rather than sharing the control master,
+// so the keepalive settings in attachArgs are its own (a multiplexed
+// session has the master's): ssh takes the first value of an option it's
 // given, so ControlPath=none here beats the shared one in b.args.
-func (b *boxSSH) attach(ctx context.Context, command string, extra []string) error {
-	cmd := exec.CommandContext(ctx, "ssh", b.attachArgs(command, extra)...)
+func (b *boxSSH) attach(ctx context.Context, command string) error {
+	cmd := exec.CommandContext(ctx, "ssh", b.attachArgs(command)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	// The box has terminfo for the common terminals, not for every one
 	// (xterm-ghostty, xterm-kitty), and tmux won't start without it.
@@ -838,6 +794,11 @@ func (b *boxSSH) attach(ctx context.Context, command string, extra []string) err
 	err := cmd.Run()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
+		if exitErr.ExitCode() == 255 {
+			// ssh's own failure: the connection dropped under the attach.
+			resetTerminal()
+			return errConnectionLost
+		}
 		// Detaching or quitting Claude ends ssh normally; anything else
 		// was already printed by ssh or the box.
 		return nil
@@ -845,8 +806,12 @@ func (b *boxSSH) attach(ctx context.Context, command string, extra []string) err
 	return err
 }
 
-func (b *boxSSH) attachArgs(command string, extra []string) []string {
-	argv := append([]string{"-t", "-o", "ControlPath=none", "-o", "ExitOnForwardFailure=no"}, extra...)
+// attachArgs: a dead connection is given up on after 30s rather than
+// b.args' 90s (ssh takes an option's first value), so a train going
+// through a tunnel reconnects (see attachClaude) soon after it's out.
+func (b *boxSSH) attachArgs(command string) []string {
+	argv := []string{"-t", "-o", "ControlPath=none",
+		"-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"}
 	return append(append(argv, b.args...), command)
 }
 

@@ -8,9 +8,12 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/cdalar/boxctl/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -27,13 +30,13 @@ import (
 // directory, every repository gets the same new branch, and a goal ends in
 // one pull request per repository Claude changed.
 //
-// That status is on the box, read by `boxctl claude logs` and `ls`
-// (claudegoalstatus.go): boxctl-vms has no per-box metadata API to put it
-// in yet.
+// The box also reports that status to the server over vsock
+// (boxctl-status), which keeps it as the box's run_status: `boxctl claude
+// status`, `claude ls` and `boxctl ls` read it from there, never from the
+// box (claudegoalstatus.go). `boxctl claude logs` reads the file.
 //
-// The run outlives the terminal, so the GitHub token can't be the
-// forwarded one, which is lent only while an ssh connection is up: goal
-// mode needs --github store.
+// The run outlives the terminal and ends in a pull request, so it needs
+// the GitHub token stored on the box: goal mode refuses --github off.
 
 const boxGoalsDir = "/root/.boxctl/goals"
 
@@ -102,8 +105,8 @@ func checkRepoFlags(goal, github string, conflicts []string) error {
 		return fmt.Errorf("--repo/--goal can't be combined with %s", strings.Join(conflicts, ", "))
 	}
 	if goal != "" && github != githubStore {
-		return fmt.Errorf(`--goal needs --github store, not %s: the run goes on after you close this terminal, and %s only works while you're attached.
-Give the box a token it keeps: set BOXCTL_GITHUB_TOKEN to a fine-grained token for just the repository (or repositories) involved (Contents and Pull requests read/write, with an expiry; https://github.com/settings/personal-access-tokens/new), or run from a terminal and paste it when asked, then add --github store`, github, github)
+		return fmt.Errorf(`--goal needs a GitHub token on the box to push its branch and open the pull request, so it can't run with --github %s.
+Leave --github at store: the box gets BOXCTL_GITHUB_TOKEN -- ideally a fine-grained token for just the repository (or repositories) involved, with Contents and Pull requests read/write and an expiry (https://github.com/settings/personal-access-tokens/new) -- or else the token gh has on this machine`, github)
 	}
 	return nil
 }
@@ -211,11 +214,15 @@ wait
 
 // cloneScript clones url's default branch into dir and branches. It
 // refuses a directory that's there: a --box that holds something already.
+// The clone fetches one branch, but maps them all, so that pushing
+// another one leaves a remote-tracking ref -- repoWorkPushed's evidence
+// that it's on GitHub.
 func cloneScript(url, dir, branch string) string {
 	return `set -e
 [ ! -e ` + shellQuote(dir) + ` ] || { echo "` + dir + ` already exists on this box" >&2; exit 1; }
 mkdir -p "$(dirname ` + shellQuote(dir) + `)"
 git clone -q --single-branch ` + shellQuote(url) + ` ` + shellQuote(dir) + `
+git -C ` + shellQuote(dir) + ` config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
 git -C ` + shellQuote(dir) + ` checkout -q -b ` + shellQuote(branch)
 }
 
@@ -326,9 +333,9 @@ func runRepo(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	switch claudeGitHub {
-	case githubForward, githubStore, githubOff:
+	case githubStore, githubOff:
 	default:
-		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
+		return fmt.Errorf("--github must be %s or %s", githubStore, githubOff)
 	}
 	dirs, workDir := repoDirs(repos)
 	// A box with several repositories is named for the workspace, not for one of them.
@@ -361,18 +368,22 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	}
 	token := ""
 	if claudeGitHub == githubStore {
-		if token, err = readGitHubToken(name, strings.Join(repos, ", ")); err != nil {
+		if token, err = readGitHubToken(ctx); err != nil {
 			return err
 		}
 	}
 	branch := gen.branch()
 	newBoxLabels = runLabels(goal != "", repos, branch, claudeIssue)
 
-	box, err := connectClaudeBox(ctx, name, true, cmd.Flags().Changed("idle-ttl"))
+	box, err := connectClaudeBox(ctx, name, "", true, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {
 		return err
 	}
-	defer box.close()
+	sess := taskSession{dir: workDir, tmux: agent.name}
+	// An attended run's box goes when it ends, once its work is on GitHub
+	// (repoWorkPushed); a goal's stays until the server pauses it.
+	t := &claudeTarget{dir: workDir, name: name, box: box, ephemeral: goal == "" && ephemeralRun(), repoDirs: dirs, sess: sess}
+	defer t.end()
 
 	if token != "" {
 		if err := loginGitHubToken(ctx, box, token); err != nil {
@@ -385,12 +396,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	for i, repo := range repos {
 		fmt.Fprintf(os.Stderr, "Cloning %s on %s...\n", repo, name)
 		clone := cloneScript("https://github.com/"+repo+".git", dirs[i], branch)
-		if claudeGitHub == githubForward {
-			err = box.runForwarded(ctx, clone, boxGitHubSocket)
-		} else {
-			err = box.run(ctx, clone, nil)
-		}
-		if err != nil {
+		if err := box.run(ctx, clone, nil); err != nil {
 			return fmt.Errorf("cloning %s on %s: %w", repo, name, err)
 		}
 	}
@@ -410,13 +416,16 @@ func runRepo(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: couldn't skip Claude's first-run setup on %s: %v\n", name, err)
 	}
 
-	sess := taskSession{dir: workDir, tmux: agent.name, ghSocket: boxGitHubSocket}
 	if goal == "" {
 		if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
 			return fmt.Errorf("passing Claude its credentials: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "On branch %s. Come back to Claude with: boxctl claude --box %s\n", branch, name)
-		return startSession(ctx, &claudeTarget{dir: workDir, name: name, box: box}, sess, false, args)
+		if t.ephemeral {
+			fmt.Fprintf(os.Stderr, "On branch %s. %s is deleted when Claude quits, unless it has work that isn't pushed to GitHub (--keep keeps it).\n", branch, name)
+		} else {
+			fmt.Fprintf(os.Stderr, "On branch %s. Come back to Claude with: boxctl claude --box %s\n", branch, name)
+		}
+		return startSession(ctx, t, sess, false, args)
 	}
 
 	sess.tmux = agent.name + "-goal-" + id
@@ -436,8 +445,97 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if len(repos) > 1 {
 		fmt.Printf("Repos:  %s\n", strings.Join(repos, ", "))
 	}
-	fmt.Printf("Box:    %s\nBranch: %s\nLogs:   boxctl claude logs %s [-f]\n", name, branch, name)
+	fmt.Printf("Box:    %s\nBranch: %s\nLogs:   boxctl claude logs %s [-f]\nStatus: boxctl claude status %s [--wait]\n", name, branch, name, name)
 	return nil
+}
+
+// --- boxctl claude status -------------------------------------------------
+
+var claudeStatusWait bool
+
+var claudeStatusCmd = &cobra.Command{
+	Use:   "status <box>",
+	Short: "Show how a --goal run on a box is going, without connecting to it",
+	Long: `Prints the box's row from claude ls: its state, how its goal is going,
+when that last changed, its branch and its pull request -- from what the
+box reports to the server, so it works on a paused box too.
+
+--wait waits for the goal to finish, then exits 0 if it's done and 1 if
+it failed, so a script can wait for a run:
+
+  boxctl claude status --wait goal-boxctl-fix-login-a1b2 && echo merged`,
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeBoxName,
+	RunE: claudeAgent.runs(func(cmd *cobra.Command, args []string) error {
+		return goalStatusOf(cmd.Context(), args[0], claudeStatusWait)
+	}),
+}
+
+func init() {
+	claudeStatusCmd.Flags().BoolVar(&claudeStatusWait, "wait", false, "wait for the goal to finish; exit 1 if it failed")
+	claudeCmd.AddCommand(claudeStatusCmd)
+}
+
+// goalStatusPoll is how often status --wait lists the boxes again. A box
+// reports within a second of a change (boxctl-vms's run-status.md).
+var goalStatusPoll = 5 * time.Second
+
+func goalStatusOf(ctx context.Context, name string, wait bool) error {
+	c := newClient()
+	var sp *spinner
+	stop := func() {
+		if sp != nil {
+			sp.end("")
+			sp = nil
+		}
+	}
+	defer stop()
+	for {
+		vms, err := c.List(ctx)
+		if err != nil {
+			return err
+		}
+		i := slices.IndexFunc(vms, func(vm client.VM) bool { return vm.Name == name })
+		if i < 0 {
+			return fmt.Errorf("no box %s", name)
+		}
+		vm := vms[i]
+		st, err := parseGoalStatus(vm.RunStatus)
+		switch {
+		case err != nil:
+			return fmt.Errorf("%s: %w", name, err)
+		case !wait || (st != nil && st.finished()):
+			stop()
+			printRunStatus(vm)
+			if wait && st.Status == "failed" {
+				return fmt.Errorf("%s's goal failed%s", name, goalError(st))
+			}
+			return nil
+		case st == nil && vm.Labels["boxctl.run"] != "goal":
+			return fmt.Errorf("%s isn't running a goal", name)
+		case st == nil:
+			return fmt.Errorf("%s reports no goal status (an image from before boxctl-status)\nboxctl claude logs -f %s follows it on the box", name, name)
+		}
+		msg := fmt.Sprintf("Waiting for %s's goal (%s)", name, st.Status)
+		if sp == nil {
+			sp = startSpinner(msg)
+		} else {
+			sp.setDetail(msg)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(goalStatusPoll):
+		}
+	}
+}
+
+// goalError is ": <error>" for a failed goal that said why, "" otherwise.
+func goalError(st *goalStatus) string {
+	if st.Error == "" {
+		return ""
+	}
+	return ": " + st.Error
 }
 
 // --- boxctl claude logs ---------------------------------------------------
@@ -465,7 +563,7 @@ func init() {
 }
 
 func goalLogs(ctx context.Context, name string, follow bool) error {
-	box, err := connectClaudeBox(ctx, name, false, false)
+	box, err := connectClaudeBox(ctx, name, "", false, false)
 	if err != nil {
 		return err
 	}
@@ -482,15 +580,7 @@ func goalLogs(ctx context.Context, name string, follow bool) error {
 			err = ferr
 		}
 	}
-	if err != nil {
-		return err
-	}
-	st, err := readGoalStatus(ctx, box)
-	if err != nil || !st.finished() {
-		return err
-	}
-	rememberGoals(map[string]goalStatus{name: *st}, nil)
-	return nil
+	return err
 }
 
 // logsScript prints the latest goal's status and log. Following, it

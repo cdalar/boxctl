@@ -111,17 +111,9 @@ func cloneURL(dir string) string {
 // cloneProject clones url's default branch to dir on the box -- the same
 // absolute path as here -- and starts branch from it, for Claude to work
 // on. Nothing local goes: not uncommitted changes, not unpushed commits.
-// With --github forward, your GitHub token is lent for the clone, as it
-// is while you're attached.
+// A private GitHub repository needs the token stored on the box first.
 func cloneProject(ctx context.Context, box *boxSSH, dir, url, branch string) error {
-	script := cloneScript(url, dir, branch)
-	var err error
-	if claudeGitHub == githubForward {
-		err = box.runForwarded(ctx, script, boxGitHubSocket)
-	} else {
-		err = box.run(ctx, script, nil)
-	}
-	if err != nil {
+	if err := box.run(ctx, cloneScript(url, dir, branch), nil); err != nil {
 		return fmt.Errorf("cloning %s on %s: %w", url, box.name, err)
 	}
 	sayDone("Cloned %s %s", bold(strings.TrimSuffix(strings.TrimPrefix(url, "https://github.com/"), ".git")), dim("on branch "+branch))

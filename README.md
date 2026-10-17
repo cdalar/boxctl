@@ -1,15 +1,46 @@
 # boxctl
 
-`boxctl` is the command-line client for [boxctl.io](https://boxctl.io) —
-boot, list, connect to, and destroy your Firecracker microVMs ("boxes")
-without opening the dashboard. It talks to the same `boxctl-vms` control
-plane the web dashboard does, authenticating as you with a personal API
-token instead of a browser session.
+[![Release](https://img.shields.io/github/v/release/cdalar/boxctl)](https://github.com/cdalar/boxctl/releases)
 
-It's a client only: all VM lifecycle logic (dispatching `onctl`, tracking
-state, the terminal tunnel) lives in `boxctl-vms` (separate repo). See
-that repo's `AGENTS.md`/`README.md` for the backend architecture, and
-`boxctl-web`'s `AGENTS.md` for the dashboard this mirrors.
+**Firecracker microVMs ("boxes") from your terminal.** `boxctl` is the
+command-line client for [boxctl.io](https://boxctl.io): boot, connect to,
+expose and destroy boxes, and run Claude Code or Kilo on one, without
+opening the dashboard.
+
+```bash
+curl -sLS https://boxctl.io/get.sh | bash   # install
+boxctl login                                # paste a token from boxctl.io/dashboard/tokens
+boxctl create my-box                        # boot a box
+boxctl ssh my-box                           # get a shell
+boxctl expose my-box 3000                   # public https URL for port 3000
+boxctl rm my-box                            # done
+```
+
+## Contents
+
+- [Install](#install) · [Usage](#usage)
+- [Claude Code on a box](#claude-code-on-a-box-boxctl-claude) · [Kilo on a box](#kilo-on-a-box-boxctl-kilo)
+- [Real ssh](#real-ssh-ssh-proxy) · [Claude Code plugin](#claude-code-plugin)
+- [Auth](#how-auth-works) · [Security](#security--credentials)
+- [`ssh`](#ssh--terminal-protocol) · [`port-forward`](#port-forward) · [`expose`](#expose)
+- [Development](#development)
+
+## Commands at a glance
+
+| Command | What it does |
+|---|---|
+| `login` / `logout` | Save or forget your personal token |
+| `create`, `ls`, `rm`, `pause`, `resume`, `keep` | Box lifecycle (`rm`/`pause`/`resume` also take `all`) |
+| `images`, `sizes` | What you can boot, and at what size |
+| `ssh`, `ssh-proxy` | Shell or one-off command; real `ssh`/`scp`/`rsync` through a proxy |
+| `port-forward`, `expose`, `unexpose` | Reach a box port locally, or publish it on the internet |
+| `backups`, `restore` | Saved copies of paused boxes |
+| `claude`, `kilo` | Run a coding agent on a box with your project |
+
+Run `boxctl <command> --help` for flags.
+
+It's a client only: all VM lifecycle logic lives in `boxctl-vms` (separate
+repo), which the web dashboard (`boxctl-web`) talks to as well.
 
 ## Install
 
@@ -56,19 +87,6 @@ echo 'source <(boxctl completion zsh)' >> ~/.zshrc     # zsh (after compinit)
 boxctl completion fish > ~/.config/fish/completions/boxctl.fish
 ```
 
-## Releasing
-
-Push a `vX.Y.Z` tag and `.github/workflows/release.yml` does the rest via
-GoReleaser (`.goreleaser.yml`, mirroring onctl's) on the `onctl-4` runner:
-Linux (amd64/arm64), macOS (amd64/arm64, unsigned) and Windows (amd64)
-binaries are built, `checksums.txt` is GPG-signed, and the GitHub release
-is created. The signed macOS build (quill signing/notarization) and the
-Homebrew cask are kept commented out in both files until this repo has
-the Apple credentials and a Mac runner. Run the "release (self-hosted test)" workflow against
-an existing tag to dry-run all of that without publishing.
-`make release-snapshot` builds the same artifacts locally (unsigned,
-into `dist/`).
-
 ## Usage
 
 ```bash
@@ -78,6 +96,7 @@ boxctl login
 
 boxctl ls                         # running boxes
 boxctl ls -a                      # all of them, paused and stopped too
+boxctl ls -p                      # this directory's project's boxes: its own, its runs and goals
 boxctl ls -o json                 # for scripts; images and sizes take -o json too
 boxctl images
 boxctl create my-box
@@ -139,9 +158,12 @@ isn't copied: the box clones origin's default branch (your GitHub token
 lent for it, as below) and Claude works on a new branch,
 `boxctl/<slug>-<id>` -- so local uncommitted or unpushed work
 isn't there; push it first. Anything else is copied. When the run ends --
-Claude exits, you detach, or the connection drops -- the box's branches and uncommitted work are
+Claude exits or you detach -- the box's branches and uncommitted work are
 fetched here as `box/*` (what `boxctl claude fetch` does) and the box is
-deleted -- or kept, with a message, if that fetch fails. Ctrl-C during
+deleted -- or kept, with a message, if that fetch fails. A dropped
+connection (a train through a tunnel) doesn't end the run: Claude keeps
+going in tmux and boxctl reconnects once the box is reachable again;
+Ctrl-C while it waits keeps the box, to attach again with `--box`. Ctrl-C during
 setup deletes it too. `--keep` uses the project's long-lived box
 (`claude-<directory>`) instead, as described below; `--box`, `--detach`
 and `--task` imply it.
@@ -161,21 +183,26 @@ boxctl claude --detach --prompt "..."   # start it without attaching
 boxctl claude -- --model opus           # arguments for claude itself
 boxctl claude login                     # once: every box's Claude is logged in (below)
 boxctl claude --task auth               # a second Claude, in parallel, on its own branch
-boxctl claude ls                        # this project's Claude sessions
+boxctl claude ls                        # this project's tasks and boxes, and every goal run
+boxctl claude status <box> [--wait]     # how a goal run is going, without connecting to it
 boxctl claude --handoff <session-id>    # carry on a local session on the box
 boxctl claude fetch                     # the box's branches and uncommitted work, as box/*
 boxctl claude push                      # this branch to the box
 boxctl claude -R owner/name              # --repo for short: a fresh box with the repo cloned, on a new branch
-boxctl claude --repo owner/name --goal "bump Go to 1.24 and fix what breaks" --github store
-boxctl claude --repo owner/api --repo owner/web --goal "rename the /v1 route"  --github store   # several repos, a PR in each
+boxctl claude --repo owner/name --goal "bump Go to 1.24 and fix what breaks"
+boxctl claude --repo owner/api --repo owner/web --goal "rename the /v1 route"   # several repos, a PR in each
 boxctl claude logs <box> [-f]           # how a --goal run is going
 boxctl claude --harness pr-only         # extra rules for the box: CLAUDE.md, managed-settings.json (below)
 ```
 
 **A repository instead of a local copy.** `--repo owner/name` creates a
 new box, clones the repository's default branch from GitHub onto a new
-branch `boxctl/<slug>-<id>`, and starts Claude there, attached as usual
-(come back with `boxctl ssh <box>`, then `tmux attach -t claude`). With
+branch `boxctl/<slug>-<id>`, and starts Claude there, attached as usual.
+When Claude quits, the box is deleted if everything on it is on GitHub:
+no uncommitted or stashed changes, and every branch pushed (whether a pull
+request was opened doesn't matter). Otherwise it's kept and you're told
+what's left on it; it's kept too if you detach with Claude still running,
+or pass `--keep` (come back with `boxctl claude --box <box>`). With
 `--goal "..."` Claude doesn't wait for you: it runs `claude -p` to the end
 in a detached tmux session, then opens a pull request with `gh pr create`
 whose body has the goal and a summary. `boxctl claude` prints the box, the
@@ -193,7 +220,7 @@ work across repositories in one box. They are cloned side by side under
 directory. With `--goal`, Claude opens one pull request in each repository
 it changed, linking them to each other; `status.json` has the first as
 `pr_url` and all of them in `pr_urls`. GitHub only; private repositories
-work too, so give `--github store` a token that covers every one. The
+work too, as long as the box's GitHub token covers every one. The
 repositories need different names, and `--repo` cannot be combined with
 `--project`.
 
@@ -235,17 +262,15 @@ guardrail you didn't have to ask for. Anything chosen implicitly is
 announced on stderr. An attended run with no default directory gets no
 harness.
 
-**`--github` forward, store, off -- and why a goal needs store.**
-`forward` lends Claude your `gh` token per request, over the ssh connection
-you're attached with, and keeps nothing on the box; `store` logs a token
-you provide (`BOXCTL_GITHUB_TOKEN`, or pasted when asked -- make it a
-fine-grained token for one repository with Contents and Pull requests
-read/write and an expiry) into the box's `gh`, where it stays until the
-box is destroyed; `off` gives the box nothing. A goal runs after you
-close your terminal, when nothing is left to ask for your token, so
-forward could never push the branch or open the PR; `--goal` therefore
-requires `--github store` and stops immediately, saying how to set it up,
-if it's missing.
+**`--github` store, off -- and why a goal needs store.** `store` (the
+default) logs a token into the box's `gh`, where it stays until the box
+is destroyed: `BOXCTL_GITHUB_TOKEN` if set -- make it a fine-grained
+token for the repositories involved, with Contents and Pull requests
+read/write and an expiry -- and otherwise the token `gh` has on this
+machine. `off` gives the box nothing. A goal runs after you close your
+terminal and ends by pushing a branch and opening a PR, which it can't do
+without a token; `--goal` therefore refuses `--github off`, and stops
+before making a box if no token can be found.
 
 **Logging Claude in, once.** `boxctl claude login` runs `claude
 setup-token` here (one browser approval; Pro, Max, Team or Enterprise)
@@ -286,19 +311,15 @@ machine), and starts `claude` in tmux. Log it in once with `/login`: it
 prints a URL to open here and a code to paste back, and the login stays
 on the box.
 
-**GitHub.** While you're attached, Claude on the box can `git push` and
-`gh pr create`/`merge` as you: the box asks this machine for your `gh`
-token each time it needs one, over the ssh connection, and keeps nothing
-(`--github forward`, the default). Each use is logged to
-`~/.boxctl/claude/github.log`, and detaching prints a count. Detached,
-the box has no GitHub access. For work that has to reach GitHub while
-you're away, `--github store` keeps a token on the box until it's
-destroyed -- it asks you for one (or reads `BOXCTL_GITHUB_TOKEN`) rather
-than using your gh token, so make it a fine-grained token for just that
-repository. `--github off` gives the box nothing. Your git `user.name`
-and `user.email` are set on the box either way, so its commits are yours.
-Forwarding needs the `claude-agent` image's credential helper and `gh`
-wrapper (boxctl-vms `images/claude-agent/`).
+**GitHub.** Claude on the box can `git push` and `gh pr create`/`merge`
+as you, attached or not: a token is logged in to the box's `gh` when the
+box is set up and stays there until the box is destroyed (`--github
+store`, the default). It's `BOXCTL_GITHUB_TOKEN` if you set it -- the
+place for a fine-grained token for just that repository -- and otherwise
+the token `gh` has on this machine (`gh auth token`). With neither, the
+run goes on with a warning and the box can't reach GitHub. `--github off`
+gives the box nothing. Your git `user.name` and `user.email` are set on
+the box either way, so its commits are yours.
 
 **Handing off a session.** `--handoff <session-id>` (what the plugin's
 `/boxctl:handoff` runs) moves a local Claude Code session to the box:
@@ -509,16 +530,16 @@ report a vulnerability (security@boxctl.io).
   deletes before Claude starts. It's not in argv, not on the box's disk,
   not in an image, and not logged. Claude's process still holds it in its
   environment while it runs.
-- **GitHub (`--github`).** `forward` (default) lends your `gh auth token`
-  over a Unix socket only while you're attached; each use is logged to
-  `~/.boxctl/claude/github.log`. `store` (needed for `--goal` and other
-  work while you're away) keeps a token on the box until it's destroyed:
-  pass a fine-grained, single-repository token in `BOXCTL_GITHUB_TOKEN`.
-  `off` gives the box nothing.
+- **GitHub (`--github`).** `store` (default) keeps a token on the box
+  until it's destroyed -- in backups taken meanwhile too. It's
+  `BOXCTL_GITHUB_TOKEN` if set, else your `gh auth token`, which usually
+  reaches every repository you can: for anything long-lived, or a goal
+  box the idle reaper parks rather than deletes, set `BOXCTL_GITHUB_TOKEN`
+  to a fine-grained, single-repository token. `off` gives the box nothing.
 - **Where things live.** Locally: `~/.boxctl/config.json` (`0600`), the
-  Claude token, an ssh key, and the log above. On the box: the tmpfs
-  file only until Claude starts; a stored GitHub token if you chose
-  `store`. The Claude and GitHub tokens are not sent to the boxctl API.
+  Claude token and an ssh key. On the box: the tmpfs file only until
+  Claude starts; the stored GitHub token unless you chose `off`. The
+  Claude and GitHub tokens are not sent to the boxctl API.
 - **Server side.** The control plane stores only a SHA-256 hash of your
   boxctl token. `boxctl rm` stops the microVM and deletes its rootfs from
   the host; earlier backups are separate copies.
@@ -527,19 +548,6 @@ report a vulnerability (security@boxctl.io).
 - **One thing to know.** `boxctl claude` skips ssh host-key checking
   (the tunnel is authenticated with your boxctl token instead), so you
   trust boxctl.io to connect you to your own box.
-
-## Project layout
-
-```
-main.go                 Entry point, delegates to cmd.Execute()
-cmd/                     Cobra subcommands (login/logout/ls/images/sizes/create/rm/pause/resume/ssh/port-forward/expose/version),
-                         plus box-name tab completion (complete.go)
-internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
-internal/config/         ~/.boxctl/config.json read/write
-claude-plugin/           Claude Code plugin: route Bash to a box (see "Claude Code plugin")
-.claude-plugin/          Marketplace manifest listing that plugin
-docs/media/              Screen recordings (terminal-output-preview: spinners and colours, PR #75)
-```
 
 ## `ssh` / terminal protocol
 
@@ -613,4 +621,41 @@ Uploads over 100 MB and responses that take more than 100 seconds to
 start are cut off before they reach the box. A paused box's URL shows a
 "not available" page and comes back when the box resumes; visitors
 count as using the box, so it isn't auto-paused while people are on it.
-An account can have at most five public URLs.
+
+## Development
+
+```bash
+go build -o boxctl .
+go vet ./...
+gofmt -l .
+go test ./...
+```
+
+See [AGENTS.md](AGENTS.md) for how the code is organised.
+
+### Project layout
+
+```
+main.go                 Entry point, delegates to cmd.Execute()
+cmd/                     Cobra subcommands (login/logout/ls/images/sizes/create/rm/pause/resume/ssh/port-forward/expose/version),
+                         plus box-name tab completion (complete.go)
+internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
+internal/config/         ~/.boxctl/config.json read/write
+claude-plugin/           Claude Code plugin: route Bash to a box (see "Claude Code plugin")
+.claude-plugin/          Marketplace manifest listing that plugin
+docs/media/              Screen recordings (terminal-output-preview: spinners and colours, PR #75)
+```
+
+### Releasing
+
+Push a `vX.Y.Z` tag and `.github/workflows/release.yml` does the rest via
+GoReleaser (`.goreleaser.yml`, mirroring onctl's) on the `onctl-4` runner:
+Linux (amd64/arm64), macOS (amd64/arm64, unsigned) and Windows (amd64)
+binaries are built, `checksums.txt` is GPG-signed, and the GitHub release
+is created. The signed macOS build (quill signing/notarization) and the
+Homebrew cask are kept commented out in both files until this repo has
+the Apple credentials and a Mac runner. Run the "release (self-hosted test)" workflow against
+an existing tag to dry-run all of that without publishing.
+`make release-snapshot` builds the same artifacts locally (unsigned,
+into `dist/`).
+

@@ -53,12 +53,12 @@ terminal -- boxctl claude, for Kilo. Each run creates a box of its own
 (kilo-<project>-<random>), copies the project there -- the same absolute
 path, .git and uncommitted changes included, .gitignore'd files left out
 -- installs Kilo and your Kilo configuration, and starts Kilo in it.
-When Kilo exits, you detach or the connection drops, the box's work is
-fetched here as box/* and the box is deleted.
+When Kilo exits or you detach, the box's work is fetched here as box/*
+and the box is deleted. A dropped connection is reconnected instead.
 
 --keep uses the project's own box (kilo-<project>) and keeps it: Kilo
-runs in tmux, so it keeps going when you detach (Ctrl-b d) or the
-connection drops; run boxctl kilo --keep again to come back to it. The box's
+runs in tmux, so it keeps going when you detach (Ctrl-b d); run
+boxctl kilo --keep again to come back to it. The box's
 copy of the project is the one Kilo works on: later runs don't copy it
 again, and nothing is synced back -- Kilo commits and pushes from the
 box, or boxctl kilo fetch brings its work here.

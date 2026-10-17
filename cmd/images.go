@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"text/tabwriter"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var imagesCmd = &cobra.Command{
@@ -34,8 +36,24 @@ var imagesCmd = &cobra.Command{
 		if _, err := fmt.Fprintln(w, "NAME\tPROVIDER\tDESCRIPTION"); err != nil {
 			return err
 		}
+		// On a terminal, cut each description to what's left of the line after
+		// the NAME and PROVIDER columns, so a long one doesn't wrap onto a
+		// second line. Piped output keeps the full text.
+		room := 0
+		if cols, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+			nameW, provW := len("NAME"), len("PROVIDER")
+			for _, img := range images {
+				nameW = max(nameW, utf8.RuneCountInString(img.Name))
+				provW = max(provW, utf8.RuneCountInString(img.Provider))
+			}
+			room = max(cols-(nameW+2+provW+2), 10)
+		}
 		for _, img := range images {
-			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", img.Name, img.Provider, img.Description); err != nil {
+			desc := img.Description
+			if room > 0 {
+				desc = truncateLine(desc, room)
+			}
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", img.Name, img.Provider, desc); err != nil {
 				return err
 			}
 		}

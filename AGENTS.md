@@ -49,7 +49,8 @@ every target; it needs `goreleaser` on PATH.
 
 Tests are few -- this is a thin, mostly-I/O client -- and cover the
 pure parts (`go test ./...`: `boxctl claude`'s file selection, tar
-stream, settings filtering and shell quoting, `boxctl kilo`'s
+stream, settings filtering and shell quoting, reconnecting after a dropped connection (a fake
+`ssh` on PATH), `boxctl kilo`'s
 credential environment, `internal/client`'s messages for boxctl-vms's
 409 `box_limit` / 503 `capacity` refusals). Otherwise rely on `go
 vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
@@ -69,6 +70,13 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   left out. The filter is this CLI's -- the server always returns every
   box -- so anything that must find a paused box by name
   (`claude-plugin/bin/boxctl-claude`'s `box_state`) calls `ls -a`.
+  Its RUN, PROJECT and PR columns (`runText`, `cmd/lsproject.go`'s
+  `projectText`/`prText`) come from a box's labels and `run_status`
+  alone: `ls` never connects to a box. `-p` keeps this directory's
+  project's boxes (`inProject`: labeled with its directory or GitHub
+  repository; unlabeled, named `<agent>-<dir>[-<task>]`), `-l` filters
+  by label on the server, and `-o wide` adds IP, PROVIDER, READY and
+  BRANCH. `printBoxes` is the listing itself, shared with `claude ls`.
 - `cmd/create.go` — `create -a <script>` blocks until the server's
   `onctl create -a` finishes, so meanwhile `applyLogTail` polls the
   script's log (`~/.onctl/applyNN/output-<script>.log`, where onctl's
@@ -79,6 +87,15 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   (`pause` → running, `resume` → paused, `rm` → every box, after one
   confirmation unless `--force`), runs the action concurrently, prints a
   ✔/✘ line per box, and fails if any box failed.
+- `cmd/rm.go` — besides its own confirmation, `rm` (and `rm all`) asks a
+  second one (`confirmUnfinished`) for a `--goal` run that isn't done:
+  `boxctl.run=goal` and a `run_status` that isn't `done` -- running,
+  failed, never reported (`?`) or unparseable all count, since the box may
+  hold work nobody has fetched (`filterUnfinished` is the tested
+  selection). It reads the one `List` call's `run_status`, never the box.
+  Done runs and boxes that aren't goal runs (no status to check) go
+  through on the usual single confirmation; `--force` skips both, and a
+  failed `List` only warns.
 - `cmd/ssh.go` — the one non-trivial command: mints a terminal ticket,
   dials the same `/ws/terminal/{id}` WebSocket the browser's xterm.js
   terminal uses, puts the local tty in raw mode
@@ -143,17 +160,19 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   keys that point at this machine), the Claude Code install, and `tmux
   new-session -A` running `claude`. It never syncs: once the project is
   on the box, the box's copy is the one Claude works on.
-  `cmd/claudegithub.go` is its GitHub side: by default a token server
-  on a local Unix socket answers the box's `GET /token?host=&for=` with
-  `gh auth token`, forwarded by the attach's ssh (`-R
-  /root/.boxctl/gh.sock:...`, on a connection of its own -- `ControlPath=none`
-  must come before the shared ControlPath, since ssh takes an option's
-  first value) for exactly as long as you're attached, logging each use
-  to `~/.boxctl/claude/github.log` -- never to the terminal, which is
-  Claude's. That protocol is the image's contract (boxctl-vms
-  `images/claude-agent/git-credential-boxctl` and `gh`); change both
-  sides together. `--github store` logs a pasted token into the box's gh
-  instead -- never `gh auth token` itself, which would sit on the box.
+  `cmd/claudegithub.go` is its GitHub side: `--github store` (the
+  default) logs a token into the box's gh (`gh auth login --with-token`,
+  then `gh auth setup-git`) before the project goes there, so a private
+  clone works -- `BOXCTL_GITHUB_TOKEN` if set, else `gh auth token`
+  here. A session run only warns when neither is there; goal mode reads
+  the token before it makes a box and fails. `--github off` stores
+  nothing. The earlier `forward` mode (a token server on a local Unix
+  socket, forwarded by the attach's ssh, answered per request) is gone;
+  the claude-agent image's `git-credential-boxctl` helper and `gh`
+  wrapper in boxctl-vms only served it and can go too. The attach still
+  uses a connection of its own (`ControlPath=none`, which must come before
+  the shared ControlPath since ssh takes an option's first value) so its
+  shorter keepalive applies to it.
   `cmd/claudegit.go` is `claude fetch`/`push`: the box as a git remote
   named `box` (`root@<box>.box:<dir>`, so the README's `Host *.box`
   ssh config reaches it too) with `GIT_SSH_COMMAND` set to boxctl's ssh.
@@ -174,8 +193,7 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   it only matches because the project has the same absolute path on the
   box. The transcript is found before any box is touched.
   `cmd/claudesession.go`: a `taskSession` is the main checkout or a
-  `--task` worktree (`<dir>@<task>`, tmux `claude-<task>`, GitHub socket
-  `gh-<task>.sock` via `BOXCTL_GH_SOCKET` in its environment). Claude's
+  `--task` worktree (`<dir>@<task>`, tmux `claude-<task>`). Claude's
   credentials (`cmd/claudeauth.go`: a `claude setup-token` token in the
   Keychain) go to the box over ssh stdin into `/run/boxctl/<tmux>.env`
   (tmpfs), which the session's command sources and deletes -- never
@@ -183,46 +201,47 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   prefix-matches `claude-auth`.
 - `cmd/claudegoal.go` — `claude --repo owner/name [--goal "..."]` and
   `claude logs <box>`: a new box, the repo cloned (default branch) onto
-  `boxctl/<slug>-<id>`, no local copy. With `--goal`, a detached tmux
+  `boxctl/<slug>-<id>`, no local copy. Without `--goal` (and without
+  `--keep`/`--box`/`--detach`) the box is ephemeral, but with no checkout
+  here to fetch into, `claudeTarget.end` deletes it only when
+  `repoWorkPushed` finds Claude quit and nothing only on the box:
+  `unpushedScript` checks for uncommitted or stashed changes and commits
+  not on a `refs/remotes/origin/*` ref, without asking GitHub (no
+  credentials once you've detached). That's why `cloneScript` maps every
+  branch in `remote.origin.fetch` -- a `--single-branch` clone's push of
+  a new branch leaves no remote-tracking ref otherwise. A PR is not
+  required: a pushed branch is enough. With `--goal`, a detached tmux
   session runs a generated `run.sh` (`claude -p`, stream-json, in
   `/root/.boxctl/goals/<id>/`, `latest` symlinked) that records
   `status.json` (running/done/failed, pr_url) -- on the box, because
   boxctl-vms has no per-box metadata API; move it there if one appears.
-  `cmd/claudegoalstatus.go` reads it for `claude ls`, whose second table
-  lists the project's run boxes (`isRunBox`: a generated name with the
-  project's prefix or `workspace`, confirmed by the box's project
-  marker or, for a multi-repo workspace, its clones -- a `boxctl-web-*`
-  box matches `boxctl` by name alone), plus every goal run whatever
-  the cwd: a `--goal`/`--issue` box is `goal-<repo>-<slug>-<id>`
-  (`goalBoxPrefix`, `isGoalBox`), since a goal needs no local checkout
-  to start from. A `--repo`/`--goal` box is also labeled at create
-  (`runLabels`: `boxctl.run`, `.repo`, `.branch`, `.issue`, `.agent` --
-  boxctl-vms's labels), and `labeledRun` lists it by those wherever its
-  name came from. Every other box `claude` creates is labeled too
-  (`sessionLabels`: `boxctl.run=session` for an ephemeral run's,
-  `box` for the project's own, with `boxctl.project`, the local directory
-  it holds), so a labeled box is the project's or not by its labels
-  alone, and `ls` reaches into it only for a goal it has no `run_status`
-  for -- by name a `boxctl-web-*` box looks like `boxctl`'s, and checking
-  each unlabeled one's project marker over ssh costs about a second. The runner's `status()` also hands `status.json` to
-  the image's `boxctl-status`, which sends it over the box's vsock device
-  to the control plane (boxctl-vms's `docs/plans/run-status.md`); a row
-  with that `run_status` is read from it, running or paused, with no ssh,
-  and a box without it (no vsock device, an older image or server) falls
-  back to what follows. `ls` and `logs` only read: neither pauses nor
-  deletes a box. A goal box's `boxctl.pause-when-done=10m` label
+  The runner's `status()` also hands `status.json` to the image's
+  `boxctl-status`, which sends it over the box's vsock device to the
+  control plane (boxctl-vms's `docs/plans/run-status.md`), where it's
+  the box's `run_status`: `claude ls`, `claude status [--wait]` and
+  `boxctl ls` read that, running or paused, and never the file
+  (`cmd/claudegoalstatus.go`); `claude logs` reads the file. A box from
+  an image without `boxctl-status` shows its goal as `?`. Every box
+  `claude` creates is labeled (`runLabels` for `--repo`/`--goal`:
+  `boxctl.run=repo|goal`, `.repo`, `.branch`, `.issue`, `.agent`;
+  `sessionLabels` for the rest: `boxctl.run=session` for an ephemeral
+  run's, `box` for the project's own, with `boxctl.project`, the local
+  directory it holds), and `boxctl label` labels one from before. `claude
+  ls` is the TASK rows of the project's box (the one box it connects
+  to, and only running) above `printBoxes` of the project's boxes
+  (`inProject`) plus every goal run's, whatever the cwd -- a goal needs
+  no local checkout to start from. Neither `ls` nor `logs` pauses or
+  deletes a box: a goal box's `boxctl.pause-when-done=10m` label
   (`goalPauseWhenDone`) has boxctl-vms's idle reaper pause it once its
-  `run_status` is done/failed and it's gone 10 minutes unused. A paused box's
-  status can't be read without resuming it, so
-  `ls` shows the last one it read, kept in `~/.boxctl/claude/goals.json`.
+  `run_status` is done/failed and it's gone 10 minutes unused.
   Only an `https://github.com/` `pr_url` is shown: the box wrote it.
   `--issue N` (`issueGoal`) is a goal that only names the repository's
   issue number: Claude reads it itself with `gh issue view` on the box
   (so it needs the stored token), and the PR body must say `Closes #N`.
   One repository; `--goal` text is appended as extra instructions; the
   box/branch slug is `issue-N`.
-  Goal mode requires `--github store` (forward only lives while attached)
-  and checks everything, token included, before creating a box. `--goal`
+  Goal mode refuses `--github off` (it has to push and open a PR without
+  you) and checks everything, token included, before creating a box. `--goal`
   without `--repo` takes the cwd's GitHub origin. Unverified against a
   real box: `IS_SANDBOX=1` letting `--dangerously-skip-permissions` run as
   root.

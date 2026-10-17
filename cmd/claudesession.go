@@ -14,28 +14,24 @@ import (
 // A Claude session on a box: the project's main checkout, or a task --
 // a git worktree of its own beside it (`--task auth` -> <dir>@auth, on
 // branch auth), so several Claudes can work on one project at once
-// without touching each other's files. Each runs in its own tmux session
-// and gets its own GitHub socket, so attaching to one never takes the
-// other's forwarding away.
+// without touching each other's files. Each runs in its own tmux session.
 
 var taskNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,29}$`)
 
 type taskSession struct {
-	task     string // "" for the main checkout
-	dir      string // where Claude runs on the box
-	tmux     string // its tmux session: the agent's name, -<task> for a task
-	ghSocket string // where its GitHub forwarding lands on the box
+	task string // "" for the main checkout
+	dir  string // where Claude runs on the box
+	tmux string // its tmux session: the agent's name, -<task> for a task
 }
 
 func newTaskSession(project, task string) taskSession {
 	if task == "" {
-		return taskSession{dir: project, tmux: agent.name, ghSocket: boxGitHubSocket}
+		return taskSession{dir: project, tmux: agent.name}
 	}
 	return taskSession{
-		task:     task,
-		dir:      taskDir(project, task),
-		tmux:     agent.name + "-" + task,
-		ghSocket: "/root/.boxctl/gh-" + task + ".sock",
+		task: task,
+		dir:  taskDir(project, task),
+		tmux: agent.name + "-" + task,
 	}
 }
 
@@ -58,13 +54,11 @@ func (s taskSession) attachHint(box string) string {
 func (s taskSession) envFile() string { return "/run/boxctl/" + s.tmux + ".env" }
 
 // commandLine is the shell command tmux runs for this session: pick up
-// and delete the secrets, point the GitHub helpers at this session's
-// socket, then the agent with the prompt and arguments.
+// and delete the secrets, then the agent with the prompt and arguments.
 func (s taskSession) commandLine(prompt string, args []string) string {
 	f := shellQuote(s.envFile())
 	words := []string{
 		"if [ -f " + f + " ]; then . " + f + "; rm -f " + f + "; fi;",
-		"export BOXCTL_GH_SOCKET=" + shellQuote(s.ghSocket) + ";",
 		`PATH="$HOME/` + agent.binDir + `:$PATH"`, "exec", agent.bin,
 	}
 	for _, a := range args {
