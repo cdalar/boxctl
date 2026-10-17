@@ -71,7 +71,14 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   (`claude-plugin/bin/boxctl-claude`'s `box_state`) calls `ls -a`.
   Its RUN, PROJECT and PR columns (`runText`, `cmd/lsproject.go`'s
   `projectText`/`prText`) come from a box's labels and `run_status`
-  alone: `ls` never connects to a box. `-p` keeps this directory's
+  alone: `ls` never connects to a box. Nor does it wait for GitHub:
+  on a terminal, once the table is out, `cmd/lspr.go`'s `fillPRStates`
+  runs `gh pr view --json state` per PR (4 at a time, 10s cap) and
+  rewrites each PR cell in place -- "#96 merged" -- by cursor movement
+  over the lines just printed (`prCellOf` records each cell's line and
+  column from the plain, pre-colour row; the stderr note about hidden
+  boxes is counted as a line). It stays as printed on a pipe, in JSON,
+  for rows that scrolled off, or if the table would wrap. `-p` keeps this directory's
   project's boxes (`inProject`: labeled with its directory or GitHub
   repository; unlabeled, named `<agent>-<dir>[-<task>]`), `-l` filters
   by label on the server, and `-o wide` adds IP, PROVIDER, READY and

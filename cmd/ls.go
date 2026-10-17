@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cdalar/boxctl/internal/client"
 	"github.com/spf13/cobra"
@@ -45,13 +47,15 @@ var lsCmd = &cobra.Command{
 			none = "No boxes for " + dir + "."
 		}
 		all, _ := cmd.Flags().GetBool("all")
-		return printBoxes(vms, format, all, none)
+		return printBoxes(cmd.Context(), vms, format, all, none)
 	},
 }
 
 // printBoxes is ls's listing of vms in format (table, wide or json):
 // only the live ones unless all, none when there are no boxes at all.
-func printBoxes(vms []client.VM, format string, all bool, none string) error {
+// On a terminal it then stays around to fill in each PR's state
+// (lspr.go), which is the only use it has for ctx.
+func printBoxes(ctx context.Context, vms []client.VM, format string, all bool, none string) error {
 	asJSON := format == "json"
 	if len(vms) == 0 && !asJSON {
 		fmt.Println(none)
@@ -59,7 +63,9 @@ func printBoxes(vms []client.VM, format string, all bool, none string) error {
 	}
 
 	// Like `docker ps`: only live boxes unless -a. The note about the
-	// rest goes to stderr, so stdout stays the listing alone.
+	// rest goes to stderr, so stdout stays the listing alone -- after
+	// the table, where fillPRStates has to count it as a line.
+	var note string
 	if !all {
 		live := vms[:0]
 		for _, vm := range vms {
@@ -74,9 +80,12 @@ func printBoxes(vms []client.VM, format string, all bool, none string) error {
 				fmt.Println("No running boxes.")
 			}
 			if hidden > 0 {
-				defer fmt.Fprintf(os.Stderr, "%s not running; `boxctl ls -a` lists them.\n", boxCount(hidden))
+				note = fmt.Sprintf("%s not running; `boxctl ls -a` lists them.", boxCount(hidden))
 			}
 			if len(vms) == 0 {
+				if note != "" {
+					fmt.Fprintln(os.Stderr, note)
+				}
 				return nil
 			}
 		}
@@ -141,6 +150,19 @@ func printBoxes(vms []client.VM, format string, all bool, none string) error {
 	}
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 	header, rows := lines[0], lines[1:]
+	width := 0 // the widest plain line, for fillPRStates's wrap check
+	for _, l := range lines {
+		width = max(width, utf8.RuneCountInString(l))
+	}
+	// Where each PR cell sits, from the plain rows: colour below adds
+	// escape codes the column count mustn't include.
+	cells := make([]prCell, len(vms))
+	hasPR := make([]bool, len(vms))
+	for i, vm := range vms {
+		if i < len(rows) {
+			cells[i], hasPR[i] = prCellOf(vm, rows[i])
+		}
+	}
 	// Colour after alignment (escape codes would throw the
 	// tabwriter's widths off): bold header, state word by state.
 	if useColor() {
@@ -162,38 +184,59 @@ func printBoxes(vms []client.VM, format string, all bool, none string) error {
 			groups++
 		}
 	}
-	var out strings.Builder
+	// out is kept as lines, and rowLine says which one each box's row
+	// is, so fillPRStates can find the row again on the screen.
+	var out []string
+	rowLine := make([]int, len(rows))
 	if groups < 2 {
-		fmt.Fprintln(&out, header)
-		for _, row := range rows {
-			fmt.Fprintln(&out, row)
+		out = append(out, header)
+		for i, row := range rows {
+			rowLine[i] = len(out)
+			out = append(out, row)
 		}
-		_, err := os.Stdout.WriteString(out.String())
+	} else {
+		color := useColor()
+		i := 0
+		for rank, n := range counts {
+			if n == 0 {
+				continue
+			}
+			if len(out) > 0 {
+				out = append(out, "")
+			}
+			label := fmt.Sprintf("● %s (%d)", lsSections[rank].label, n)
+			if color {
+				label = lsSections[rank].color + label + "\033[0m"
+			}
+			out = append(out, label, header)
+			for _, row := range rows[i : i+n] {
+				rowLine[i] = len(out)
+				out = append(out, row)
+				i++
+			}
+		}
+	}
+	if _, err := os.Stdout.WriteString(strings.Join(out, "\n") + "\n"); err != nil {
 		return err
 	}
-	color := useColor()
-	first := true
-	for rank, n := range counts {
-		if n == 0 {
-			continue
+	// The note is one more line on the screen when stderr is the
+	// terminal too.
+	if note != "" {
+		fmt.Fprintln(os.Stderr, note)
+		if term.IsTerminal(int(os.Stderr.Fd())) {
+			out = append(out, note)
+			width = max(width, len(note))
 		}
-		if !first {
-			fmt.Fprintln(&out)
-		}
-		first = false
-		label := fmt.Sprintf("● %s (%d)", lsSections[rank].label, n)
-		if color {
-			label = lsSections[rank].color + label + "\033[0m"
-		}
-		fmt.Fprintln(&out, label)
-		fmt.Fprintln(&out, header)
-		for _, row := range rows[:n] {
-			fmt.Fprintln(&out, row)
-		}
-		rows = rows[n:]
 	}
-	_, err := os.Stdout.WriteString(out.String())
-	return err
+	var prs []prCell
+	for i, c := range cells {
+		if hasPR[i] {
+			c.up = len(out) - rowLine[i]
+			prs = append(prs, c)
+		}
+	}
+	fillPRStates(ctx, prs, width)
+	return nil
 }
 
 // runText is ls's RUN column: what made the box and what for, from its
