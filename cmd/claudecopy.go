@@ -413,11 +413,16 @@ var configSkippedDirs = map[string]bool{"node_modules": true, ".git": true}
 // configFiles lists the files of claudeConfigEntries under src, relative
 // to it, without configSkippedDirs or .DS_Store, and their total size.
 func configFiles(src string) ([]string, int64, error) {
+	return configFilesIn(src, claudeConfigEntries)
+}
+
+// configFilesIn is configFiles for the given entries of src.
+func configFilesIn(src string, entries []string) ([]string, int64, error) {
 	var (
 		files []string
 		size  int64
 	)
-	for _, entry := range claudeConfigEntries {
+	for _, entry := range entries {
 		err := filepath.WalkDir(filepath.Join(src, entry), func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
