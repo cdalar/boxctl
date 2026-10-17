@@ -372,7 +372,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	branch := gen.branch()
 	newBoxLabels = runLabels(goal != "", repos, branch, claudeIssue)
 
-	box, err := connectClaudeBox(ctx, name, true, cmd.Flags().Changed("idle-ttl"))
+	box, err := connectClaudeBox(ctx, name, "", true, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {
 		return err
 	}
@@ -555,7 +555,7 @@ func init() {
 }
 
 func goalLogs(ctx context.Context, name string, follow bool) error {
-	box, err := connectClaudeBox(ctx, name, false, false)
+	box, err := connectClaudeBox(ctx, name, "", false, false)
 	if err != nil {
 		return err
 	}
