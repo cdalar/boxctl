@@ -284,12 +284,12 @@ func TestGoalRunnerReports(t *testing.T) {
 func TestRunLabels(t *testing.T) {
 	agent = claudeAgent
 	got := runLabels(true, []string{"cdalar/onctl-runners"}, "boxctl/issue-29-0ca8", 29)
-	want := map[string]string{"boxctl.run": "goal", "boxctl.agent": "claude", "boxctl.branch": "boxctl/issue-29-0ca8", "boxctl.repo": "cdalar/onctl-runners", "boxctl.issue": "29"}
+	want := map[string]string{"boxctl.run": "goal", "boxctl.agent": "claude", "boxctl.branch": "boxctl/issue-29-0ca8", "boxctl.repo": "cdalar/onctl-runners", "boxctl.issue": "29", "boxctl.pause-when-done": "10m"}
 	if !maps.Equal(got, want) {
 		t.Errorf("goal labels = %v, want %v", got, want)
 	}
 	got = runLabels(false, []string{"o/a", "o/b"}, "boxctl/x-1234", 0)
-	if got["boxctl.run"] != "repo" || got["boxctl.repo"] != "o/a,o/b" || got["boxctl.issue"] != "" {
+	if got["boxctl.run"] != "repo" || got["boxctl.repo"] != "o/a,o/b" || got["boxctl.issue"] != "" || got["boxctl.pause-when-done"] != "" {
 		t.Errorf("repo labels = %v", got)
 	}
 	if got = runLabels(false, []string{strings.Repeat("o/r", 100)}, "b", 0); got["boxctl.repo"] != "" {

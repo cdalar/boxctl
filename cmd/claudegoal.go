@@ -233,6 +233,12 @@ func reposToUse() ([]string, error) {
 	return nil, fmt.Errorf("--goal/--issue needs a repository: pass --repo owner/name, or run it in a git repository whose origin is on GitHub (%s isn't)", dir)
 }
 
+// goalPauseWhenDone is how long a goal's box may go unused once its run
+// has finished before the server pauses it (boxctl-vms's
+// boxctl.pause-when-done label), so a box someone is looking into isn't
+// paused under them.
+const goalPauseWhenDone = "10m"
+
 // newBoxLabels, when set, are the labels ensureClaudeBox gives a box it
 // creates: runRepo's, for its run box.
 var newBoxLabels map[string]string
@@ -240,13 +246,15 @@ var newBoxLabels map[string]string
 // runLabels mark a --repo or --goal run's box for the server
 // (boxctl-vms's labels), so claude ls finds it -- and the repository,
 // branch and issue it's for -- without guessing from its name or
-// reaching into it.
+// reaching into it. A goal's also asks the server to pause it once the
+// run has finished and nobody has used it for goalPauseWhenDone: nothing
+// else will, `claude ls` and `logs` only read.
 func runLabels(isGoal bool, repos []string, branch string, issue int) map[string]string {
-	run := "repo"
+	labels := map[string]string{"boxctl.run": "repo", "boxctl.agent": agent.name, "boxctl.branch": branch}
 	if isGoal {
-		run = "goal"
+		labels["boxctl.run"] = "goal"
+		labels["boxctl.pause-when-done"] = goalPauseWhenDone
 	}
-	labels := map[string]string{"boxctl.run": run, "boxctl.agent": agent.name, "boxctl.branch": branch}
 	// A label value is at most 255 characters; a workspace of that many
 	// repositories goes without.
 	if r := strings.Join(repos, ","); len(r) <= 255 {
