@@ -160,17 +160,19 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   keys that point at this machine), the Claude Code install, and `tmux
   new-session -A` running `claude`. It never syncs: once the project is
   on the box, the box's copy is the one Claude works on.
-  `cmd/claudegithub.go` is its GitHub side: by default a token server
-  on a local Unix socket answers the box's `GET /token?host=&for=` with
-  `gh auth token`, forwarded by the attach's ssh (`-R
-  /root/.boxctl/gh.sock:...`, on a connection of its own -- `ControlPath=none`
-  must come before the shared ControlPath, since ssh takes an option's
-  first value) for exactly as long as you're attached, logging each use
-  to `~/.boxctl/claude/github.log` -- never to the terminal, which is
-  Claude's. That protocol is the image's contract (boxctl-vms
-  `images/claude-agent/git-credential-boxctl` and `gh`); change both
-  sides together. `--github store` logs a pasted token into the box's gh
-  instead -- never `gh auth token` itself, which would sit on the box.
+  `cmd/claudegithub.go` is its GitHub side: `--github store` (the
+  default) logs a token into the box's gh (`gh auth login --with-token`,
+  then `gh auth setup-git`) before the project goes there, so a private
+  clone works -- `BOXCTL_GITHUB_TOKEN` if set, else `gh auth token`
+  here. A session run only warns when neither is there; goal mode reads
+  the token before it makes a box and fails. `--github off` stores
+  nothing. The earlier `forward` mode (a token server on a local Unix
+  socket, forwarded by the attach's ssh, answered per request) is gone;
+  the claude-agent image's `git-credential-boxctl` helper and `gh`
+  wrapper in boxctl-vms only served it and can go too. The attach still
+  uses a connection of its own (`ControlPath=none`, which must come before
+  the shared ControlPath since ssh takes an option's first value) so its
+  shorter keepalive applies to it.
   `cmd/claudegit.go` is `claude fetch`/`push`: the box as a git remote
   named `box` (`root@<box>.box:<dir>`, so the README's `Host *.box`
   ssh config reaches it too) with `GIT_SSH_COMMAND` set to boxctl's ssh.
@@ -191,8 +193,7 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   it only matches because the project has the same absolute path on the
   box. The transcript is found before any box is touched.
   `cmd/claudesession.go`: a `taskSession` is the main checkout or a
-  `--task` worktree (`<dir>@<task>`, tmux `claude-<task>`, GitHub socket
-  `gh-<task>.sock` via `BOXCTL_GH_SOCKET` in its environment). Claude's
+  `--task` worktree (`<dir>@<task>`, tmux `claude-<task>`). Claude's
   credentials (`cmd/claudeauth.go`: a `claude setup-token` token in the
   Keychain) go to the box over ssh stdin into `/run/boxctl/<tmux>.env`
   (tmpfs), which the session's command sources and deletes -- never
@@ -239,8 +240,8 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   (so it needs the stored token), and the PR body must say `Closes #N`.
   One repository; `--goal` text is appended as extra instructions; the
   box/branch slug is `issue-N`.
-  Goal mode requires `--github store` (forward only lives while attached)
-  and checks everything, token included, before creating a box. `--goal`
+  Goal mode refuses `--github off` (it has to push and open a PR without
+  you) and checks everything, token included, before creating a box. `--goal`
   without `--repo` takes the cwd's GitHub origin. Unverified against a
   real box: `IS_SANDBOX=1` letting `--dangerously-skip-permissions` run as
   root.

@@ -36,7 +36,7 @@ func testBox() *boxSSH { return &boxSSH{name: "claude-x", args: []string{"root@c
 func TestAttachTellsALostConnectionFromAnEnd(t *testing.T) {
 	for code, want := range map[int]error{0: nil, 1: nil, 130: nil, 255: errConnectionLost} {
 		fakeSSH(t, code)
-		if err := testBox().attach(context.Background(), "tmux", nil); !errors.Is(err, want) {
+		if err := testBox().attach(context.Background(), "tmux"); !errors.Is(err, want) {
 			t.Errorf("ssh exiting %d: got %v, want %v", code, err, want)
 		}
 	}
@@ -89,7 +89,7 @@ func TestReattach(t *testing.T) {
 
 func TestAttachArgsDetectADeadConnectionSooner(t *testing.T) {
 	b := &boxSSH{name: "x", args: []string{"-o", "ServerAliveInterval=30", "root@x"}}
-	got := b.attachArgs("tmux", nil)
+	got := b.attachArgs("tmux")
 	if i, j := slices.Index(got, "ServerAliveInterval=10"), slices.Index(got, "ServerAliveInterval=30"); i < 0 || i > j {
 		t.Fatalf("ssh takes an option's first value; the attach's must come first: %v", got)
 	}

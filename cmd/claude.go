@@ -110,12 +110,10 @@ box. --box, --detach and --task keep their box too.
 The first time, log Claude in on the box with /login: it prints a URL to
 open here and a code to paste back. That login stays on the box.
 
-GitHub: while you're attached, the box borrows your gh token for git
-push and gh pr ... -- it asks this machine per use, over the ssh
-connection, and keeps nothing (--github forward, the default; each use is
-logged to ~/.boxctl/claude/github.log). Detached, it has none. For work
-that must reach GitHub while you're away, --github store keeps a token
-you paste on the box -- make it a fine-grained one for this repository.
+GitHub: the box gets a token for git push and gh pr ..., logged in to
+its gh and kept until the box is destroyed (--github store, the default):
+BOXCTL_GITHUB_TOKEN if set -- the place for a fine-grained token scoped
+to this repository -- and otherwise the token gh has on this machine.
 --github off gives it nothing. Your git user.name and user.email are set
 on the box either way.
 
@@ -130,8 +128,6 @@ prints the box, the branch and how to follow it, and returns. Without
 reads it (and its comments) with gh, resolves it, and opens a pull request
 that closes it; --goal then adds instructions to it. The repository is
 --repo's, or this directory's origin.
-That run outlives this terminal, so it can't use --github forward, which
-only works while you're attached: it needs --github store.
 boxctl claude logs <box> shows how it's going.`,
 	RunE: claudeAgent.runs(runClaude),
 }
@@ -140,8 +136,8 @@ func init() {
 	claudeAgent.addFlags(claudeCmd)
 	claudeCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Claude Code session (its ID) on the box")
 	claudeCmd.Flags().StringSliceVarP(&claudeRepos, "repo", "R", nil, "GitHub repository (owner/name) to clone on a new box, on a new boxctl/... branch; repeat or comma-separate for several, cloned side by side (with --goal: default is this directory's origin)")
-	claudeCmd.Flags().StringVar(&claudeGoal, "goal", "", "a goal for Claude to carry out unattended, ending in a pull request (needs --github store)")
-	claudeCmd.Flags().IntVar(&claudeIssue, "issue", 0, "number of a GitHub issue for Claude to resolve unattended, ending in a pull request that closes it (needs --github store; one repository)")
+	claudeCmd.Flags().StringVar(&claudeGoal, "goal", "", "a goal for Claude to carry out unattended, ending in a pull request")
+	claudeCmd.Flags().IntVar(&claudeIssue, "issue", 0, "number of a GitHub issue for Claude to resolve unattended, ending in a pull request that closes it (one repository)")
 	claudeCmd.Flags().StringVar(&claudeAuth, "claude-auth", claudeAuthAuto, "how Claude on the box logs in: auto (the token boxctl claude login saved, else /login), token, login or api-key")
 	_ = claudeCmd.RegisterFlagCompletionFunc("claude-auth", cobra.FixedCompletions([]string{claudeAuthAuto, claudeAuthToken, claudeAuthLogin, claudeAuthAPIKey}, cobra.ShellCompDirectiveNoFileComp))
 	rootCmd.AddCommand(claudeCmd)
@@ -235,9 +231,9 @@ func runClaude(cmd *cobra.Command, args []string) error {
 // anything is done.
 func checkSessionFlags() error {
 	switch claudeGitHub {
-	case githubForward, githubStore, githubOff:
+	case githubStore, githubOff:
 	default:
-		return fmt.Errorf("--github must be %s, %s or %s", githubForward, githubStore, githubOff)
+		return fmt.Errorf("--github must be %s or %s", githubStore, githubOff)
 	}
 	return resolveTask()
 }
@@ -288,11 +284,11 @@ func openSession(ctx context.Context, setTTL bool, alongside func(*boxSSH, taskS
 		sayNote("Ephemeral: %s is deleted when %s exits or you detach, after its work is fetched here as box/* (--keep keeps it)", t.name, agent.title)
 	}
 	// Before the project, which a clone may need it for -- and before
-	// anything runs alongside, as it may ask for the token.
+	// anything runs alongside, as it may ask for the token. Without one
+	// the run goes on: the box just can't reach GitHub.
 	if claudeGitHub == githubStore {
-		if err := storeGitHubToken(ctx, t.box, githubRepo(t.dir)); err != nil {
-			t.end()
-			return nil, taskSession{}, err
+		if err := storeGitHubToken(ctx, t.box); err != nil {
+			sayWarn("%v", err)
 		}
 	}
 	sess := newTaskSession(t.dir, claudeTask)
@@ -433,83 +429,12 @@ func resolveTask() error {
 	return nil
 }
 
-// attachClaude attaches to Claude on the box, lending it GitHub
-// credentials for as long as the attach lasts unless --github says not to.
-// A dropped connection is reconnected (see reattach) rather than taken
-// for the end of the session; errConnectionLost means you gave up on
-// reconnecting, with Claude still running there.
+// attachClaude attaches to Claude on the box. A dropped connection is
+// reconnected (see reattach) rather than taken for the end of the
+// session; errConnectionLost means you gave up on reconnecting, with
+// Claude still running there.
 func attachClaude(ctx context.Context, box *boxSSH, sess taskSession, command string) error {
-	if claudeGitHub != githubForward {
-		return reattach(ctx, box, sess, func() error { return box.attach(ctx, command, nil) })
-	}
-	logPath := githubLogPath()
-	srv, err := startTokenServer(box.name, logPath)
-	if err != nil {
-		sayWarn("not forwarding GitHub credentials: %v", err)
-		return reattach(ctx, box, sess, func() error { return box.attach(ctx, command, nil) })
-	}
-	err = reattach(ctx, box, sess, func() error {
-		// A socket a dropped connection left behind would stop sshd binding
-		// the new one on an image without StreamLocalBindUnlink.
-		_ = box.run(ctx, "rm -f "+shellQuote(sess.ghSocket), nil)
-		return box.attach(ctx, command, []string{"-R", sess.ghSocket + ":" + srv.socket})
-	})
-	// Without the socket the box's helpers say "attach to forward", rather
-	// than failing to reach a stale one. Not if the box can't be reached:
-	// that would only hang, and the next attach removes it first anyway.
-	if !errors.Is(err, errConnectionLost) {
-		_ = box.run(context.Background(), "rm -f "+shellQuote(sess.ghSocket), nil)
-	}
-	if given, refused := srv.close(); given+refused > 0 {
-		used := fmt.Sprintf("%s used your GitHub token %d time(s)", box.name, given)
-		if refused > 0 {
-			used += fmt.Sprintf(", %d refused", refused)
-		}
-		sayNote("%s (%s)", used, logPath)
-	}
-	return err
-}
-
-// githubLogPath is where each use of the forwarded token is logged.
-func githubLogPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".boxctl", "claude", "github.log")
-}
-
-// runForwarded runs command on the box with your gh token lent to it for
-// as long as it runs (--github forward). The forward is added to the
-// shared connection for that time (ssh -O forward) rather than given a
-// connection of its own, which would cost a new tunnel and handshake.
-func (b *boxSSH) runForwarded(ctx context.Context, command, boxSocket string) error {
-	srv, err := startTokenServer(b.name, githubLogPath())
-	if err != nil {
-		sayWarn("not forwarding GitHub credentials: %v", err)
-		return b.run(ctx, command, nil)
-	}
-	defer srv.close()
-	fwd := boxSocket + ":" + srv.socket
-	_ = b.run(ctx, "rm -f "+shellQuote(boxSocket), nil)
-	if err := b.control("forward", "-R", fwd); err != nil {
-		sayWarn("not forwarding GitHub credentials: %v", err)
-		return b.run(ctx, command, nil)
-	}
-	defer func() { _ = b.control("cancel", "-R", fwd) }()
-	// Without the socket the box's helpers say "attach to forward", rather
-	// than failing to reach a stale one.
-	return b.run(ctx, "trap "+shellQuote("rm -f "+shellQuote(boxSocket))+" EXIT\n"+command, nil)
-}
-
-// control asks the shared connection's master to do op (ssh -O op).
-func (b *boxSSH) control(op string, extra ...string) error {
-	argv := append(append([]string{"-O", op}, extra...), b.args...)
-	out, err := exec.Command("ssh", argv...).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("ssh -O %s: %w: %s", op, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return reattach(ctx, box, sess, func() error { return box.attach(ctx, command) })
 }
 
 // claudeTarget is the project here and its box, reachable over ssh.
@@ -840,13 +765,13 @@ func (b *boxSSH) gitSSHCommand() string {
 	return strings.Join(words, " ")
 }
 
-// attach runs command on the box with a terminal, returning when it ends,
-// with extra ssh arguments (a socket forward). It gets a connection of its
-// own rather than sharing the control master, so a forward lives exactly
-// as long as the attach: ssh takes the first value of an option it's
+// attach runs command on the box with a terminal, returning when it ends.
+// It gets a connection of its own rather than sharing the control master,
+// so the keepalive settings in attachArgs are its own (a multiplexed
+// session has the master's): ssh takes the first value of an option it's
 // given, so ControlPath=none here beats the shared one in b.args.
-func (b *boxSSH) attach(ctx context.Context, command string, extra []string) error {
-	cmd := exec.CommandContext(ctx, "ssh", b.attachArgs(command, extra)...)
+func (b *boxSSH) attach(ctx context.Context, command string) error {
+	cmd := exec.CommandContext(ctx, "ssh", b.attachArgs(command)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	// The box has terminfo for the common terminals, not for every one
 	// (xterm-ghostty, xterm-kitty), and tmux won't start without it.
@@ -869,9 +794,9 @@ func (b *boxSSH) attach(ctx context.Context, command string, extra []string) err
 // attachArgs: a dead connection is given up on after 30s rather than
 // b.args' 90s (ssh takes an option's first value), so a train going
 // through a tunnel reconnects (see attachClaude) soon after it's out.
-func (b *boxSSH) attachArgs(command string, extra []string) []string {
-	argv := append([]string{"-t", "-o", "ControlPath=none", "-o", "ExitOnForwardFailure=no",
-		"-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"}, extra...)
+func (b *boxSSH) attachArgs(command string) []string {
+	argv := []string{"-t", "-o", "ControlPath=none",
+		"-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3"}
 	return append(append(argv, b.args...), command)
 }
 
