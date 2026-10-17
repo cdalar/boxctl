@@ -69,6 +69,13 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   left out. The filter is this CLI's -- the server always returns every
   box -- so anything that must find a paused box by name
   (`claude-plugin/bin/boxctl-claude`'s `box_state`) calls `ls -a`.
+  Its RUN, PROJECT and PR columns (`runText`, `cmd/lsproject.go`'s
+  `projectText`/`prText`) come from a box's labels and `run_status`
+  alone: `ls` never connects to a box. `-p` keeps this directory's
+  project's boxes (`inProject`: labeled with its directory or GitHub
+  repository; unlabeled, named `<agent>-<dir>[-<task>]`), `-l` filters
+  by label on the server, and `-o wide` adds IP, PROVIDER, READY and
+  BRANCH. `printBoxes` is the listing itself, shared with `claude ls`.
 - `cmd/create.go` — `create -a <script>` blocks until the server's
   `onctl create -a` finishes, so meanwhile `applyLogTail` polls the
   script's log (`~/.onctl/applyNN/output-<script>.log`, where onctl's
@@ -188,33 +195,25 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `/root/.boxctl/goals/<id>/`, `latest` symlinked) that records
   `status.json` (running/done/failed, pr_url) -- on the box, because
   boxctl-vms has no per-box metadata API; move it there if one appears.
-  `cmd/claudegoalstatus.go` reads it for `claude ls`, whose second table
-  lists the project's run boxes (`isRunBox`: a generated name with the
-  project's prefix or `workspace`, confirmed by the box's project
-  marker or, for a multi-repo workspace, its clones -- a `boxctl-web-*`
-  box matches `boxctl` by name alone), plus every goal run whatever
-  the cwd: a `--goal`/`--issue` box is `goal-<repo>-<slug>-<id>`
-  (`goalBoxPrefix`, `isGoalBox`), since a goal needs no local checkout
-  to start from. A `--repo`/`--goal` box is also labeled at create
-  (`runLabels`: `boxctl.run`, `.repo`, `.branch`, `.issue`, `.agent` --
-  boxctl-vms's labels), and `labeledRun` lists it by those wherever its
-  name came from. Every other box `claude` creates is labeled too
-  (`sessionLabels`: `boxctl.run=session` for an ephemeral run's,
-  `box` for the project's own, with `boxctl.project`, the local directory
-  it holds), so a labeled box is the project's or not by its labels
-  alone, and `ls` reaches into it only for a goal it has no `run_status`
-  for -- by name a `boxctl-web-*` box looks like `boxctl`'s, and checking
-  each unlabeled one's project marker over ssh costs about a second. The runner's `status()` also hands `status.json` to
-  the image's `boxctl-status`, which sends it over the box's vsock device
-  to the control plane (boxctl-vms's `docs/plans/run-status.md`); a row
-  with that `run_status` is read from it, running or paused, with no ssh,
-  and a box without it (no vsock device, an older image or server) falls
-  back to what follows. `ls` and `logs` only read: neither pauses nor
-  deletes a box. A goal box's `boxctl.pause-when-done=10m` label
+  The runner's `status()` also hands `status.json` to the image's
+  `boxctl-status`, which sends it over the box's vsock device to the
+  control plane (boxctl-vms's `docs/plans/run-status.md`), where it's
+  the box's `run_status`: `claude ls`, `claude status [--wait]` and
+  `boxctl ls` read that, running or paused, and never the file
+  (`cmd/claudegoalstatus.go`); `claude logs` reads the file. A box from
+  an image without `boxctl-status` shows its goal as `?`. Every box
+  `claude` creates is labeled (`runLabels` for `--repo`/`--goal`:
+  `boxctl.run=repo|goal`, `.repo`, `.branch`, `.issue`, `.agent`;
+  `sessionLabels` for the rest: `boxctl.run=session` for an ephemeral
+  run's, `box` for the project's own, with `boxctl.project`, the local
+  directory it holds), and `boxctl label` labels one from before. `claude
+  ls` is the TASK rows of the project's box (the one box it connects
+  to, and only running) above `printBoxes` of the project's boxes
+  (`inProject`) plus every goal run's, whatever the cwd -- a goal needs
+  no local checkout to start from. Neither `ls` nor `logs` pauses or
+  deletes a box: a goal box's `boxctl.pause-when-done=10m` label
   (`goalPauseWhenDone`) has boxctl-vms's idle reaper pause it once its
-  `run_status` is done/failed and it's gone 10 minutes unused. A paused box's
-  status can't be read without resuming it, so
-  `ls` shows the last one it read, kept in `~/.boxctl/claude/goals.json`.
+  `run_status` is done/failed and it's gone 10 minutes unused.
   Only an `https://github.com/` `pr_url` is shown: the box wrote it.
   `--issue N` (`issueGoal`) is a goal that only names the repository's
   issue number: Claude reads it itself with `gh issue view` on the box

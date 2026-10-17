@@ -220,9 +220,17 @@ func (c *Client) doWith(hc *http.Client, ctx context.Context, method, path strin
 	return nil
 }
 
-func (c *Client) List(ctx context.Context) ([]VM, error) {
+// List returns the caller's boxes. Each of labels ("key" or "key=value")
+// narrows it to the boxes with that label, on the server (boxctl-vms's
+// ?label=, ANDed).
+func (c *Client) List(ctx context.Context, labels ...string) ([]VM, error) {
+	path := "/api/vms"
+	if len(labels) > 0 {
+		q := url.Values{"label": labels}
+		path += "?" + q.Encode()
+	}
 	var vms []VM
-	if err := c.do(ctx, http.MethodGet, "/api/vms", nil, &vms); err != nil {
+	if err := c.do(ctx, http.MethodGet, path, nil, &vms); err != nil {
 		return nil, err
 	}
 	return vms, nil

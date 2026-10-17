@@ -659,6 +659,12 @@ var slugUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)
 // <agent>-<directory name, slugged, at most 20 chars>, so claude-<dir>
 // for Claude.
 func claudeBoxName(dir string) string {
+	return agent.name + "-" + projectSlug(dir)
+}
+
+// projectSlug is dir's name as the project's box has it: slugged, at
+// most 20 characters.
+func projectSlug(dir string) string {
 	slug := slugUnsafe.ReplaceAllString(strings.ToLower(filepath.Base(dir)), "-")
 	if len(slug) > 20 {
 		slug = slug[:20]
@@ -667,7 +673,7 @@ func claudeBoxName(dir string) string {
 	if slug == "" {
 		slug = "project"
 	}
-	return agent.name + "-" + slug
+	return slug
 }
 
 // ensureClaudeBox resumes name if it exists, or creates it when create
