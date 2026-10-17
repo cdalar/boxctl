@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -278,6 +279,19 @@ func TestGoalRunnerReports(t *testing.T) {
 	}
 	if !strings.Contains(lines[len(lines)-1], `"status":"done"`) {
 		t.Errorf("last report %q isn't done", lines[len(lines)-1])
+	}
+}
+
+func TestSessionLabels(t *testing.T) {
+	agent = claudeAgent
+	dir := t.TempDir() // not a git repository: no boxctl.repo
+	got := sessionLabels("session", dir, "boxctl/fix-a1b2")
+	want := map[string]string{"boxctl.run": "session", "boxctl.agent": "claude", "boxctl.project": dir, "boxctl.branch": "boxctl/fix-a1b2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("sessionLabels = %v, want %v", got, want)
+	}
+	if got := sessionLabels("box", "/"+strings.Repeat("d", 300), ""); got["boxctl.project"] != "" || got["boxctl.branch"] != "" {
+		t.Errorf("sessionLabels of a long dir = %v, want no project or branch", got)
 	}
 }
 

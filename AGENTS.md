@@ -198,7 +198,13 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   to start from. A `--repo`/`--goal` box is also labeled at create
   (`runLabels`: `boxctl.run`, `.repo`, `.branch`, `.issue`, `.agent` --
   boxctl-vms's labels), and `labeledRun` lists it by those wherever its
-  name came from. The runner's `status()` also hands `status.json` to
+  name came from. Every other box `claude` creates is labeled too
+  (`sessionLabels`: `boxctl.run=session` for an ephemeral run's,
+  `box` for the project's own, with `boxctl.project`, the local directory
+  it holds), so a labeled box is the project's or not by its labels
+  alone, and `ls` reaches into it only for a goal it has no `run_status`
+  for -- by name a `boxctl-web-*` box looks like `boxctl`'s, and checking
+  each unlabeled one's project marker over ssh costs about a second. The runner's `status()` also hands `status.json` to
   the image's `boxctl-status`, which sends it over the box's vsock device
   to the control plane (boxctl-vms's `docs/plans/run-status.md`); a row
   with that `run_status` is read from it, running or paused, with no ssh,

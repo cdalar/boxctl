@@ -145,8 +145,12 @@ func TestLabeledRun(t *testing.T) {
 		{vm(map[string]string{"boxctl.run": "repo", "boxctl.repo": "o/a"}), "cdalar/boxctl", false},
 		{vm(map[string]string{"boxctl.run": "repo", "boxctl.repo": "o/a"}), "", false},
 		{vm(nil), "cdalar/boxctl", false},
+		// An ephemeral run: this directory's, not one whose name looks like it.
+		{vm(map[string]string{"boxctl.run": "session", "boxctl.project": "/Users/x/boxctl", "boxctl.repo": "cdalar/boxctl"}), "cdalar/boxctl", true},
+		{vm(map[string]string{"boxctl.run": "session", "boxctl.project": "/Users/x/boxctl-web", "boxctl.repo": "cdalar/boxctl-web"}), "cdalar/boxctl", false},
+		{vm(map[string]string{"boxctl.run": "box", "boxctl.project": "/Users/x/boxctl"}), "cdalar/boxctl", false}, // listed by name
 	} {
-		if got := labeledRun(c.vm, c.repo); got != c.want {
+		if got := labeledRun(c.vm, c.repo, "/Users/x/boxctl"); got != c.want {
 			t.Errorf("labeledRun(%v, %q) = %v, want %v", c.vm.Labels, c.repo, got, c.want)
 		}
 	}

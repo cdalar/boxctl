@@ -267,6 +267,26 @@ func runLabels(isGoal bool, repos []string, branch string, issue int) map[string
 	return labels
 }
 
+// sessionLabels mark a box an interactive run creates: kind is
+// "session" for an ephemeral run's box, "box" for the project's own
+// (--keep, --box, --task). boxctl.project is the local directory the box
+// holds, at the same path, so claude ls can tell a project's run boxes
+// from the list alone -- by name, a boxctl-web box looks like boxctl's --
+// instead of reaching into each one to read its project marker.
+func sessionLabels(kind, dir, branch string) map[string]string {
+	labels := map[string]string{"boxctl.run": kind, "boxctl.agent": agent.name}
+	if len(dir) <= 255 {
+		labels["boxctl.project"] = dir
+	}
+	if repo := githubRepo(dir); repo != "" {
+		labels["boxctl.repo"] = repo
+	}
+	if branch != "" {
+		labels["boxctl.branch"] = branch
+	}
+	return labels
+}
+
 func runRepo(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	if len(claudeRepos) == 0 && claudeGoal == "" && claudeIssue == 0 {

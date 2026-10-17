@@ -85,7 +85,13 @@ func claudeList(ctx context.Context) error {
 		case strings.HasPrefix(vm.Name, main+"-"):
 			_, _ = fmt.Fprintf(tw, "%s\t-\t-\t-\t%s (own box, %s)\n", strings.TrimPrefix(vm.Name, main+"-"), vm.Name, vm.State)
 			rows++
-		case labeledRun(vm, repo), isGoalBox(vm.Name), isRunBox(vm.Name, prefixes):
+		case vm.Labels["boxctl.run"] != "":
+			// Labeled: the labels say whose it is; its name may only look
+			// like this project's.
+			if labeledRun(vm, repo, dir) {
+				runs = append(runs, vm)
+			}
+		case isGoalBox(vm.Name), isRunBox(vm.Name, prefixes):
 			runs = append(runs, vm)
 		}
 	}
@@ -131,7 +137,9 @@ func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]
 			read[i], errs[i] = parseGoalStatus(vm.RunStatus)
 			continue
 		}
-		if vm.State != "running" {
+		// Nothing to read from a running box either if its labels already
+		// say whose it is and it has no goal to report.
+		if vm.State != "running" || (vm.Labels["boxctl.run"] != "" && vm.Labels["boxctl.run"] != "goal") {
 			continue
 		}
 		fns = append(fns, func() {
@@ -168,8 +176,13 @@ func listRuns(ctx context.Context, runs []client.VM, projects, boxes map[string]
 		}
 		rows++
 		state, goal, updated, branch, pr := vm.State, "-", "-", "-", "-"
+		if b := vm.Labels["boxctl.branch"]; b != "" {
+			branch = b
+		}
 		st := read[i]
 		switch {
+		case labeled && vm.Labels["boxctl.run"] != "goal" && len(vm.RunStatus) == 0:
+			// No goal, running or paused: nothing to read or remember.
 		case errs[i] != nil:
 			goal = "?"
 			fmt.Fprintf(os.Stderr, "warning: couldn't read %s's goal: %v\n", vm.Name, errs[i])
@@ -261,12 +274,16 @@ func listBoxSessions(ctx context.Context, tw *tabwriter.Writer, dir string) (int
 }
 
 // labeledRun reports whether vm is a run box claude ls lists by its
-// labels (runLabels): every goal run wherever it was started, and a
-// --repo run of repo, this directory's GitHub repository.
-func labeledRun(vm client.VM, repo string) bool {
+// labels (runLabels, sessionLabels): every goal run wherever it was
+// started, a --repo run of repo, this directory's GitHub repository, and
+// an ephemeral run of dir. A project's own box ("box") isn't a run box:
+// claude ls lists it by name, first.
+func labeledRun(vm client.VM, repo, dir string) bool {
 	switch vm.Labels["boxctl.run"] {
 	case "goal":
 		return true
+	case "session":
+		return vm.Labels["boxctl.project"] == dir
 	case "repo":
 		if repo == "" {
 			return false
