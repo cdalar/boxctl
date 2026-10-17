@@ -52,6 +52,7 @@ func TestGoalPrompt(t *testing.T) {
 }
 
 func TestCloneScript(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	root := t.TempDir()
 	origin := filepath.Join(root, "origin")
 	run(t, root, "git", "init", "-q", "-b", "main", origin)

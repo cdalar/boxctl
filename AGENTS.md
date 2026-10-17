@@ -199,7 +199,16 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   prefix-matches `claude-auth`.
 - `cmd/claudegoal.go` — `claude --repo owner/name [--goal "..."]` and
   `claude logs <box>`: a new box, the repo cloned (default branch) onto
-  `boxctl/<slug>-<id>`, no local copy. With `--goal`, a detached tmux
+  `boxctl/<slug>-<id>`, no local copy. Without `--goal` (and without
+  `--keep`/`--box`/`--detach`) the box is ephemeral, but with no checkout
+  here to fetch into, `claudeTarget.end` deletes it only when
+  `repoWorkPushed` finds Claude quit and nothing only on the box:
+  `unpushedScript` checks for uncommitted or stashed changes and commits
+  not on a `refs/remotes/origin/*` ref, without asking GitHub (no
+  credentials once you've detached). That's why `cloneScript` maps every
+  branch in `remote.origin.fetch` -- a `--single-branch` clone's push of
+  a new branch leaves no remote-tracking ref otherwise. A PR is not
+  required: a pushed branch is enough. With `--goal`, a detached tmux
   session runs a generated `run.sh` (`claude -p`, stream-json, in
   `/root/.boxctl/goals/<id>/`, `latest` symlinked) that records
   `status.json` (running/done/failed, pr_url) -- on the box, because

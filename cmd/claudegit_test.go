@@ -219,3 +219,42 @@ func TestProjectDirFlag(t *testing.T) {
 		t.Fatal("a missing --project was accepted")
 	}
 }
+
+// TestUnpushed runs the box-side check for real: a clone like
+// cloneScript's, on a new branch, against a local "GitHub".
+func TestUnpushed(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	root := t.TempDir()
+	origin, seed, dir := filepath.Join(root, "origin.git"), filepath.Join(root, "seed"), filepath.Join(root, "repo")
+	run(t, root, "git", "init", "-q", "--bare", origin)
+	run(t, root, "git", "clone", "-q", origin, seed)
+	write(t, filepath.Join(seed, "a.txt"), "a")
+	run(t, seed, "git", "add", "-A")
+	run(t, seed, "git", "-c", "user.name=u", "-c", "user.email=u@x", "commit", "-qm", "init")
+	run(t, seed, "git", "push", "-q", "origin", "HEAD")
+	run(t, root, "sh", "-c", cloneScript(origin, dir, "boxctl/keen-dune-b18e"))
+	run(t, dir, "git", "config", "user.name", "Box User")
+	run(t, dir, "git", "config", "user.email", "box@example.com")
+	check := unpushedScript([]string{dir, filepath.Join(root, "never-cloned")})
+
+	if got := sh(t, check); got != "" {
+		t.Fatalf("fresh clone, nothing done: got %q", got)
+	}
+	write(t, filepath.Join(dir, "a.txt"), "edited")
+	if got := sh(t, check); got != dir+": uncommitted changes" {
+		t.Fatalf("edited: got %q", got)
+	}
+	run(t, dir, "git", "commit", "-qam", "edit")
+	if got := sh(t, check); got != dir+": 1 commit(s) on boxctl/keen-dune-b18e not pushed" {
+		t.Fatalf("committed: got %q", got)
+	}
+	run(t, dir, "git", "push", "-q", "origin", "HEAD")
+	if got := sh(t, check); got != "" {
+		t.Fatalf("pushed: got %q", got)
+	}
+	write(t, filepath.Join(dir, "a.txt"), "stashed")
+	run(t, dir, "git", "stash", "-q")
+	if got := sh(t, check); got != dir+": stashed changes" {
+		t.Fatalf("stashed: got %q", got)
+	}
+}

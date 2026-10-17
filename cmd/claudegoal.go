@@ -215,11 +215,15 @@ wait
 
 // cloneScript clones url's default branch into dir and branches. It
 // refuses a directory that's there: a --box that holds something already.
+// The clone fetches one branch, but maps them all, so that pushing
+// another one leaves a remote-tracking ref -- repoWorkPushed's evidence
+// that it's on GitHub.
 func cloneScript(url, dir, branch string) string {
 	return `set -e
 [ ! -e ` + shellQuote(dir) + ` ] || { echo "` + dir + ` already exists on this box" >&2; exit 1; }
 mkdir -p "$(dirname ` + shellQuote(dir) + `)"
 git clone -q --single-branch ` + shellQuote(url) + ` ` + shellQuote(dir) + `
+git -C ` + shellQuote(dir) + ` config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
 git -C ` + shellQuote(dir) + ` checkout -q -b ` + shellQuote(branch)
 }
 
@@ -376,7 +380,11 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer box.close()
+	sess := taskSession{dir: workDir, tmux: agent.name, ghSocket: boxGitHubSocket}
+	// An attended run's box goes when it ends, once its work is on GitHub
+	// (repoWorkPushed); a goal's stays until the server pauses it.
+	t := &claudeTarget{dir: workDir, name: name, box: box, ephemeral: goal == "" && ephemeralRun(), repoDirs: dirs, sess: sess}
+	defer t.end()
 
 	if token != "" {
 		if err := loginGitHubToken(ctx, box, token); err != nil {
@@ -411,13 +419,16 @@ func runRepo(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: couldn't skip Claude's first-run setup on %s: %v\n", name, err)
 	}
 
-	sess := taskSession{dir: workDir, tmux: agent.name, ghSocket: boxGitHubSocket}
 	if goal == "" {
 		if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
 			return fmt.Errorf("passing Claude its credentials: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "On branch %s. Come back to Claude with: boxctl claude --box %s\n", branch, name)
-		return startSession(ctx, &claudeTarget{dir: workDir, name: name, box: box}, sess, false, args)
+		if t.ephemeral {
+			fmt.Fprintf(os.Stderr, "On branch %s. %s is deleted when Claude quits, unless it has work that isn't pushed to GitHub (--keep keeps it).\n", branch, name)
+		} else {
+			fmt.Fprintf(os.Stderr, "On branch %s. Come back to Claude with: boxctl claude --box %s\n", branch, name)
+		}
+		return startSession(ctx, t, sess, false, args)
 	}
 
 	sess.tmux = agent.name + "-goal-" + id

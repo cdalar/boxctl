@@ -193,8 +193,12 @@ boxctl claude logs <box> [-f]           # how a --goal run is going
 
 **A repository instead of a local copy.** `--repo owner/name` creates a
 new box, clones the repository's default branch from GitHub onto a new
-branch `boxctl/<slug>-<id>`, and starts Claude there, attached as usual
-(come back with `boxctl ssh <box>`, then `tmux attach -t claude`). With
+branch `boxctl/<slug>-<id>`, and starts Claude there, attached as usual.
+When Claude quits, the box is deleted if everything on it is on GitHub:
+no uncommitted or stashed changes, and every branch pushed (whether a pull
+request was opened doesn't matter). Otherwise it's kept and you're told
+what's left on it; it's kept too if you detach with Claude still running,
+or pass `--keep` (come back with `boxctl claude --box <box>`). With
 `--goal "..."` Claude doesn't wait for you: it runs `claude -p` to the end
 in a detached tmux session, then opens a pull request with `gh pr create`
 whose body has the goal and a summary. `boxctl claude` prints the box, the
