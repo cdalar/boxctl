@@ -108,6 +108,14 @@ func TestPrepareHarnessChoice(t *testing.T) {
 	if claudeHarness == nil || claudeHarness.dir != "built-in pr-only" {
 		t.Errorf("--issue gets the built-in pr-only, got %+v", claudeHarness)
 	}
+	if h := pick(harnessPROnly, ""); h == nil || h.dir != "built-in pr-only" {
+		t.Errorf("--harness pr-only is the built-in, got %+v", h)
+	}
+	mine := filepath.Join(home, ".boxctl", "harness", harnessPROnly)
+	writeHarnessFile(t, mine, "CLAUDE.md", "mine")
+	if h := pick(harnessPROnly, ""); h == nil || h.dir != mine {
+		t.Errorf("your own pr-only beats the built-in, got %+v", h)
+	}
 
 	def := filepath.Join(home, ".boxctl", "harness", "default")
 	writeHarnessFile(t, def, "CLAUDE.md", "mine")

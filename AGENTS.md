@@ -258,8 +258,9 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   on the box, so this is a guardrail, not a boundary. Which harness:
   `--harness none`, an explicit one, `~/.boxctl/harness/default`, or for
   an unattended run (`--goal`/`--issue`) the embedded `cmd/harness-pr-only`
-  (extracted to a temp dir by `prepareHarness`, whose returned func
-  removes it). `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
+  (`builtinHarness`: extracted to a temp dir, which the func
+  `prepareHarness` returns removes). `--harness pr-only` names that
+  built-in too, unless `~/.boxctl/harness/pr-only` exists -- yours wins. `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
 - `cmd/agent.go`, `cmd/kilo.go` — `kilo`: the same for the Kilo CLI.
   A `boxAgent` is the little that differs between the two (name -- also
   the box prefix and tmux session -- binary, install dir, installer,

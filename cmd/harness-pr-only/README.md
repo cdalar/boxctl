@@ -3,8 +3,12 @@
 Starter harness for `boxctl claude --harness`: Claude may do anything on the
 box, but delivers work as a pull request and never merges it.
 
-    mkdir -p ~/.boxctl/harness && cp -r cmd/harness-pr-only ~/.boxctl/harness/pr-only
     boxctl claude --harness pr-only
+
+It's built into the binary. To change it, copy it under `~/.boxctl/harness`
+(as `pr-only`, which then wins over the built-in, or any other name):
+
+    mkdir -p ~/.boxctl/harness && cp -r cmd/harness-pr-only ~/.boxctl/harness/pr-only
 
 `README.md` is ignored by boxctl; only `CLAUDE.md`, `managed-settings.json`
 and `agents/ skills/ commands/` are copied. The deny rules are a guardrail

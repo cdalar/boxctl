@@ -240,7 +240,7 @@ rules for box runs only. The directory may hold:
  "allowManagedPermissionRulesOnly": true}
 ```
 
-(a ready-made one: `cmd/harness-pr-only`) with a `CLAUDE.md` saying "this is a disposable sandbox: read any
+(the built-in `pr-only`, `cmd/harness-pr-only`) with a `CLAUDE.md` saying "this is a disposable sandbox: read any
 directory, install any tool; work on your branch, open a pull request with
 `gh pr create`, never merge it" gives `boxctl claude --harness pr-only` a
 "PR, never merge" run. The harness is validated before any box is created
@@ -254,7 +254,8 @@ under `--goal`'s `--dangerously-skip-permissions` is unverified against a
 real box.
 
 **Which harness a run gets.** `--harness none` means none; `--harness
-<dir|name>` means that one; otherwise `~/.boxctl/harness/default`, if it
+<dir|name>` means that one (`pr-only` is the built-in, unless
+`~/.boxctl/harness/pr-only` is one of yours); otherwise `~/.boxctl/harness/default`, if it
 exists, applies to every run; otherwise a `--goal` run gets the built-in
 `pr-only` (pull request, never merge) -- it runs unattended with
 `--dangerously-skip-permissions`, so it's the run that most needs a

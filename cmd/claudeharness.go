@@ -43,6 +43,10 @@ type harness struct {
 	size    int64
 }
 
+// errNoHarness is resolveHarness's "nothing by that name": the one
+// failure the built-in's name falls back from.
+var errNoHarness = errors.New("no such directory (a bare name is looked up in ~/.boxctl/harness)")
+
 // resolveHarness is the directory --harness names: the path itself, or
 // else a name under ~/.boxctl/harness.
 func resolveHarness(arg string) (string, error) {
@@ -61,7 +65,7 @@ func resolveHarness(arg string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("--harness %s: no such directory (a bare name is looked up in ~/.boxctl/harness)", arg)
+	return "", fmt.Errorf("--harness %s: %w", arg, errNoHarness)
 }
 
 // loadHarness reads and checks the harness in dir.
@@ -128,7 +132,8 @@ func (h *harness) apply(ctx context.Context, box *boxSSH) error {
 // Which harness a run gets, first match:
 //
 //	--harness none            none
-//	--harness <dir|name>      that one
+//	--harness <dir|name>      that one; pr-only is the built-in unless
+//	                          ~/.boxctl/harness/pr-only is one of yours
 //	~/.boxctl/harness/default your default, for every run
 //	--goal / --issue          the built-in pr-only: it runs unattended with
 //	                          --dangerously-skip-permissions, so it is the run
@@ -136,7 +141,10 @@ func (h *harness) apply(ctx context.Context, box *boxSSH) error {
 //
 // Whatever is picked besides an explicit --harness is announced.
 
-const harnessNone = "none"
+const (
+	harnessNone   = "none"
+	harnessPROnly = "pr-only" // the built-in, by name
+)
 
 //go:embed harness-pr-only
 var builtinPROnly embed.FS
@@ -156,6 +164,10 @@ func prepareHarness() (func(), error) {
 		return nothing, nil
 	case arg != "":
 		dir, err := resolveHarness(arg)
+		if arg == harnessPROnly && errors.Is(err, errNoHarness) {
+			// None of your own by that name: the built-in one.
+			return builtinHarness()
+		}
 		if err != nil {
 			return nothing, err
 		}
@@ -176,12 +188,23 @@ func prepareHarness() (func(), error) {
 	if claudeGoal == "" && claudeIssue == 0 {
 		return nothing, nil
 	}
+	cleanup, err := builtinHarness()
+	if err == nil {
+		sayNote("An unattended run gets the built-in pr-only harness: pull request, never merge (--harness %s to skip it, or --harness <dir> for your own)", harnessNone)
+	}
+	return cleanup, err
+}
+
+// builtinHarness loads the embedded pr-only harness into claudeHarness,
+// extracted to a temp directory the returned func removes.
+func builtinHarness() (func(), error) {
+	nothing := func() {}
 	tmp, err := os.MkdirTemp("", "boxctl-harness-")
 	if err != nil {
 		return nothing, err
 	}
 	cleanup := func() { _ = os.RemoveAll(tmp) }
-	dir := filepath.Join(tmp, "pr-only")
+	dir := filepath.Join(tmp, harnessPROnly)
 	if err := extractEmbedded(builtinPROnly, "harness-pr-only", dir); err != nil {
 		cleanup()
 		return nothing, err
@@ -190,8 +213,7 @@ func prepareHarness() (func(), error) {
 		cleanup()
 		return nothing, err
 	}
-	claudeHarness.dir = "built-in pr-only"
-	sayNote("An unattended run gets the built-in pr-only harness: pull request, never merge (--harness %s to skip it, or --harness <dir> for your own)", harnessNone)
+	claudeHarness.dir = "built-in " + harnessPROnly
 	return cleanup, nil
 }
 
