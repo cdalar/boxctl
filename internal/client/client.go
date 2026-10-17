@@ -259,9 +259,20 @@ func (c *Client) ListSizes(ctx context.Context) ([]Size, error) {
 // Create makes a box. labels may be nil; a server without labels
 // ignores them.
 func (c *Client) Create(ctx context.Context, name, template, image, size string, labels map[string]string) (*VM, error) {
+	return c.CreateWithEnv(ctx, name, template, image, size, labels, nil)
+}
+
+// CreateWithEnv is Create with variables for the template's script to
+// read (onctl's -e NAME=value). The server refuses them without a
+// template, and refuses values it can't pass on unchanged -- see
+// boxctl-vms's templateEnvArgs.
+func (c *Client) CreateWithEnv(ctx context.Context, name, template, image, size string, labels, env map[string]string) (*VM, error) {
 	body := map[string]any{"name": name, "image": image}
 	if template != "" {
 		body["template"] = template
+	}
+	if len(env) > 0 {
+		body["env"] = env
 	}
 	if size != "" {
 		body["size"] = size
