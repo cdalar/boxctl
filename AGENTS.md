@@ -207,7 +207,10 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   can pause it (it has no boxctl token), so `ls` pauses a box whose goal
   has finished once the server's `last_activity_at` is 10 minutes old,
   and `logs` pauses it after following it to the end or resuming it to
-  read it. A paused box's status can't be read without resuming it, so
+  read it (`settleFinishedGoal`). A run that opened a PR (`hasPR`: done,
+  GitHub `pr_url`) has its work on GitHub, so its box is deleted
+  instead; failed runs and done-without-a-PR ones are only paused, their
+  log still on them. A paused box's status can't be read without resuming it, so
   `ls` shows the last one it read, kept in `~/.boxctl/claude/goals.json`.
   Only an `https://github.com/` `pr_url` is shown: the box wrote it.
   `--issue N` (`issueGoal`) is a goal that only names the repository's
