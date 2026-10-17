@@ -1,15 +1,46 @@
 # boxctl
 
-`boxctl` is the command-line client for [boxctl.io](https://boxctl.io) —
-boot, list, connect to, and destroy your Firecracker microVMs ("boxes")
-without opening the dashboard. It talks to the same `boxctl-vms` control
-plane the web dashboard does, authenticating as you with a personal API
-token instead of a browser session.
+[![Release](https://img.shields.io/github/v/release/cdalar/boxctl)](https://github.com/cdalar/boxctl/releases)
 
-It's a client only: all VM lifecycle logic (dispatching `onctl`, tracking
-state, the terminal tunnel) lives in `boxctl-vms` (separate repo). See
-that repo's `AGENTS.md`/`README.md` for the backend architecture, and
-`boxctl-web`'s `AGENTS.md` for the dashboard this mirrors.
+**Firecracker microVMs ("boxes") from your terminal.** `boxctl` is the
+command-line client for [boxctl.io](https://boxctl.io): boot, connect to,
+expose and destroy boxes, and run Claude Code or Kilo on one, without
+opening the dashboard.
+
+```bash
+curl -sLS https://boxctl.io/get.sh | bash   # install
+boxctl login                                # paste a token from boxctl.io/dashboard/tokens
+boxctl create my-box                        # boot a box
+boxctl ssh my-box                           # get a shell
+boxctl expose my-box 3000                   # public https URL for port 3000
+boxctl rm my-box                            # done
+```
+
+## Contents
+
+- [Install](#install) · [Usage](#usage)
+- [Claude Code on a box](#claude-code-on-a-box-boxctl-claude) · [Kilo on a box](#kilo-on-a-box-boxctl-kilo)
+- [Real ssh](#real-ssh-ssh-proxy) · [Claude Code plugin](#claude-code-plugin)
+- [Auth](#how-auth-works) · [Security](#security--credentials)
+- [`ssh`](#ssh--terminal-protocol) · [`port-forward`](#port-forward) · [`expose`](#expose)
+- [Development](#development)
+
+## Commands at a glance
+
+| Command | What it does |
+|---|---|
+| `login` / `logout` | Save or forget your personal token |
+| `create`, `ls`, `rm`, `pause`, `resume`, `keep` | Box lifecycle (`rm`/`pause`/`resume` also take `all`) |
+| `images`, `sizes` | What you can boot, and at what size |
+| `ssh`, `ssh-proxy` | Shell or one-off command; real `ssh`/`scp`/`rsync` through a proxy |
+| `port-forward`, `expose`, `unexpose` | Reach a box port locally, or publish it on the internet |
+| `backups`, `restore` | Saved copies of paused boxes |
+| `claude`, `kilo` | Run a coding agent on a box with your project |
+
+Run `boxctl <command> --help` for flags.
+
+It's a client only: all VM lifecycle logic lives in `boxctl-vms` (separate
+repo), which the web dashboard (`boxctl-web`) talks to as well.
 
 ## Install
 
@@ -55,19 +86,6 @@ echo 'source <(boxctl completion bash)' >> ~/.bashrc   # bash
 echo 'source <(boxctl completion zsh)' >> ~/.zshrc     # zsh (after compinit)
 boxctl completion fish > ~/.config/fish/completions/boxctl.fish
 ```
-
-## Releasing
-
-Push a `vX.Y.Z` tag and `.github/workflows/release.yml` does the rest via
-GoReleaser (`.goreleaser.yml`, mirroring onctl's) on the `onctl-4` runner:
-Linux (amd64/arm64), macOS (amd64/arm64, unsigned) and Windows (amd64)
-binaries are built, `checksums.txt` is GPG-signed, and the GitHub release
-is created. The signed macOS build (quill signing/notarization) and the
-Homebrew cask are kept commented out in both files until this repo has
-the Apple credentials and a Mac runner. Run the "release (self-hosted test)" workflow against
-an existing tag to dry-run all of that without publishing.
-`make release-snapshot` builds the same artifacts locally (unsigned,
-into `dist/`).
 
 ## Usage
 
@@ -491,19 +509,6 @@ report a vulnerability (security@boxctl.io).
   (the tunnel is authenticated with your boxctl token instead), so you
   trust boxctl.io to connect you to your own box.
 
-## Project layout
-
-```
-main.go                 Entry point, delegates to cmd.Execute()
-cmd/                     Cobra subcommands (login/logout/ls/images/sizes/create/rm/pause/resume/ssh/port-forward/expose/version),
-                         plus box-name tab completion (complete.go)
-internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
-internal/config/         ~/.boxctl/config.json read/write
-claude-plugin/           Claude Code plugin: route Bash to a box (see "Claude Code plugin")
-.claude-plugin/          Marketplace manifest listing that plugin
-docs/media/              Screen recordings (terminal-output-preview: spinners and colours, PR #75)
-```
-
 ## `ssh` / terminal protocol
 
 `boxctl ssh <name>` mints a short-lived, single-use ticket
@@ -576,4 +581,41 @@ Uploads over 100 MB and responses that take more than 100 seconds to
 start are cut off before they reach the box. A paused box's URL shows a
 "not available" page and comes back when the box resumes; visitors
 count as using the box, so it isn't auto-paused while people are on it.
-An account can have at most five public URLs.
+
+## Development
+
+```bash
+go build -o boxctl .
+go vet ./...
+gofmt -l .
+go test ./...
+```
+
+See [AGENTS.md](AGENTS.md) for how the code is organised.
+
+### Project layout
+
+```
+main.go                 Entry point, delegates to cmd.Execute()
+cmd/                     Cobra subcommands (login/logout/ls/images/sizes/create/rm/pause/resume/ssh/port-forward/expose/version),
+                         plus box-name tab completion (complete.go)
+internal/client/         HTTP client for boxctl-vms's /api/vms* and /api/images routes
+internal/config/         ~/.boxctl/config.json read/write
+claude-plugin/           Claude Code plugin: route Bash to a box (see "Claude Code plugin")
+.claude-plugin/          Marketplace manifest listing that plugin
+docs/media/              Screen recordings (terminal-output-preview: spinners and colours, PR #75)
+```
+
+### Releasing
+
+Push a `vX.Y.Z` tag and `.github/workflows/release.yml` does the rest via
+GoReleaser (`.goreleaser.yml`, mirroring onctl's) on the `onctl-4` runner:
+Linux (amd64/arm64), macOS (amd64/arm64, unsigned) and Windows (amd64)
+binaries are built, `checksums.txt` is GPG-signed, and the GitHub release
+is created. The signed macOS build (quill signing/notarization) and the
+Homebrew cask are kept commented out in both files until this repo has
+the Apple credentials and a Mac runner. Run the "release (self-hosted test)" workflow against
+an existing tag to dry-run all of that without publishing.
+`make release-snapshot` builds the same artifacts locally (unsigned,
+into `dist/`).
+
