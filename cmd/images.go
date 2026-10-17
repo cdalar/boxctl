@@ -10,7 +10,6 @@ import (
 	"golang.org/x/term"
 )
 
-
 var imagesCmd = &cobra.Command{
 	Use:     "images",
 	Aliases: []string{"image"},
