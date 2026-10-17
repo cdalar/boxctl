@@ -252,3 +252,12 @@ func copyGitIdentity(ctx context.Context, box *boxSSH, dir string) error {
 	}
 	return box.run(ctx, strings.Join(script, " && "), nil)
 }
+
+// defaultGitHubMode is store when BOXCTL_GITHUB_TOKEN is set -- the user
+// has handed boxctl a token for the box -- and forward otherwise.
+func defaultGitHubMode() string {
+	if strings.TrimSpace(os.Getenv("BOXCTL_GITHUB_TOKEN")) != "" {
+		return githubStore
+	}
+	return githubForward
+}
