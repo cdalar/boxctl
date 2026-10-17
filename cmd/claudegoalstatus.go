@@ -89,11 +89,11 @@ func readGoalStatus(ctx context.Context, box *boxSSH) (*goalStatus, error) {
 	return parseGoalStatus(out)
 }
 
-// goalOutcome is what settleFinishedGoal did with a finished goal's box.
-type goalOutcome int
+// goalSettled is what settleFinishedGoal did with a finished goal's box.
+type goalSettled int
 
 const (
-	goalKept goalOutcome = iota
+	goalKept goalSettled = iota
 	goalPaused
 	goalDeleted
 )
@@ -110,7 +110,7 @@ func (s goalStatus) hasPR() bool {
 // seen it used for goalPauseAfter. A run that opened a pull request has
 // its work on GitHub, so its box is deleted; any other (failed, or done
 // without a PR) is paused, its log and branch still on it.
-func settleFinishedGoal(ctx context.Context, c *client.Client, vm *client.VM, st *goalStatus, unused bool) (goalOutcome, error) {
+func settleFinishedGoal(ctx context.Context, c *client.Client, vm *client.VM, st *goalStatus, unused bool) (goalSettled, error) {
 	if !st.finished() {
 		return goalKept, nil
 	}
