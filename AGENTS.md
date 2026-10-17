@@ -86,6 +86,15 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   (`pause` → running, `resume` → paused, `rm` → every box, after one
   confirmation unless `--force`), runs the action concurrently, prints a
   ✔/✘ line per box, and fails if any box failed.
+- `cmd/rm.go` — besides its own confirmation, `rm` (and `rm all`) asks a
+  second one (`confirmUnfinished`) for a `--goal` run that isn't done:
+  `boxctl.run=goal` and a `run_status` that isn't `done` -- running,
+  failed, never reported (`?`) or unparseable all count, since the box may
+  hold work nobody has fetched (`filterUnfinished` is the tested
+  selection). It reads the one `List` call's `run_status`, never the box.
+  Done runs and boxes that aren't goal runs (no status to check) go
+  through on the usual single confirmation; `--force` skips both, and a
+  failed `List` only warns.
 - `cmd/ssh.go` — the one non-trivial command: mints a terminal ticket,
   dials the same `/ws/terminal/{id}` WebSocket the browser's xterm.js
   terminal uses, puts the local tty in raw mode
