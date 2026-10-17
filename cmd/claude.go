@@ -265,6 +265,7 @@ func openSession(ctx context.Context, setTTL bool, alongside func(*boxSSH, taskS
 			return nil, taskSession{}, err
 		}
 		claudeBox, claudeBranch = n.box(), n.branch()
+		newBoxLabels = sessionLabels("session", dir, claudeBranch)
 	}
 	t, err := openClaudeBox(ctx, true, setTTL)
 	if err != nil {
@@ -516,6 +517,9 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 	name := claudeBox
 	if name == "" {
 		name = claudeBoxName(dir)
+	}
+	if create && newBoxLabels == nil {
+		newBoxLabels = sessionLabels("box", dir, "")
 	}
 	box, err := connectClaudeBox(ctx, name, create, setTTL)
 	if err != nil {
