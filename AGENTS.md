@@ -272,7 +272,7 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
 - `.github/workflows/release.yml` + `.goreleaser.yml` — tagged (`v*`)
   releases, a copy of onctl's except macOS ships unsigned: Linux +
   Windows + plain darwin (`boxctl-darwin` build, not signed/notarized)
-  binaries with GPG-signed checksums, on a GitHub-hosted runner, needing
+  binaries with GPG-signed checksums, on the self-hosted `onctl-2` runner, needing
   only the `GPG_PRIVATE_KEY` secret. The signed darwin build (quill
   sign-and-notarize on a self-hosted Mac), the Homebrew cask, and the
   Apple/`GORELEASER_GH_TOKEN` secrets are all present but commented out
@@ -282,8 +282,8 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
 - `.github/workflows/release-self-hosted-test.yml` — the same job with
   `--skip=publish`, run by hand against an existing tag.
 - `.github/workflows/edge.yml` + `.goreleaser.edge.yml` — unsigned
-  rolling `edge` prerelease from every push to `main`, on a GitHub-hosted
-  runner.
+  rolling `edge` prerelease from every push to `main`, on the self-hosted
+  `onctl-2` runner.
 
 - `.github/dependabot.yml` + `.github/workflows/dependabot-automerge.yml`
   — daily Go-module and Actions bumps; patch/minor ones get GitHub

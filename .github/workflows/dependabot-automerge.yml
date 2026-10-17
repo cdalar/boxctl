@@ -15,7 +15,7 @@ jobs:
     # auto-merge (which waits for main's required checks), majors are left
     # for review.
     if: github.event.pull_request.user.login == 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    runs-on: onctl-2
     timeout-minutes: 5
     steps:
       - name: Fetch Dependabot metadata

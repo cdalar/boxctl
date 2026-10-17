@@ -3,11 +3,9 @@ name: release
 # Tagged releases (v*), built and published via GoReleaser + .goreleaser.yml.
 # Mirrors onctl's own goreleaser.yml, except macOS ships unsigned for now:
 # Linux, Windows and plain darwin binaries, GPG-signed checksums, published to this repo's
-# Releases page with the default GITHUB_TOKEN. Runs on a GitHub-hosted
-# runner, like edge.yml: on the self-hosted onctl-2 runner, which downloads
-# every action afresh, GitHub's archive server answered 404 for
-# actions/setup-go@v7's commit and v0.2.0 couldn't be built. Nothing here
-# needs a machine of our own until macOS signing comes back.
+# Releases page with the default GITHUB_TOKEN. Runs on the self-hosted onctl-2 runner, like edge.yml. (Earlier, on onctl-2,
+# GitHub's archive server once answered 404 for actions/setup-go@v7's commit
+# and v0.2.0 couldn't be built; if that recurs, re-run the job.)
 #
 # The macOS signing parts (self-hosted Mac runner, quill install, Apple
 # signing/notarization env, GORELEASER_GH_TOKEN for the Homebrew cask) are
@@ -30,7 +28,7 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: ubuntu-latest
+    runs-on: onctl-2
     # runs-on: [self-hosted, macOS, ARM64]   # macOS: needed for quill notarization
     steps:
       - name: Checkout
