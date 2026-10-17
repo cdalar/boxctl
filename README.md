@@ -98,6 +98,7 @@ boxctl ls                         # running boxes
 boxctl ls -a                      # all of them, paused and stopped too
 boxctl ls -p                      # this directory's project's boxes: its own, its runs and goals
 boxctl ls -o json                 # for scripts; images and sizes take -o json too
+# on a terminal, ls then fills in each PR's state (open, merged, closed) via `gh pr view` without holding up the list
 boxctl images
 boxctl create my-box
 boxctl create                     # a generated name, like quiet-otter-1a2b

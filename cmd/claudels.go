@@ -89,7 +89,7 @@ func claudeList(ctx context.Context) error {
 	if rows > 0 {
 		fmt.Println()
 	}
-	return printBoxes(vms, "table", true, "")
+	return printBoxes(ctx, vms, "table", true, "")
 }
 
 // printRunStatus is claude status's report on one run box, from its
