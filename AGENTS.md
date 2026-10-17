@@ -252,6 +252,22 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   without `--repo` takes the cwd's GitHub origin. Unverified against a
   real box: `IS_SANDBOX=1` letting `--dangerously-skip-permissions` run as
   root.
+- `cmd/claudeharness.go` — `claude --harness <dir|name>`: rules for the
+  box's Claude that don't touch the local `~/.claude`. `CLAUDE.md` and
+  `managed-settings.json` go to `/etc/claude-code/` (managed memory and
+  managed settings, which user/project settings can't override);
+  `agents/skills/commands` overlay `~/.claude`. Loaded and validated in
+  `prepareHarness` before any box exists; applied by `applyHarness` in
+  both the normal and `--repo/--goal` paths, and a failure there aborts
+  (unlike the plain config copy, which only warns). It runs right after
+  `copyClaudeConfig`, never in parallel with it: both untar into
+  `~/.claude`, and the harness's `commands/` etc. must win. Claude is root
+  on the box, so this is a guardrail, not a boundary. Which harness:
+  `--harness none`, an explicit one, `~/.boxctl/harness/default`, or for
+  an unattended run (`--goal`/`--issue`) the embedded `cmd/harness-pr-only`
+  (`builtinHarness`: extracted to a temp dir, which the func
+  `prepareHarness` returns removes). `--harness pr-only` names that
+  built-in too, unless `~/.boxctl/harness/pr-only` exists -- yours wins. `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
 - `cmd/agent.go`, `cmd/kilo.go` — `kilo`: the same for the Kilo CLI.
   A `boxAgent` is the little that differs between the two (name -- also
   the box prefix and tmux session -- binary, install dir, installer,

@@ -406,6 +406,9 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err := copyClaudeConfig(ctx, box); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: couldn't copy your Claude configuration: %v\n", err)
 	}
+	if err := applyHarness(ctx, box); err != nil {
+		return err
+	}
 	if err := box.run(ctx, agent.setupScript(), nil); err != nil {
 		return fmt.Errorf("installing Claude Code on %s: %w", name, err)
 	}

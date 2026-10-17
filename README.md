@@ -193,6 +193,7 @@ boxctl claude -R owner/name              # --repo for short: a fresh box with th
 boxctl claude --repo owner/name --goal "bump Go to 1.24 and fix what breaks"
 boxctl claude --repo owner/api --repo owner/web --goal "rename the /v1 route"   # several repos, a PR in each
 boxctl claude logs <box> [-f]           # how a --goal run is going
+boxctl claude --harness pr-only         # extra rules for the box: CLAUDE.md, managed-settings.json (below)
 ```
 
 **A repository instead of a local copy.** `--repo owner/name` creates a
@@ -223,6 +224,45 @@ it changed, linking them to each other; `status.json` has the first as
 work too, as long as the box's GitHub token covers every one. The
 repositories need different names, and `--repo` cannot be combined with
 `--project`.
+
+**A harness: rules for Claude on the box.** Your own `~/.claude` is copied
+to the box, but it also steers the Claude on this machine. `--harness
+<dir>` (or a bare name, looked up in `~/.boxctl/harness/<name>`) adds
+rules for box runs only. The directory may hold:
+
+| Entry | Goes to | Effect |
+| --- | --- | --- |
+| `CLAUDE.md` | `/etc/claude-code/CLAUDE.md` | managed memory, loaded in every session and not excludable |
+| `managed-settings.json` | `/etc/claude-code/managed-settings.json` | highest-precedence settings; user and project settings can't undo its permission rules |
+| `agents/`, `skills/`, `commands/` | `~/.claude`, on top of yours | e.g. an `/open-pr` command |
+
+```json
+{"permissions": {"deny": ["Bash(gh pr merge:*)", "Bash(git push --force*)", "Bash(git push*main*)"]},
+ "allowManagedPermissionRulesOnly": true}
+```
+
+(the built-in `pr-only`, `cmd/harness-pr-only`) with a `CLAUDE.md` saying "this is a disposable sandbox: read any
+directory, install any tool; work on your branch, open a pull request with
+`gh pr create`, never merge it" gives `boxctl claude --harness pr-only` a
+"PR, never merge" run. The harness is validated before any box is created
+and a harness that fails to arrive stops the run rather than starting
+Claude without it. Two limits: Claude runs as root on the box, so
+managed settings are a guardrail against mistakes, not against a
+determined agent -- the real boundary is the credentials (`--github store`
+with a one-repository fine-grained token, and branch protection on
+`main` so nothing merges without review). And whether deny rules hold
+under `--goal`'s `--dangerously-skip-permissions` is unverified against a
+real box.
+
+**Which harness a run gets.** `--harness none` means none; `--harness
+<dir|name>` means that one (`pr-only` is the built-in, unless
+`~/.boxctl/harness/pr-only` is one of yours); otherwise `~/.boxctl/harness/default`, if it
+exists, applies to every run; otherwise a `--goal` run gets the built-in
+`pr-only` (pull request, never merge) -- it runs unattended with
+`--dangerously-skip-permissions`, so it's the run that most needs a
+guardrail you didn't have to ask for. Anything chosen implicitly is
+announced on stderr. An attended run with no default directory gets no
+harness.
 
 **`--github` store, off -- and why a goal needs store.** `store` (the
 default) logs a token into the box's `gh`, where it stays until the box

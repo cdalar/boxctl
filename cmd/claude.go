@@ -136,6 +136,7 @@ func init() {
 	claudeAgent.addFlags(claudeCmd)
 	claudeCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Claude Code session (its ID) on the box")
 	claudeCmd.Flags().StringSliceVarP(&claudeRepos, "repo", "R", nil, "GitHub repository (owner/name) to clone on a new box, on a new boxctl/... branch; repeat or comma-separate for several, cloned side by side (with --goal: default is this directory's origin)")
+	claudeCmd.Flags().StringVar(&claudeHarnessArg, "harness", "", "rules for Claude on the box: a directory (CLAUDE.md, managed-settings.json, agents/ skills/ commands/), a name under ~/.boxctl/harness, or pr-only, the built-in (pull request, never merge); none for no harness (default: ~/.boxctl/harness/default, else for --goal/--issue the built-in pr-only)")
 	claudeCmd.Flags().StringVar(&claudeGoal, "goal", "", "a goal for Claude to carry out unattended, ending in a pull request")
 	claudeCmd.Flags().IntVar(&claudeIssue, "issue", 0, "number of a GitHub issue for Claude to resolve unattended, ending in a pull request that closes it (one repository)")
 	claudeCmd.Flags().StringVar(&claudeAuth, "claude-auth", claudeAuthAuto, "how Claude on the box logs in: auto (the token boxctl claude login saved, else /login), token, login or api-key")
@@ -144,6 +145,11 @@ func init() {
 }
 
 func runClaude(cmd *cobra.Command, args []string) error {
+	cleanupHarness, err := prepareHarness()
+	defer cleanupHarness()
+	if err != nil {
+		return err
+	}
 	if len(claudeRepos) > 0 || claudeGoal != "" || claudeIssue != 0 {
 		return runRepo(cmd, args)
 	}
@@ -174,12 +180,17 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	// they run while it's cloned or copied, sharing its time instead of
 	// adding to it (the ssh connection is shared, see boxSSH).
 	var (
-		configErr, setupErr, stateErr error
-		running                       bool
+		configErr, harnessErr, setupErr, stateErr error
+		running                                   bool
 	)
 	t, sess, err := openSession(ctx, cmd.Flags().Changed("idle-ttl"), func(box *boxSSH, sess taskSession) {
 		inParallel(
-			func() { configErr = copyClaudeConfig(ctx, box) },
+			func() {
+				configErr = copyClaudeConfig(ctx, box)
+				// The harness goes on top of your configuration, both into
+				// ~/.claude, so it must land after it -- never alongside.
+				harnessErr = applyHarness(ctx, box)
+			},
 			func() {
 				if setupErr = box.run(ctx, agent.setupScript(), nil); setupErr == nil {
 					sayDone("Installed %s", agent.title)
@@ -199,6 +210,10 @@ func runClaude(cmd *cobra.Command, args []string) error {
 
 	if configErr != nil {
 		sayWarn("couldn't copy your Claude configuration: %v", configErr)
+	}
+	// Rules that didn't arrive are not a warning: don't run Claude without them.
+	if harnessErr != nil {
+		return harnessErr
 	}
 	if setupErr != nil {
 		return fmt.Errorf("installing Claude Code on %s: %w", name, setupErr)
