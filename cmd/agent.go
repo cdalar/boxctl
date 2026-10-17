@@ -70,7 +70,7 @@ func (a *boxAgent) addFlags(c *cobra.Command) {
 	c.Flags().StringVarP(&claudeImage, "image", "i", claudeDefaultImage, "image of a box created for this")
 	c.Flags().StringVarP(&claudePrompt, "prompt", "p", "", a.fill("first message for a newly started {Agent}"))
 	c.Flags().BoolVarP(&claudeDetach, "detach", "d", false, a.fill("start {Agent} on the box without attaching to it"))
-	c.Flags().StringVar(&claudeGitHub, "github", githubForward, "GitHub credentials for the box: forward (lent while attached), store (a token kept on the box) or off")
+	c.Flags().StringVar(&claudeGitHub, "github", defaultGitHubMode(), "GitHub credentials for the box: forward (lent while attached), store (a token kept on the box) or off (store by default when BOXCTL_GITHUB_TOKEN is set)")
 	_ = c.RegisterFlagCompletionFunc("github", cobra.FixedCompletions([]string{githubForward, githubStore, githubOff}, cobra.ShellCompDirectiveNoFileComp))
 	c.Flags().BoolVarP(&claudeKeep, "keep", "k", false, a.fill("use the project's own box, {agent}-<project>, and keep it -- instead of a new box deleted when the run ends (--box, --detach and --task keep it too)"))
 	c.Flags().BoolVarP(&claudeForce, "force", "f", false, "copy a project directory even if it isn't a git repository")
