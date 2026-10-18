@@ -150,9 +150,10 @@ the minted plaintext token, held only until the CLI collects it.
   never hard-codes the dashboard's path.
 - `GET /api/cli-login/{id}` (no auth; `id` is the secret): `{"status":
   "pending" | "approved" | "denied" | "expired"}`, plus `"token"` on
-  `approved`, after which the record is deleted. Polling by user code
-  must not work: anyone who glimpses the code on a screen must not be
-  able to collect the token.
+  `approved` (with an optional `"email"`, who approved it, so the CLI can
+  say "Logged in as you@example.com"), after which the record is
+  deleted. Polling by user code must not work: anyone who glimpses the
+  code on a screen must not be able to collect the token.
 - `GET /internal/cli-login/{user_code}` (dashboard token): the label,
   `redirect_uri` and `state`, so the approval page can name the machine
   and know where to send the browser afterwards.
