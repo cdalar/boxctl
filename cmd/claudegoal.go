@@ -216,12 +216,14 @@ wait
 // refuses a directory that's there: a --box that holds something already.
 // The clone fetches one branch, but maps them all, so that pushing
 // another one leaves a remote-tracking ref -- repoWorkPushed's evidence
-// that it's on GitHub.
+// that it's on GitHub. GIT_TERMINAL_PROMPT=0 makes a repository GitHub
+// answers 401 for (a mistyped name looks private) fail at once instead of
+// waiting for a username nobody can type, which would leave the box idle.
 func cloneScript(url, dir, branch string) string {
 	return `set -e
 [ ! -e ` + shellQuote(dir) + ` ] || { echo "` + dir + ` already exists on this box" >&2; exit 1; }
 mkdir -p "$(dirname ` + shellQuote(dir) + `)"
-git clone -q --single-branch ` + shellQuote(url) + ` ` + shellQuote(dir) + `
+GIT_TERMINAL_PROMPT=0 git clone -q --single-branch ` + shellQuote(url) + ` ` + shellQuote(dir) + `
 git -C ` + shellQuote(dir) + ` config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
 git -C ` + shellQuote(dir) + ` checkout -q -b ` + shellQuote(branch)
 }
