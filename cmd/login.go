@@ -15,20 +15,28 @@ import (
 	"golang.org/x/term"
 )
 
+// tokenEnv is the environment variable `login` takes the token from
+// when it's set, for scripts and CI where there's no prompt to paste
+// into. Only login reads it: every other command uses the saved config.
+const tokenEnv = "BOXCTL_TOKEN"
+
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Save a personal API token (create one at " + dashboardURL + ")",
 	Long: `Save a personal API token to ~/.boxctl/config.json.
 
-The token is read from a hidden prompt when run interactively, or from
-stdin when piped.`,
+The token comes from the ` + tokenEnv + ` environment variable when that is
+set; otherwise it is read from a hidden prompt when run interactively, or
+from stdin when piped.`,
 	Example: `  # Interactive: paste the token at the hidden prompt
   boxctl login
 
+  # Non-interactive: from the environment
+  BOXCTL_TOKEN=... boxctl login
+
   # Non-interactive: pipe it in
   pbpaste | boxctl login
-  boxctl login < token.txt
-  printf '%s' "$BOXCTL_TOKEN" | boxctl login`,
+  boxctl login < token.txt`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		apiURL := config.DefaultAPIURL
@@ -36,7 +44,7 @@ stdin when piped.`,
 			apiURL = apiURLFlag
 		}
 
-		token, err := readToken(os.Stdin)
+		token, err := readToken(os.Getenv(tokenEnv), os.Stdin)
 		if err != nil {
 			return err
 		}
@@ -55,11 +63,16 @@ stdin when piped.`,
 	},
 }
 
-// readToken reads the token from a no-echo prompt when stdin is a
-// terminal, otherwise from the first line of stdin (so `pbpaste | boxctl
-// login` and `boxctl login < file` both work). The prompt goes to stderr
-// so it never mixes with piped output.
-func readToken(in *os.File) (string, error) {
+// readToken returns the token: fromEnv (the BOXCTL_TOKEN value) when it
+// isn't blank, else a no-echo prompt when in is a terminal, else the
+// first line of in (so `pbpaste | boxctl login` and `boxctl login < file`
+// both work). The prompt goes to stderr so it never mixes with piped
+// output.
+func readToken(fromEnv string, in *os.File) (string, error) {
+	if token := strings.TrimSpace(fromEnv); token != "" {
+		return token, nil
+	}
+
 	var raw string
 	if term.IsTerminal(int(in.Fd())) {
 		fmt.Fprintf(os.Stderr, "Paste your personal token (input hidden; create one at %s): ", dashboardURL)
@@ -79,7 +92,7 @@ func readToken(in *os.File) (string, error) {
 
 	token := strings.TrimSpace(raw)
 	if token == "" {
-		return "", errors.New("no token given; paste it at the prompt or pipe it in (`pbpaste | boxctl login`)")
+		return "", errors.New("no token given; set " + tokenEnv + ", paste it at the prompt, or pipe it in (`pbpaste | boxctl login`)")
 	}
 	return token, nil
 }

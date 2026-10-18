@@ -93,6 +93,7 @@ boxctl completion fish > ~/.config/fish/completions/boxctl.fish
 # Create a personal token at https://boxctl.io/dashboard/tokens, then paste it
 # at the hidden prompt (or pipe it in: `pbpaste | boxctl login`).
 boxctl login
+BOXCTL_TOKEN=... boxctl login     # for scripts: the token from the environment, no prompt
 
 boxctl ls                         # running boxes
 boxctl ls -a                      # all of them, paused and stopped too
