@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 
 	"github.com/cdalar/boxctl/internal/client"
@@ -15,24 +16,34 @@ import (
 	"golang.org/x/term"
 )
 
+var (
+	loginNoBrowser bool
+	loginPaste     bool
+)
+
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Save a personal API token (create one at " + dashboardURL + ")",
-	Long: `Save a personal API token to ~/.boxctl/config.json.
+	Short: "Log in through your browser, or save a personal API token",
+	Long: `Log in to boxctl.io and save a personal API token to ~/.boxctl/config.json.
 
-The token comes from the ` + tokenEnv + ` environment variable when that is
-set; otherwise it is read from a hidden prompt when run interactively, or
-from stdin when piped.
+On a terminal, login opens your browser: sign in, click Approve, and this
+computer is logged in. Over ssh, or with --no-browser, it prints the URL
+to open on any computer instead and waits for the approval.
 
-With ` + tokenEnv + ` set, every command already uses it and login is only
-needed to save it for shells that won't have the variable.`,
-	Example: `  # Interactive: paste the token at the hidden prompt
+A token made at ` + dashboardURL + ` works too: it comes
+from the ` + tokenEnv + ` environment variable when that is set, from stdin
+when piped, or from a hidden prompt with --paste. With ` + tokenEnv + ` set,
+every command already uses it and login is only needed to save it for
+shells that won't have the variable.`,
+	Example: `  # Browser: sign in and click Approve
   boxctl login
 
-  # Non-interactive: from the environment
-  BOXCTL_TOKEN=... boxctl login
+  # The browser is on another computer: open the printed URL there
+  boxctl login --no-browser
 
-  # Non-interactive: pipe it in
+  # A token from the dashboard instead
+  boxctl login --paste
+  BOXCTL_TOKEN=... boxctl login
   pbpaste | boxctl login
   boxctl login < token.txt`,
 	Args: cobra.NoArgs,
@@ -42,7 +53,7 @@ needed to save it for shells that won't have the variable.`,
 			apiURL = apiURLFlag
 		}
 
-		token, err := readToken(os.Getenv(tokenEnv), os.Stdin)
+		token, email, err := obtainToken(cmd, apiURL)
 		if err != nil {
 			return err
 		}
@@ -56,9 +67,35 @@ needed to save it for shells that won't have the variable.`,
 		if err := config.Save(&config.Config{APIURL: apiURL, Token: token}); err != nil {
 			return fmt.Errorf("saving config: %w", err)
 		}
-		fmt.Println("Logged in.")
+		if email != "" {
+			fmt.Printf("%s Logged in as %s.\n", okMark(), email)
+		} else {
+			fmt.Printf("%s Logged in.\n", okMark())
+		}
 		return nil
 	},
+}
+
+// obtainToken is where the token comes from: the environment, piped
+// stdin, or the --paste prompt give a token the user already has;
+// otherwise the browser login mints one (and may say whose it is).
+// A server without browser login falls back to the prompt.
+func obtainToken(cmd *cobra.Command, apiURL string) (token, email string, err error) {
+	pasted := loginPaste || strings.TrimSpace(os.Getenv(tokenEnv)) != "" || !term.IsTerminal(int(os.Stdin.Fd()))
+	if !pasted {
+		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+		defer stop()
+		st, err := newBrowserLogin(client.New(apiURL, ""), loginNoBrowser).run(ctx)
+		if err == nil {
+			return st.Token, st.Email, nil
+		}
+		if !errors.Is(err, client.ErrNoBrowserLogin) {
+			return "", "", err
+		}
+		sayNote("%s has no browser login; paste a token instead.", apiURL)
+	}
+	token, err = readToken(os.Getenv(tokenEnv), os.Stdin)
+	return token, "", err
 }
 
 // readToken returns the token: fromEnv (the BOXCTL_TOKEN value) when it
@@ -96,5 +133,7 @@ func readToken(fromEnv string, in *os.File) (string, error) {
 }
 
 func init() {
+	loginCmd.Flags().BoolVar(&loginNoBrowser, "no-browser", false, "don't open a browser or listen for it: print the URL to open on any computer")
+	loginCmd.Flags().BoolVar(&loginPaste, "paste", false, "paste a token from "+dashboardURL+" at a hidden prompt instead of logging in through the browser")
 	rootCmd.AddCommand(loginCmd)
 }
