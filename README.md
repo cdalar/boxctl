@@ -9,7 +9,7 @@ opening the dashboard.
 
 ```bash
 curl -sLS https://boxctl.io/get.sh | bash   # install
-boxctl login                                # paste a token from boxctl.io/dashboard/tokens
+boxctl login                                # sign in and click Approve in your browser
 boxctl create my-box                        # boot a box
 boxctl ssh my-box                           # get a shell
 boxctl expose my-box 3000                   # public https URL for port 3000
@@ -90,9 +90,11 @@ boxctl completion fish > ~/.config/fish/completions/boxctl.fish
 ## Usage
 
 ```bash
-# Create a personal token at https://boxctl.io/dashboard/tokens, then paste it
-# at the hidden prompt (or pipe it in: `pbpaste | boxctl login`).
+# Opens your browser: sign in, click Approve, and this computer is logged in.
 boxctl login
+boxctl login --no-browser         # over ssh: open the printed URL on any computer
+# Or a token from https://boxctl.io/dashboard/tokens, for scripts:
+boxctl login --paste              # at a hidden prompt (or pipe it in: `pbpaste | boxctl login`)
 export BOXCTL_TOKEN=...           # or skip login: every command uses this over the saved token
 
 boxctl ls                         # running boxes
@@ -511,6 +513,17 @@ session box is left behind; the idle reaper pauses it, and `boxctl ls -a`
 shows it as `claude-<session id prefix>`.
 
 ## How auth works
+
+`boxctl login` listens on a loopback port, opens the dashboard's approval
+page, and when you click Approve the page redirects there and the CLI
+collects a freshly minted personal token (labeled `cli: <hostname>` in
+the dashboard's token list, where revoking it logs that machine out).
+The redirect carries only a nonce; the token itself is fetched with a
+key that never leaves the CLI. Where no browser can reach the CLI
+(`--no-browser`, an ssh session, a machine with no opener) it prints the
+URL and a code to check against the page, and polls for the approval
+instead. The design is `docs/plans/browser-login.md`; a server that
+predates it makes `login` fall back to the pasted-token prompt.
 
 A personal token is scoped to your own boxes only — `boxctl-vms` resolves
 it to your owner prefix and enforces that scoping itself (see its
