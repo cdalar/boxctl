@@ -37,7 +37,8 @@ var harnessManaged = []string{"CLAUDE.md", "managed-settings.json"}
 var harnessConfigEntries = []string{"agents", "skills", "commands"}
 
 type harness struct {
-	dir     string
+	dir     string   // where it's read from
+	label   string   // how it's named in output: dir, or "built-in pr-only"
 	managed []string // files for harnessManagedDir, relative to dir
 	config  []string // files for ~/.claude, relative to dir
 	size    int64
@@ -70,7 +71,7 @@ func resolveHarness(arg string) (string, error) {
 
 // loadHarness reads and checks the harness in dir.
 func loadHarness(dir string) (*harness, error) {
-	h := &harness{dir: dir}
+	h := &harness{dir: dir, label: dir}
 	for _, name := range harnessManaged {
 		st, err := os.Stat(filepath.Join(dir, name))
 		if errors.Is(err, fs.ErrNotExist) {
@@ -110,7 +111,7 @@ func loadHarness(dir string) (*harness, error) {
 // apply puts the harness on the box. Its ~/.claude entries overwrite
 // your configuration's, so call it after copyClaudeConfig, not alongside.
 func (h *harness) apply(ctx context.Context, box *boxSSH) error {
-	progress := newUploadProgress("Copying the harness "+bold(h.dir), h.size)
+	progress := newUploadProgress("Copying the harness "+bold(h.label), h.size)
 	if len(h.managed) > 0 {
 		err := streamTar(ctx, box, "mkdir -p "+harnessManagedDir+" && tar -xzf - -C "+harnessManagedDir+" && chmod 0644 "+harnessManagedDir+"/*", progress,
 			func(tw *tar.Writer) error { return addFiles(tw, h.dir, h.managed) })
@@ -125,7 +126,7 @@ func (h *harness) apply(ctx context.Context, box *boxSSH) error {
 			return fmt.Errorf("harness: %w", err)
 		}
 	}
-	sayDone("Copied the harness %s %s", bold(h.dir), dim("("+client.FormatBytes(h.size)+")"))
+	sayDone("Copied the harness %s %s", bold(h.label), dim("("+client.FormatBytes(h.size)+")"))
 	return nil
 }
 
@@ -213,7 +214,9 @@ func builtinHarness() (func(), error) {
 		cleanup()
 		return nothing, err
 	}
-	claudeHarness.dir = "built-in " + harnessPROnly
+	// dir stays the temp directory the files are read from; only the
+	// name shown changes.
+	claudeHarness.label = "built-in " + harnessPROnly
 	return cleanup, nil
 }
 

@@ -73,6 +73,26 @@ func TestStarterHarnessLoads(t *testing.T) {
 	}
 }
 
+// The built-in's label is not its directory: apply reads from dir, so
+// every listed file must be under it (a label there once sent an empty
+// tar, and chmod on the box failed on an empty /etc/claude-code).
+func TestBuiltinHarnessFilesExist(t *testing.T) {
+	cleanup, err := builtinHarness()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	h := claudeHarness
+	if h.label != "built-in pr-only" || h.dir == h.label {
+		t.Fatalf("dir %q, label %q", h.dir, h.label)
+	}
+	for _, rel := range append(append([]string{}, h.managed...), h.config...) {
+		if _, err := os.Stat(filepath.Join(h.dir, rel)); err != nil {
+			t.Errorf("%s: %v", rel, err)
+		}
+	}
+}
+
 func TestPrepareHarnessChoice(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -92,7 +112,7 @@ func TestPrepareHarnessChoice(t *testing.T) {
 	if pick("", "") != nil {
 		t.Error("a plain run with no default gets no harness")
 	}
-	if h := pick("", "fix it"); h == nil || h.dir != "built-in pr-only" {
+	if h := pick("", "fix it"); h == nil || h.label != "built-in pr-only" {
 		t.Errorf("--goal gets the built-in pr-only, got %+v", h)
 	}
 	if pick("none", "fix it") != nil {
@@ -105,10 +125,10 @@ func TestPrepareHarnessChoice(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleanup()
-	if claudeHarness == nil || claudeHarness.dir != "built-in pr-only" {
+	if claudeHarness == nil || claudeHarness.label != "built-in pr-only" {
 		t.Errorf("--issue gets the built-in pr-only, got %+v", claudeHarness)
 	}
-	if h := pick(harnessPROnly, ""); h == nil || h.dir != "built-in pr-only" {
+	if h := pick(harnessPROnly, ""); h == nil || h.label != "built-in pr-only" {
 		t.Errorf("--harness pr-only is the built-in, got %+v", h)
 	}
 	mine := filepath.Join(home, ".boxctl", "harness", harnessPROnly)

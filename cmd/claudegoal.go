@@ -375,15 +375,27 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	branch := gen.branch()
 	newBoxLabels = runLabels(goal != "", repos, branch, claudeIssue)
 
-	box, err := connectClaudeBox(ctx, name, "", true, cmd.Flags().Changed("idle-ttl"))
+	box, created, err := connectClaudeBox(ctx, name, "", true, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {
 		return err
 	}
 	sess := taskSession{dir: workDir, tmux: agent.name}
 	// An attended run's box goes when it ends, once its work is on GitHub
-	// (repoWorkPushed); a goal's stays until the server pauses it.
+	// (repoWorkPushed); a goal's stays until the server pauses it. Until
+	// Claude is running, though, a box this run made holds nothing of
+	// yours: if setting it up fails (a mistyped --repo, say), it's deleted
+	// rather than left idle -- with no run on it, it never reports the
+	// status the server's reaper waits for.
 	t := &claudeTarget{dir: workDir, name: name, box: box, ephemeral: goal == "" && ephemeralRun(), repoDirs: dirs, sess: sess}
-	defer t.end()
+	started := false
+	defer func() {
+		if started || !created {
+			t.end()
+			return
+		}
+		box.close()
+		discardBox(name)
+	}()
 
 	if token != "" {
 		if err := loginGitHubToken(ctx, box, token); err != nil {
@@ -425,6 +437,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Fprintf(os.Stderr, "On branch %s. Come back to Claude with: boxctl claude --box %s\n", branch, name)
 		}
+		started = true
 		return startSession(ctx, t, sess, false, args)
 	}
 
@@ -442,6 +455,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err := box.run(ctx, sess.tmuxCommand("sh "+shellQuote(g.goalDir+"/run.sh"), true), nil); err != nil {
 		return fmt.Errorf("starting Claude on %s: %w", name, err)
 	}
+	started = true
 	if len(repos) > 1 {
 		fmt.Printf("Repos:  %s\n", strings.Join(repos, ", "))
 	}
@@ -563,7 +577,7 @@ func init() {
 }
 
 func goalLogs(ctx context.Context, name string, follow bool) error {
-	box, err := connectClaudeBox(ctx, name, "", false, false)
+	box, _, err := connectClaudeBox(ctx, name, "", false, false)
 	if err != nil {
 		return err
 	}
