@@ -41,11 +41,11 @@ const (
 	claudeInstall = "curl -fsSL https://claude.ai/install.sh | bash"
 	// claudeReadyTimeout bounds waiting for a new or resumed box to boot.
 	claudeReadyTimeout = 3 * time.Minute
-	// claudeDefaultIdleTTL is the idle TTL of a box created for Claude.
-	// The reaper counts relayed traffic as use, and a detached Claude
-	// working on its own makes none, so the server's 6h would pause it
-	// mid-task.
-	claudeDefaultIdleTTL = 24 * time.Hour
+	// claudeDefaultIdleTTL is the idle TTL of a box created for Claude,
+	// the same as the server's. The reaper counts relayed traffic as
+	// use, and a detached Claude working on its own makes none, so a
+	// long unattended run wants a longer --idle-ttl.
+	claudeDefaultIdleTTL = time.Hour
 	// projectMarker on the box records which project it holds, so a box
 	// is never handed a second one by running boxctl claude --box from
 	// another directory.
