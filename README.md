@@ -51,7 +51,11 @@ curl -sLS https://boxctl.io/get.sh | bash
 sudo install boxctl /usr/local/bin/
 ```
 
-Windows: download `boxctl-windows-amd64.zip` (or `-arm64.zip` on Windows on ARM) from the [releases page](https://github.com/cdalar/boxctl/releases) (or from the `edge` prerelease, below) and put `boxctl.exe` on your `PATH`.
+Windows (x64 and ARM64): download `boxctl-windows-amd64.zip` or
+`boxctl-windows-arm64.zip` from the [releases
+page](https://github.com/cdalar/boxctl/releases) and put `boxctl.exe` on your
+`PATH`. In Git Bash the install script above works too; it leaves `boxctl.exe`
+in the current directory. The `edge` prerelease below has both zips as well.
 
 macOS: the same install script works. The macOS binaries aren't signed or
 notarized yet, which doesn't matter when installing with `curl` as above; a
@@ -60,7 +64,7 @@ binary downloaded through a browser gets quarantined, so clear it with
 
 #### Edge build (latest `main`)
 
-To install or update to the `edge` build, an unsigned binary rebuilt from the tip of `main` on every push (Windows: `boxctl-windows-{amd64,arm64}.zip` on the [edge release](https://github.com/cdalar/boxctl/releases/tag/edge)):
+To install or update to the `edge` build, an unsigned binary rebuilt from the tip of `main` on every push (Windows: `boxctl-windows-amd64.zip` and `boxctl-windows-arm64.zip` on the [edge release](https://github.com/cdalar/boxctl/releases/tag/edge)):
 
 ```bash
 curl -sLS https://boxctl.io/get-edge.sh | bash
