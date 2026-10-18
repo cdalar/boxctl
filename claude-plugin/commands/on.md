@@ -24,4 +24,8 @@ CLAUDE_SESSION_ID="${CLAUDE_SESSION_ID}" CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DI
 ```
 
 Report the result in one or two sentences. If it fails because boxctl isn't
-logged in, tell the user to run `! boxctl login`.
+logged in, tell the user to run `! boxctl login`. If `boxctl` isn't found,
+tell them to install it: `curl -fsSL https://boxctl.io/get.sh | bash` (also
+in Git Bash on Windows; it leaves `boxctl.exe` in the current directory to
+put on `PATH`), or the zip from https://github.com/cdalar/boxctl/releases,
+then `boxctl login`.

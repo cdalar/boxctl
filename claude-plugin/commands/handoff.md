@@ -31,6 +31,8 @@ Then tell the user, briefly:
   the box's branches and uncommitted work back as `box/*`.
 
 If it fails with "unknown flag: --handoff", boxctl is too old: tell the
-user to update it (`curl -fsSL https://boxctl.io/get.sh | bash`). If it
-fails because boxctl isn't logged in, tell them to run `! boxctl login`.
+user to update it: `curl -fsSL https://boxctl.io/get.sh | bash` (also in
+Git Bash on Windows; it leaves `boxctl.exe` in the current directory to
+put on `PATH`), or the zip from https://github.com/cdalar/boxctl/releases.
+If it fails because boxctl isn't logged in, tell them to run `! boxctl login`.
 Do not retry with other flags.

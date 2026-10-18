@@ -438,7 +438,9 @@ one of your boxes instead of on your machine. Install it from this repo:
 /plugin install boxctl@boxctl
 ```
 
-It needs `boxctl` (logged in) and `jq` on your `PATH`. Then:
+It needs `boxctl` (logged in) and `jq` on your `PATH` -- on Windows, the
+`boxctl.exe` from the [releases page](https://github.com/cdalar/boxctl/releases)
+or `get.sh` run in Git Bash. Then:
 
 ```
 /boxctl:on [--mode session|project|exec] [--workspace sync|copy|git|none] [box-name] [--size medium] [--image name]
