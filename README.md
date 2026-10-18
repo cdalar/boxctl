@@ -51,7 +51,7 @@ curl -sLS https://boxctl.io/get.sh | bash
 sudo install boxctl /usr/local/bin/
 ```
 
-Windows: download `boxctl-windows-amd64.zip` from the [releases page](https://github.com/cdalar/boxctl/releases) (or from the `edge` prerelease, below) and put `boxctl.exe` on your `PATH`.
+Windows: download `boxctl-windows-amd64.zip` (or `-arm64.zip` on Windows on ARM) from the [releases page](https://github.com/cdalar/boxctl/releases) (or from the `edge` prerelease, below) and put `boxctl.exe` on your `PATH`.
 
 macOS: the same install script works. The macOS binaries aren't signed or
 notarized yet, which doesn't matter when installing with `curl` as above; a
@@ -60,7 +60,7 @@ binary downloaded through a browser gets quarantined, so clear it with
 
 #### Edge build (latest `main`)
 
-To install or update to the `edge` build, an unsigned binary rebuilt from the tip of `main` on every push (Windows: `boxctl-windows-amd64.zip` on the [edge release](https://github.com/cdalar/boxctl/releases/tag/edge)):
+To install or update to the `edge` build, an unsigned binary rebuilt from the tip of `main` on every push (Windows: `boxctl-windows-{amd64,arm64}.zip` on the [edge release](https://github.com/cdalar/boxctl/releases/tag/edge)):
 
 ```bash
 curl -sLS https://boxctl.io/get-edge.sh | bash
@@ -655,7 +655,7 @@ docs/media/              Screen recordings (terminal-output-preview: spinners an
 
 Push a `vX.Y.Z` tag and `.github/workflows/release.yml` does the rest via
 GoReleaser (`.goreleaser.yml`, mirroring onctl's) on the `onctl-4` runner:
-Linux (amd64/arm64), macOS (amd64/arm64, unsigned) and Windows (amd64)
+Linux (amd64/arm64), macOS (amd64/arm64, unsigned) and Windows (amd64/arm64)
 binaries are built, `checksums.txt` is GPG-signed, and the GitHub release
 is created. The signed macOS build (quill signing/notarization) and the
 Homebrew cask are kept commented out in both files until this repo has
