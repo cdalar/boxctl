@@ -337,7 +337,7 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `--skip=publish`, run by hand against an existing tag.
 - `.github/workflows/edge.yml` + `.goreleaser.edge.yml` — unsigned
   rolling `edge` prerelease from every push to `main`, on a GitHub-hosted
-  runner. Same targets as a tagged release, Windows (amd64, zip)
+  runner. Same targets as a tagged release, Windows (amd64/arm64, zip)
   included; `edge.yml`'s upload globs list the archive types, so a new
   archive format there needs a new glob.
 
