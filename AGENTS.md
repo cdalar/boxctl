@@ -244,9 +244,9 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   to, and only running) above `printBoxes` of the project's boxes
   (`inProject`) plus every goal run's, whatever the cwd -- a goal needs
   no local checkout to start from. Neither `ls` nor `logs` pauses or
-  deletes a box: a goal box's `boxctl.pause-when-done=10m` label
+  deletes a box: a goal box's `boxctl.pause-when-done=1h` label
   (`goalPauseWhenDone`) has boxctl-vms's idle reaper pause it once its
-  `run_status` is done/failed and it's gone 10 minutes unused.
+  `run_status` is done/failed and it's gone an hour unused.
   Only an `https://github.com/` `pr_url` is shown: the box wrote it.
   `--issue N` (`issueGoal`) is a goal that only names the repository's
   issue number: Claude reads it itself with `gh issue view` on the box

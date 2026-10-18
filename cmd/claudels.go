@@ -30,7 +30,7 @@ its tasks; the rest is from what the boxes report to the server, so a
 paused box shows its real status too. Boxes are found by the labels
 boxctl gives them; boxctl label adds them to a box from before labels.
 The server pauses a box whose goal has finished and that nothing has
-used for 10 minutes.`),
+used for an hour.`),
 		Args: cobra.NoArgs,
 		RunE: a.runs(func(cmd *cobra.Command, _ []string) error {
 			return claudeList(cmd.Context())
