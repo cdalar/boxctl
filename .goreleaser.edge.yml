@@ -3,9 +3,9 @@ project_name: boxctl
 
 # Used only by .github/workflows/edge.yml -- a lighter, unsigned config
 # for continuous builds off the tip of main, mirroring onctl's own
-# .goreleaser.edge.yml. Linux and macOS only (no Windows -- matches
-# onctl's edge config; add it here too if it turns out to matter before
-# a tagged release does).
+# .goreleaser.edge.yml. Same targets as the tagged release: Linux, macOS
+# and Windows (amd64, as a zip -- edge.yml's upload globs and
+# boxctl-web's get-edge.sh both expect that archive name).
 
 before:
   hooks:
@@ -19,9 +19,13 @@ builds:
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
     ldflags:
       - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/cdalar/boxctl/cmd.BuildTime={{.Date}}'
 
@@ -29,6 +33,9 @@ archives:
   - id: repl
     name_template: "{{ .ProjectName }}-{{.Os}}-{{.Arch}}"
     formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
 
 checksum:
   name_template: checksums.txt
