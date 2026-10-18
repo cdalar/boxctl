@@ -69,6 +69,7 @@ jobs:
           name: edge-dist
           path: |
             dist/*.tar.gz
+            dist/*.zip
             dist/checksums.txt
           retention-days: 1
 
@@ -103,12 +104,12 @@ jobs:
           if gh release view edge --repo "$repo" >/dev/null 2>&1; then
             gh api -X PATCH "repos/$repo/git/refs/tags/edge" \
               -f sha="${{ github.sha }}" -F force=true >/dev/null
-            gh release upload edge dist/*.tar.gz dist/checksums.txt \
+            gh release upload edge dist/*.tar.gz dist/*.zip dist/checksums.txt \
               --repo "$repo" --clobber
             gh release edit edge --repo "$repo" \
               --title "$title" --notes "$notes" --prerelease
           else
-            gh release create edge dist/*.tar.gz dist/checksums.txt \
+            gh release create edge dist/*.tar.gz dist/*.zip dist/checksums.txt \
               --repo "$repo" \
               --target "${{ github.sha }}" \
               --title "$title" \
