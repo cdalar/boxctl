@@ -297,7 +297,7 @@ func TestSessionLabels(t *testing.T) {
 func TestRunLabels(t *testing.T) {
 	agent = claudeAgent
 	got := runLabels(true, []string{"cdalar/onctl-runners"}, "boxctl/issue-29-0ca8", 29)
-	want := map[string]string{"boxctl.run": "goal", "boxctl.agent": "claude", "boxctl.branch": "boxctl/issue-29-0ca8", "boxctl.repo": "cdalar/onctl-runners", "boxctl.issue": "29", "boxctl.pause-when-done": "1h"}
+	want := map[string]string{"boxctl.run": "goal", "boxctl.agent": "claude", "boxctl.branch": "boxctl/issue-29-0ca8", "boxctl.repo": "cdalar/onctl-runners", "boxctl.issue": "29", "boxctl.pause-when-done": "10m"}
 	if !maps.Equal(got, want) {
 		t.Errorf("goal labels = %v, want %v", got, want)
 	}

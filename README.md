@@ -357,9 +357,10 @@ config below, plain `git fetch box` works as well.
 
 With `--keep`, Claude keeps running when you detach (`Ctrl-b d`) or the connection
 drops; `boxctl claude --keep` again attaches to it. Boxes it creates pause after
-`--idle-ttl` unused (default `24h`, not the server's 1h): a detached
-Claude working on its own makes no traffic the idle reaper counts. Pass
-`--idle-ttl` to change an existing box's. A box holds one project -- the
+`--idle-ttl` unused (default `1h`, the server's). A detached Claude
+working on its own makes no traffic the idle reaper counts, so give a
+long unattended run a longer `--idle-ttl`. Pass `--idle-ttl` to change
+an existing box's. A box holds one project -- the
 directory it was started from -- and `boxctl claude --box` from another
 directory is refused rather than copying a second one there. Later runs don't copy the
 project again -- the box's copy is the one Claude works on, so get its

@@ -245,7 +245,7 @@ func reposToUse() ([]string, error) {
 // has finished before the server pauses it (boxctl-vms's
 // boxctl.pause-when-done label), so a box someone is looking into isn't
 // paused under them.
-const goalPauseWhenDone = "1h"
+const goalPauseWhenDone = "10m"
 
 // newBoxLabels, when set, are the labels ensureClaudeBox gives a box it
 // creates: runRepo's, for its run box.
