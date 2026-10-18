@@ -157,8 +157,8 @@ the minted plaintext token, held only until the CLI collects it.
   `redirect_uri` and `state`, so the approval page can name the machine
   and know where to send the browser afterwards.
 - `POST /internal/cli-login/{user_code}/approve` (dashboard token):
-  `{"owner_prefix"}` → `TokenStore.Mint(owner_prefix, label)`, attached
-  to the record. `.../deny` marks it denied.
+  `{"owner_prefix", "email"}` → `TokenStore.Mint(owner_prefix, label)`,
+  attached to the record with the email. `.../deny` marks it denied.
 
 `id` and `user_code` are separate secrets on purpose: the code is short
 enough to read off a screen and compare, the id is what unlocks the
