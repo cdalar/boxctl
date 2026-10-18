@@ -266,7 +266,12 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   One repository; `--goal` text is appended as extra instructions; the
   box/branch slug is `issue-N`.
   Goal mode refuses `--github off` (it has to push and open a PR without
-  you) and checks everything, token included, before creating a box. `--goal`
+  you) and checks everything, token included, before creating a box. What
+  can only fail after that -- the clone of a mistyped `--repo`, the harness,
+  the install -- deletes a box this run created (`connectClaudeBox`'s
+  `created`), since nothing of the user's is on it yet and a box with no
+  run never reports the `run_status` the reaper waits for; a `--box` that
+  already existed is only closed. `--goal`
   without `--repo` takes the cwd's GitHub origin. Unverified against a
   real box: `IS_SANDBOX=1` letting `--dangerously-skip-permissions` run as
   root.
@@ -284,7 +289,9 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `--harness none`, an explicit one, `~/.boxctl/harness/default`, or for
   an unattended run (`--goal`/`--issue`) the embedded `cmd/harness-pr-only`
   (`builtinHarness`: extracted to a temp dir, which the func
-  `prepareHarness` returns removes). `--harness pr-only` names that
+  `prepareHarness` returns removes; `harness.dir` stays that temp
+  directory and only `harness.label` says "built-in pr-only" -- `apply`
+  tars from `dir`). `--harness pr-only` names that
   built-in too, unless `~/.boxctl/harness/pr-only` exists -- yours wins. `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
 - `cmd/agent.go`, `cmd/kilo.go` — `kilo`: the same for the Kilo CLI.
   A `boxAgent` is the little that differs between the two (name -- also

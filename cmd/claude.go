@@ -484,7 +484,7 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 	if create && newBoxLabels == nil {
 		newBoxLabels = sessionLabels("box", dir, "")
 	}
-	box, err := connectClaudeBox(ctx, name, dir, create, setTTL)
+	box, _, err := connectClaudeBox(ctx, name, dir, create, setTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -506,16 +506,17 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 
 // connectClaudeBox makes sure the box name is running (created first when
 // create is set), authorized for boxctl's key and reachable over ssh,
-// with its idle TTL set when it's new or setTTL says to.
-func connectClaudeBox(ctx context.Context, name, dir string, create, setTTL bool) (*boxSSH, error) {
+// with its idle TTL set when it's new or setTTL says to. created says
+// whether this call made the box.
+func connectClaudeBox(ctx context.Context, name, dir string, create, setTTL bool) (box *boxSSH, created bool, err error) {
 	c := newClient()
-	created, err := ensureClaudeBox(ctx, c, name, dir, create)
+	created, err = ensureClaudeBox(ctx, c, name, dir, create)
 	if err != nil {
-		return nil, err
+		return nil, created, err
 	}
 	key, err := ensureClaudeKey()
 	if err != nil {
-		return nil, err
+		return nil, created, err
 	}
 	// Two independent API calls: no reason to wait for one before the other.
 	var ttlErr, authErr error
@@ -531,17 +532,17 @@ func connectClaudeBox(ctx context.Context, name, dir string, create, setTTL bool
 		sayWarn("couldn't set %s's idle TTL: %v", name, ttlErr)
 	}
 	if authErr != nil {
-		return nil, authErr
+		return nil, created, authErr
 	}
-	box, err := newBoxSSH(name, key)
+	box, err = newBoxSSH(name, key)
 	if err != nil {
-		return nil, err
+		return nil, created, err
 	}
 	if err := box.run(ctx, "true", nil); err != nil {
 		box.close()
-		return nil, fmt.Errorf("can't ssh into %s: %w", name, err)
+		return nil, created, fmt.Errorf("can't ssh into %s: %w", name, err)
 	}
-	return box, nil
+	return box, created, nil
 }
 
 // checkProject reports whether dir still has to be copied to the box, or
