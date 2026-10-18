@@ -6,6 +6,8 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/cdalar/boxctl/internal/client"
 	"github.com/cdalar/boxctl/internal/config"
@@ -17,6 +19,11 @@ import (
 // boxctl-web's app/dashboard/tokens/). Referenced only in help/error
 // text, never dialed by this binary.
 const dashboardURL = "https://boxctl.io/dashboard/tokens"
+
+// tokenEnv is the environment variable that supplies the personal token
+// without a `boxctl login`: every command uses it over the saved config
+// when it's set, and `login` saves it so later shells need it no more.
+const tokenEnv = "BOXCTL_TOKEN"
 
 // commandsWithoutLogin don't need an existing token: login itself, plus
 // the handful of commands that are meaningful (or must at least run)
@@ -71,6 +78,12 @@ list, connect to, and destroy your Firecracker microVMs ("boxes").`,
 		if apiURLFlag != "" {
 			cfg.APIURL = apiURLFlag
 		}
+		// BOXCTL_TOKEN beats the saved token, like --api-url beats the
+		// saved URL: with it set, no `boxctl login` is needed at all
+		// (scripts, CI, a box with the token in its environment).
+		if token := strings.TrimSpace(os.Getenv(tokenEnv)); token != "" {
+			cfg.Token = token
+		}
 
 		// Check the whole command path, not just the leaf: `completion
 		// bash` runs a command named "bash", and it must work before
@@ -81,7 +94,7 @@ list, connect to, and destroy your Firecracker microVMs ("boxes").`,
 			}
 		}
 		if cfg.Token == "" {
-			return fmt.Errorf("not logged in -- run `boxctl login` first (create one at %s)", dashboardURL)
+			return fmt.Errorf("not logged in -- run `boxctl login` first or set %s (create one at %s)", tokenEnv, dashboardURL)
 		}
 		return nil
 	},

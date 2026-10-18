@@ -93,7 +93,7 @@ boxctl completion fish > ~/.config/fish/completions/boxctl.fish
 # Create a personal token at https://boxctl.io/dashboard/tokens, then paste it
 # at the hidden prompt (or pipe it in: `pbpaste | boxctl login`).
 boxctl login
-BOXCTL_TOKEN=... boxctl login     # for scripts: the token from the environment, no prompt
+export BOXCTL_TOKEN=...           # or skip login: every command uses this over the saved token
 
 boxctl ls                         # running boxes
 boxctl ls -a                      # all of them, paused and stopped too
@@ -517,7 +517,9 @@ it to your owner prefix and enforces that scoping itself (see its
 README's "Personal API tokens (the `boxctl` CLI)"), the same way
 `boxctl-web`'s dashboard already scopes itself to your boxes with its own
 shared token. Your token lives in `~/.boxctl/config.json` (mode `0600`)
-and is never sent anywhere except the configured API URL.
+and is never sent anywhere except the configured API URL. A
+`BOXCTL_TOKEN` environment variable takes precedence over the saved one,
+for scripts and CI where no `boxctl login` has been run.
 
 ## Security & credentials
 

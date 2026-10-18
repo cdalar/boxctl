@@ -60,12 +60,15 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
 
 - `main.go` — entry point, just calls `cmd.Execute()`.
 - `cmd/root.go` — the root Cobra command, `~/.boxctl/config.json`
-  loading, and the "must be logged in" gate every command but
+  loading (`BOXCTL_TOKEN`, when set, replaces the saved token), and the
+  "must be logged in" gate every command but
   `login`/`logout`/`version`/`help`/`completion` goes through.
 - `cmd/login.go`/`logout.go` — save/remove the personal token. `login`
   takes it from `BOXCTL_TOKEN` when set, else a hidden prompt, else the
-  first line of stdin (`readToken`, tested). Only `login` reads that
-  variable: every other command uses the saved config.
+  first line of stdin (`readToken`, tested). `root.go`'s
+  `PersistentPreRunE` also lets `BOXCTL_TOKEN` override the saved token
+  for every command, so with it set no login is needed; `login` then
+  only saves it.
 - `cmd/ls.go`/`create.go`/`rm.go`/`pause.go`/`resume.go`/`keep.go`/`label.go` — thin wrappers
   around `internal/client`'s matching methods.
   `ls` lists only live boxes (`stateRank` 0: provisioning, running,

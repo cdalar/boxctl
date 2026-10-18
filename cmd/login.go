@@ -15,11 +15,6 @@ import (
 	"golang.org/x/term"
 )
 
-// tokenEnv is the environment variable `login` takes the token from
-// when it's set, for scripts and CI where there's no prompt to paste
-// into. Only login reads it: every other command uses the saved config.
-const tokenEnv = "BOXCTL_TOKEN"
-
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Save a personal API token (create one at " + dashboardURL + ")",
@@ -27,7 +22,10 @@ var loginCmd = &cobra.Command{
 
 The token comes from the ` + tokenEnv + ` environment variable when that is
 set; otherwise it is read from a hidden prompt when run interactively, or
-from stdin when piped.`,
+from stdin when piped.
+
+With ` + tokenEnv + ` set, every command already uses it and login is only
+needed to save it for shells that won't have the variable.`,
 	Example: `  # Interactive: paste the token at the hidden prompt
   boxctl login
 
