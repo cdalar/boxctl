@@ -13,26 +13,24 @@ through the clipboard.
 
 ## What Claude Code and gh do
 
-Observed on a box over ssh (no browser, no localhost reachable), which
-is exactly where `boxctl` is often run.
-
-**Claude Code** (`claude auth login`, 2.1.x) prints:
+**Claude Code** (`claude auth login`, 2.1.x) is OAuth 2 authorization
+code with PKCE. On a laptop it starts a localhost callback server,
+opens the browser, and the consent page's redirect lands on that
+server: sign in, click Authorize, and the terminal says "Login
+successful" with nothing typed. Headless (over ssh, in a container) the
+callback is unreachable, so it prints the URL with `code=true` and the
+hosted page shows a code the user pastes back:
 
 ```
 Opening browser to sign in…
-If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&...&code_challenge_method=S256&...
+If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&...
 Paste code here if prompted >
 ```
 
-It is OAuth 2 authorization code with PKCE. On a desktop the redirect
-lands on a localhost callback server the CLI started, so the login
-completes with no typing. Headless (`code=true`, `redirect_uri` on
-`platform.claude.com/oauth/code/callback`) the hosted page shows a code
-the user copies back into the terminal. `claude auth status` prints
-JSON (`loggedIn`, `authMethod`, ...) and exits 1 when logged out.
-`claude setup-token` prints a long-lived token for CI and saves
-nothing; `CLAUDE_CODE_OAUTH_TOKEN` carries it. Environment credentials
-outrank the stored login.
+`claude auth status` prints JSON (`loggedIn`, `authMethod`, ...) and
+exits 1 when logged out. `claude setup-token` prints a long-lived token
+for CI and saves nothing; `CLAUDE_CODE_OAUTH_TOKEN` carries it.
+Environment credentials outrank the stored login.
 
 **gh** (`gh auth login --web`) is the OAuth device flow:
 
@@ -42,44 +40,76 @@ Press Enter to open github.com in your browser...
 ```
 
 The user types the code on `github.com/login/device`, approves, and the
-CLI, which has been polling GitHub, picks the token up. Nothing comes
-back to the machine, so it works over ssh and in containers.
+CLI, which has been polling GitHub, picks the token up.
 
-**Which shape fits boxctl.** The localhost callback is the nicest on a
-laptop and useless on a box, in CI, or in a container. The paste-a-code
-fallback works everywhere but is two manual steps. The device flow
-works everywhere with one click, and we can do better than gh: the URL
-can carry the code, so the user has nothing to type at all. They sign
-in (or are already signed in), check the code on the page matches the
-terminal, and click Approve.
+## What boxctl should do
 
-## Proposed flow
+The user runs `boxctl` on their own computer, where the browser is. So
+the experience to match is Claude Code's laptop case: run `login`, the
+browser opens, one click, the terminal is logged in. The same flow has
+to degrade to something usable from an ssh session or a CI job without
+a second code path, and `BOXCTL_TOKEN` and piped stdin stay for scripts.
+
+### Laptop
 
 ```
 $ boxctl login
-Opening https://boxctl.io/cli/login?code=WDKP-7H3Q in your browser…
-If it didn't open, visit that URL. The page must show the code WDKP-7H3Q.
-⠋ Waiting for you to approve it…
-✔ Logged in as cemal@example.com (token "cli: cemal-mbp", listed at https://boxctl.io/dashboard/tokens)
+Opening your browser to approve this computer…
+⠋ Waiting for you to click Approve…
+✔ Logged in as you@example.com (token "cli: your-mac", listed at https://boxctl.io/dashboard/tokens)
 ```
 
-- `--no-browser` only prints the URL (for ssh sessions where the browser
-  is on another machine; `xdg-open` is missing on a box anyway, so the
-  CLI falls back to this by itself when opening fails).
-- Piped stdin and `BOXCTL_TOKEN` keep working exactly as now, for
-  scripts: `boxctl login < token.txt`, `BOXCTL_TOKEN=... boxctl ls`.
-  `--paste` forces today's hidden prompt on a terminal.
-- Ctrl-C cancels; the pending login expires on the server after 10
-  minutes either way.
-- An older server without the endpoints (404 on the start call) makes
-  the CLI fall back to the paste prompt with a one-line note, so a new
-  CLI against an old self-hosted install still logs in.
-- Optional, later: `boxctl whoami` (email, token label, API URL; exit 1
-  when logged out, `-o json`), the equivalent of `claude auth status`.
+The browser shows (after the usual sign-in if there's no session):
 
-The token's label is `cli: <hostname>`, so the dashboard's token list
-says where each token lives, and revoking one from there logs that
-machine out.
+> **Allow boxctl on your-mac to manage your boxes?**
+> Only approve this if you just ran `boxctl login` on that computer.
+> Code WDKP-7H3Q
+> [Approve] [Deny]
+
+and after Approve: "Done. You can close this tab and go back to your
+terminal." The terminal finishes within a second. Nothing is typed, and
+the token never passes through the clipboard or the scrollback.
+
+### No browser on this machine
+
+If opening the browser fails (no `xdg-open`, ssh, container) or
+`--no-browser` is given, the CLI prints the URL and the code instead:
+
+```
+Open this on any computer: https://boxctl.io/cli/login?code=WDKP-7H3Q
+The page must show the code WDKP-7H3Q.
+⠋ Waiting for you to click Approve…
+```
+
+Same page, same click; the code line is there so the user can check
+the page they opened is their own login and not a link someone sent
+them. The CLI side is identical to the laptop case.
+
+### Scripts
+
+Unchanged: `BOXCTL_TOKEN=... boxctl ls` needs no login at all,
+`boxctl login < token.txt` saves a token from stdin, and `--paste`
+gives today's hidden prompt on a terminal. Tokens for those still come
+from the dashboard's tokens page.
+
+### Why polling rather than a localhost callback
+
+Claude Code gets its instant finish from a localhost listener the
+browser redirects to. For boxctl the CLI collecting the token itself
+(polling every second with a key only it holds) gives the same
+experience on a laptop, finishing within the poll interval, and the
+*same* code handles ssh and CI, where a localhost redirect ends in a
+browser error page. One flow, no listener, no port to pick, no
+mixed-content tricks to get an https page to reach `127.0.0.1`. If the
+one-second wait ever matters, a callback can be added later as a pure
+speed-up: the approval page would navigate to
+`http://127.0.0.1:<port>/done` when the CLI advertised one, and the CLI
+would collect the token the same way the moment it's hit.
+
+### Later
+
+`boxctl whoami`: email, token label, API URL; exit 1 when logged out,
+`-o json`. The equivalent of `claude auth status`.
 
 ## Server pieces
 
@@ -99,17 +129,17 @@ alphabet, `XXXX-XXXX`: what the human sees), `label`, `created`,
 the CLI collects it.
 
 - `POST /api/cli-login` (no auth, rate-limited per IP): body
-  `{"label": "cli: cemal-mbp"}` → `{"id", "user_code", "verify_url",
-  "expires_in": 600, "interval": 2}`. `verify_url` is
+  `{"label": "cli: your-mac"}` → `{"id", "user_code", "verify_url",
+  "expires_in": 600, "interval": 1}`. `verify_url` is
   `<dashboard>/cli/login?code=<user_code>`, so the CLI never hard-codes
   the dashboard's path.
 - `GET /api/cli-login/{id}` (no auth; `id` is the secret): `{"status":
   "pending" | "approved" | "denied" | "expired"}`, plus `"token"` on
-  `approved`, after which the record is deleted. Polling the user code
-  instead of the id must not work: anyone who glimpses the code on a
-  screen must not be able to collect the token.
+  `approved`, after which the record is deleted. Polling by user code
+  must not work: anyone who glimpses the code on a screen must not be
+  able to collect the token.
 - `GET /internal/cli-login/{user_code}` (dashboard token): the label, so
-  the approval page can say "boxctl on cemal-mbp".
+  the approval page can say "boxctl on your-mac".
 - `POST /internal/cli-login/{user_code}/approve` (dashboard token):
   `{"owner_prefix"}` → `TokenStore.Mint(owner_prefix, label)`, attached
   to the record. `.../deny` marks it denied.
@@ -122,47 +152,50 @@ token.
 
 - `app/cli/login/page.tsx`: `?code=XXXX-XXXX`. Without a session,
   `redirect("/signin?callbackUrl=/cli/login?code=...")`, the same as
-  `app/dashboard/tokens/page.tsx`. With one: "**boxctl on cemal-mbp**
-  wants to manage your boxes as you. Make sure your terminal shows the
-  code **WDKP-7H3Q**.", Approve / Deny. Approved: "Done, you can close
-  this tab." Expired or unknown code: say so, link to the tokens page.
+  `app/dashboard/tokens/page.tsx`. With one, the approval page above.
+  Expired or unknown code: say so, link to the tokens page.
 - `app/api/cli-login/route.ts`: `POST {code, approve: bool}` with the
   same `session.userId` gate as `app/api/tokens/route.ts`, calling a new
   `vmsController.approveCliLogin(userId, code)` that posts
   `ownerPrefix(userId)` to boxctl-vms's internal approve route.
 - `app/dashboard/tokens/page.tsx`'s copy changes from "paste the token
-  at the prompt" to "run `boxctl login` and approve it here".
+  at the prompt" to "run `boxctl login` and approve it here"; the
+  create-a-token button stays, for scripts.
 
 ### boxctl (this repo)
 
 - `internal/client`: `StartLogin(label)` and `PollLogin(id)` against
   the two public routes. Unauthenticated: the client is built with an
   empty token for them.
-- `cmd/login.go`: on a terminal, the flow above through `cmd/ui.go`'s
-  spinner; `--no-browser`, `--paste`. Opening the browser is
-  `xdg-open`/`open`/`rundll32 url.dll,FileProtocolHandler` by OS, a
-  dozen lines, no dependency; if the command is missing or fails, print
-  the URL and carry on polling. Save with `config.Save` as now, and
-  verify with one `List` call as now.
-- Label: `"cli: " + os.Hostname()`.
+- `cmd/login.go`: the flow above through `cmd/ui.go`'s spinner;
+  `--no-browser`, `--paste`. Opening the browser is
+  `open`/`xdg-open`/`rundll32 url.dll,FileProtocolHandler` by OS, a
+  dozen lines, no dependency; if it's missing or fails, print the URL
+  and the code and keep polling. Ctrl-C cancels. Save with
+  `config.Save` as now, and verify with one `List` call as now.
+- Against an older server without the endpoints (404 on the start
+  call), fall back to the `--paste` prompt with a one-line note, so a
+  new CLI against an old self-hosted install still logs in.
+- Label: `"cli: " + os.Hostname()`, so the dashboard's token list says
+  where each token lives, and revoking one there logs that machine out.
 - README: the quick start's `boxctl login` comment, the "How auth works"
   section, and the dashboard page's wording all change together.
 
 ## Security notes
 
-- The device-flow risk, same as gh's: a phishing link carrying an
-  attacker's code. Showing the code and the hostname on the approval
-  page, and telling the user to compare it with their terminal, is the
-  standard mitigation; a user who approves a code their terminal never
-  showed hands a token to whoever started that login. The page should
-  say that plainly.
+- The risk every browser-approval flow has, Claude Code's and gh's
+  included: a link someone sends you that carries *their* login's code.
+  Approving it hands them a token. The page's wording ("only approve
+  this if you just ran `boxctl login` on that computer"), the hostname,
+  and the code to compare are the mitigation. A localhost callback
+  would not remove this risk either: the token goes to whoever holds
+  the poll key, and that's whoever started the login.
 - 40 bits of user code, 10-minute life, single use, and a rate limit on
   `POST /api/cli-login` keep guessing impractical; the poll key is the
   real secret.
 - The plaintext token exists on the server only between approval and
-  the next poll (seconds), then only in `~/.boxctl/config.json` (0600).
-  It never passes through the browser's clipboard or the terminal's
-  scrollback, which is better than today.
+  the next poll (a second), then only in `~/.boxctl/config.json`
+  (0600).
 
 ## Rollout
 
