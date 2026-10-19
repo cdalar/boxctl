@@ -68,9 +68,11 @@ cmd_state() {
 }
 
 # -a: a plain `boxctl ls` lists running boxes only, and a paused one must
-# be found to be resumed. The fallback is for a boxctl from before -a.
+# be found to be resumed. JSON, not the table: a box's table row has a
+# second line (its run) whose first word could be a box name. The
+# fallback is for a boxctl from before -a.
 box_state() {
-	{ boxctl ls -a 2>/dev/null || boxctl ls 2>/dev/null; } | awk -v n="$1" 'NR > 1 && $1 == n { print $2 }'
+	{ boxctl ls -a -o json 2>/dev/null || boxctl ls -o json 2>/dev/null; } | jq -r --arg n "$1" '.[] | select(.name == $n) | .state'
 }
 
 # ensure_running resumes a paused box; boxctl's exec endpoint refuses

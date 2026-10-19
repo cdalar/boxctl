@@ -33,23 +33,18 @@ func TestInProject(t *testing.T) {
 	}
 }
 
-func TestProjectAndPRText(t *testing.T) {
+func TestProjectText(t *testing.T) {
 	for _, c := range []struct {
-		vm          client.VM
-		project, pr string
+		vm      client.VM
+		project string
 	}{
-		{client.VM{}, "-", "-"},
-		{client.VM{Labels: map[string]string{"boxctl.project": "/Users/x/notes"}}, "notes", "-"},
-		{client.VM{Labels: map[string]string{"boxctl.repo": "o/a,o/b,o/c"}}, "o/a +2", "-"},
-		{client.VM{Labels: map[string]string{"boxctl.repo": "o/a"}, RunStatus: []byte(`{"status":"done","pr_url":"https://github.com/o/a/pull/12"}`)}, "o/a", "#12"},
-		{client.VM{RunStatus: []byte(`{"status":"done","pr_url":"https://github.com/o/a/pull/12","pr_urls":["https://github.com/o/a/pull/12","https://github.com/o/b/pull/3"]}`)}, "-", "#12 +1"},
-		{client.VM{RunStatus: []byte(`{"status":"done","pr_url":"https://evil.example/o/a/pull/12"}`)}, "-", "-"}, // the box wrote it
+		{client.VM{}, "-"},
+		{client.VM{Labels: map[string]string{"boxctl.project": "/Users/x/notes"}}, "notes"},
+		{client.VM{Labels: map[string]string{"boxctl.repo": "o/a,o/b,o/c"}}, "o/a +2"},
+		{client.VM{Labels: map[string]string{"boxctl.repo": "o/a"}, RunStatus: []byte(`{"status":"done","pr_url":"https://github.com/o/a/pull/12"}`)}, "o/a"},
 	} {
 		if got := projectText(c.vm); got != c.project {
 			t.Errorf("projectText(%v) = %q, want %q", c.vm.Labels, got, c.project)
-		}
-		if got := prText(c.vm); got != c.pr {
-			t.Errorf("prText(%s) = %q, want %q", c.vm.RunStatus, got, c.pr)
 		}
 	}
 }

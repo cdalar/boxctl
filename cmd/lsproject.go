@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cdalar/boxctl/internal/client"
 )
@@ -75,23 +77,59 @@ func branchText(vm client.VM) string {
 	return "-"
 }
 
-var prNumber = regexp.MustCompile(`^https://github\.com/[^/]+/[^/]+/pull/(\d+)$`)
+var githubPR = regexp.MustCompile(`^https://github\.com/[^/]+/[^/]+/pull/\d+$`)
 
-// prText is ls's PR column: the pull request a goal reported, as #N --
-// its repository is in PROJECT -- with "+N" for a workspace's others. The
-// box wrote it, so anything but a GitHub pull request URL is left out.
-func prText(vm client.VM) string {
+// runSep is between the parts of a box's run line.
+const runSep = " · "
+
+// runParts are a box's run line in ls, the line under its row: what
+// its run is up to, from its labels and run_status alone -- the run
+// (runText), its project (projectText), its branch (branchText) and,
+// last, its pull request, each left out when there's nothing to say,
+// so none at all for a box nothing labeled. The pull request is the
+// full URL -- a terminal makes it a link -- with " +N" for the rest of
+// a workspace's; the box wrote it, so anything but a GitHub pull
+// request URL is left out. The cell says where on the line the URL
+// starts, for fillPRStates to write the state after it.
+func runParts(vm client.VM) (parts []string, pr prCell, hasPR bool) {
+	for _, p := range []string{runText(vm), projectText(vm), branchText(vm)} {
+		if p != "-" {
+			parts = append(parts, p)
+		}
+	}
 	st, _ := parseGoalStatus(vm.RunStatus)
-	if st == nil {
-		return "-"
+	if st == nil || !githubPR.MatchString(st.PRURL) {
+		return parts, prCell{}, false
 	}
-	m := prNumber.FindStringSubmatch(st.PRURL)
-	if m == nil {
-		return "-"
-	}
-	text := "#" + m[1]
+	pr = prCell{url: st.PRURL}
 	if n := len(st.PRURLs); n > 1 {
-		text += fmt.Sprintf(" +%d", n-1)
+		pr.rest = fmt.Sprintf(" +%d", n-1)
 	}
-	return text
+	parts = append(parts, pr.url+pr.rest)
+	pr.col = utf8.RuneCountInString(runLine(parts, false)) - len(pr.url+pr.rest)
+	return parts, pr, true
+}
+
+// runIndent sets a run line in from the box's row above it.
+const runIndent = "  "
+
+// runLine is runParts joined as ls prints them, with the separators
+// dim and the run's outcome coloured when color.
+func runLine(parts []string, color bool) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	if !color {
+		return runIndent + strings.Join(parts, runSep)
+	}
+	coloured := slices.Clone(parts)
+	if text, status, ok := strings.Cut(parts[0], ": "); ok {
+		switch status {
+		case "done":
+			coloured[0] = text + ": " + paint(ansiGreen, status)
+		case "failed":
+			coloured[0] = text + ": " + paint(ansiRed, status)
+		}
+	}
+	return runIndent + strings.Join(coloured, dim(runSep))
 }

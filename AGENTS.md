@@ -88,20 +88,25 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   left out. The filter is this CLI's -- the server always returns every
   box -- so anything that must find a paused box by name
   (`claude-plugin/bin/boxctl-claude`'s `box_state`) calls `ls -a`.
-  Its RUN, PROJECT and PR columns (`runText`, `cmd/lsproject.go`'s
-  `projectText`/`prText`) come from a box's labels and `run_status`
-  alone: `ls` never connects to a box. Nor does it wait for GitHub:
-  on a terminal, once the table is out, `cmd/lspr.go`'s `fillPRStates`
-  runs `gh pr view --json state` per PR (4 at a time, 10s cap) and
-  rewrites each PR cell in place -- "#96 merged" -- by cursor movement
-  over the lines just printed (`prCellOf` records each cell's line and
-  column from the plain, pre-colour row; the stderr note about hidden
+  Each box is two lines: its row in the table (NAME, STATE, IMAGE,
+  SIZE, AGE) and, indented under it, its run line -- `cmd/lsproject.go`'s
+  `runParts`: run (`runText`), project (`projectText`), branch and the
+  pull request's full URL, " · "-separated, each left out when there's
+  nothing to say, so a plain `create` box has one line. All of it comes
+  from a box's labels and `run_status` alone: `ls` never connects to a
+  box. Nor does it wait for GitHub: on a terminal, once the listing is
+  out, `cmd/lspr.go`'s `fillPRStates` runs `gh pr view --json state`
+  per PR (4 at a time, 10s cap) and writes each state after its URL in
+  place -- ".../pull/96 merged" -- by cursor movement over the lines
+  just printed (`runParts` records the URL's column on the plain,
+  pre-colour line, `printBoxes` the line; the stderr note about hidden
   boxes is counted as a line). It stays as printed on a pipe, in JSON,
-  for rows that scrolled off, or if the table would wrap. `-p` keeps this directory's
+  for lines that scrolled off, or when a line from the run line down
+  would wrap. `-p` keeps this directory's
   project's boxes (`inProject`: labeled with its directory or GitHub
   repository; unlabeled, named `<agent>-<dir>[-<task>]`), `-l` filters
-  by label on the server, and `-o wide` adds IP, PROVIDER, READY and
-  BRANCH. `printBoxes` is the listing itself, shared with `claude ls`.
+  by label on the server, and `-o wide` adds IP, PROVIDER and READY to
+  the row. `printBoxes` is the listing itself, shared with `claude ls`.
 - `cmd/create.go` — `create -a <script>` blocks until the server's
   `onctl create -a` finishes, so meanwhile `applyLogTail` polls the
   script's log (`~/.onctl/applyNN/output-<script>.log`, where onctl's

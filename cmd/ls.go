@@ -105,19 +105,21 @@ func printBoxes(ctx context.Context, vms []client.VM, format string, all bool, n
 		return printJSON(vms)
 	}
 
-	// Every row goes through one tabwriter, so columns line up across
-	// sections, and the section labels are slotted in afterwards: a
-	// label written through the tabwriter would end the column block
-	// and each section would realign on its own.
-	//
-	// IP, PROVIDER, READY and BRANCH only with -o wide, to leave room
-	// for RUN, PROJECT and PR.
+	// Each box is two lines: the box itself -- name, state, image,
+	// size and age, IP, provider and readiness too with -o wide -- in
+	// the table's columns, then, indented, what its run is up to
+	// (runParts): run, project, branch and the pull request's URL. The
+	// table's lines all go through one tabwriter, so columns line up
+	// across sections; the run lines (no columns) and the section labels
+	// are slotted in afterwards -- either written through the tabwriter
+	// would end the column block, and the lines after it would align on
+	// their own.
 	wide := format == "wide"
 	var table strings.Builder
 	if wide {
-		fmt.Fprintln(&table, "NAME\tSTATE\tIP\tIMAGE\tSIZE\tPROVIDER\tREADY\tAGE\tRUN\tPROJECT\tBRANCH\tPR")
+		fmt.Fprintln(&table, "NAME\tSTATE\tIP\tIMAGE\tSIZE\tPROVIDER\tREADY\tAGE")
 	} else {
-		fmt.Fprintln(&table, "NAME\tSTATE\tIMAGE\tSIZE\tAGE\tRUN\tPROJECT\tPR")
+		fmt.Fprintln(&table, "NAME\tSTATE\tIMAGE\tSIZE\tAGE")
 	}
 	counts := make([]int, len(lsSections))
 	for _, vm := range vms {
@@ -127,7 +129,7 @@ func printBoxes(ctx context.Context, vms []client.VM, format string, all bool, n
 			image = "-"
 		}
 		if !wide {
-			fmt.Fprintf(&table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, image, sizeLabel(vm), age(vm.CreatedAt), runText(vm), projectText(vm), prText(vm))
+			fmt.Fprintf(&table, "%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, image, sizeLabel(vm), age(vm.CreatedAt))
 			continue
 		}
 		ip := vm.IP
@@ -138,7 +140,7 @@ func printBoxes(ctx context.Context, vms []client.VM, format string, all bool, n
 		if vm.Ready {
 			ready = "yes"
 		}
-		fmt.Fprintf(&table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, ip, image, sizeLabel(vm), vm.Provider, ready, age(vm.CreatedAt), runText(vm), projectText(vm), branchText(vm), prText(vm))
+		fmt.Fprintf(&table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, ip, image, sizeLabel(vm), vm.Provider, ready, age(vm.CreatedAt))
 	}
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 4, 2, ' ', 0)
@@ -150,29 +152,38 @@ func printBoxes(ctx context.Context, vms []client.VM, format string, all bool, n
 	}
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
 	header, rows := lines[0], lines[1:]
-	width := 0 // the widest plain line, for fillPRStates's wrap check
-	for _, l := range lines {
-		width = max(width, utf8.RuneCountInString(l))
+
+	// The screen, line by line: plain, for the widths fillPRStates's
+	// wrap check needs, and as shown, with colour -- escape codes the
+	// widths mustn't count, which is also why colour comes after
+	// alignment. prLine is which line each box's run line is, so
+	// fillPRStates can find it again.
+	var plain, shown []string
+	add := func(p, s string) {
+		plain = append(plain, p)
+		shown = append(shown, s)
 	}
-	// Where each PR cell sits, from the plain rows: colour below adds
-	// escape codes the column count mustn't include.
+	color := useColor()
+	if color {
+		header = bold(header)
+	}
+	prLine := make([]int, len(vms))
 	cells := make([]prCell, len(vms))
 	hasPR := make([]bool, len(vms))
-	for i, vm := range vms {
-		if i < len(rows) {
-			cells[i], hasPR[i] = prCellOf(vm, rows[i])
+	addBox := func(i int) {
+		vm, row := vms[i], rows[i]
+		coloured := row
+		if n := len(vm.Name); color && len(row) >= n {
+			coloured = row[:n] + strings.Replace(row[n:], vm.State, stateText(vm.State), 1)
 		}
-	}
-	// Colour after alignment (escape codes would throw the
-	// tabwriter's widths off): bold header, state word by state.
-	if useColor() {
-		header = bold(header)
-		for i, vm := range vms {
-			if i < len(rows) && len(rows[i]) >= len(vm.Name) {
-				n := len(vm.Name)
-				rows[i] = rows[i][:n] + strings.Replace(rows[i][n:], vm.State, stateText(vm.State), 1)
-			}
+		add(row, coloured)
+		parts, cell, ok := runParts(vm)
+		if len(parts) == 0 {
+			return
 		}
+		prLine[i] = len(plain)
+		cells[i], hasPR[i] = cell, ok
+		add(runLine(parts, false), runLine(parts, color))
 	}
 
 	// Like `onctl ls`: with boxes in one state only, a plain table;
@@ -184,39 +195,34 @@ func printBoxes(ctx context.Context, vms []client.VM, format string, all bool, n
 			groups++
 		}
 	}
-	// out is kept as lines, and rowLine says which one each box's row
-	// is, so fillPRStates can find the row again on the screen.
-	var out []string
-	rowLine := make([]int, len(rows))
 	if groups < 2 {
-		out = append(out, header)
-		for i, row := range rows {
-			rowLine[i] = len(out)
-			out = append(out, row)
+		add(header, header)
+		for i := range rows {
+			addBox(i)
 		}
 	} else {
-		color := useColor()
 		i := 0
 		for rank, n := range counts {
 			if n == 0 {
 				continue
 			}
-			if len(out) > 0 {
-				out = append(out, "")
+			if len(plain) > 0 {
+				add("", "")
 			}
 			label := fmt.Sprintf("● %s (%d)", lsSections[rank].label, n)
 			if color {
-				label = lsSections[rank].color + label + "\033[0m"
+				add(label, lsSections[rank].color+label+ansiReset)
+			} else {
+				add(label, label)
 			}
-			out = append(out, label, header)
-			for _, row := range rows[i : i+n] {
-				rowLine[i] = len(out)
-				out = append(out, row)
+			add(header, header)
+			for range n {
+				addBox(i)
 				i++
 			}
 		}
 	}
-	if _, err := os.Stdout.WriteString(strings.Join(out, "\n") + "\n"); err != nil {
+	if _, err := os.Stdout.WriteString(strings.Join(shown, "\n") + "\n"); err != nil {
 		return err
 	}
 	// The note is one more line on the screen when stderr is the
@@ -224,18 +230,25 @@ func printBoxes(ctx context.Context, vms []client.VM, format string, all bool, n
 	if note != "" {
 		fmt.Fprintln(os.Stderr, note)
 		if term.IsTerminal(int(os.Stderr.Fd())) {
-			out = append(out, note)
-			width = max(width, len(note))
+			plain = append(plain, note)
 		}
+	}
+	// A line the terminal wraps shifts every line above it, so each
+	// cell is told the widest line from its own down to the last; the
+	// lines above it don't matter.
+	widest := make([]int, len(plain)+1)
+	for i := len(plain) - 1; i >= 0; i-- {
+		widest[i] = max(widest[i+1], utf8.RuneCountInString(plain[i]))
 	}
 	var prs []prCell
 	for i, c := range cells {
 		if hasPR[i] {
-			c.up = len(out) - rowLine[i]
+			c.up = len(plain) - prLine[i]
+			c.width = widest[prLine[i]]
 			prs = append(prs, c)
 		}
 	}
-	fillPRStates(ctx, prs, width)
+	fillPRStates(ctx, prs)
 	return nil
 }
 
