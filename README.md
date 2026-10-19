@@ -313,7 +313,8 @@ absolute path** -- cloned as above, or, without a git origin, copied:
 what git counts as the project (`git ls-files --cached --others
 --exclude-standard`, so uncommitted changes and untracked files go,
 `.gitignore`'d ones don't) plus `.git` -- installs
-Claude Code with Anthropic's installer, copies your `~/.claude/CLAUDE.md`,
+Claude Code with Anthropic's installer (only if the image lacks it; the
+`claude-agent` images have it), copies your `~/.claude/CLAUDE.md`,
 `agents/`, `skills/`, `commands/` and `settings.json` (minus hooks, the
 status line, plugins, `env` and credential helpers, which point at this
 machine), and starts `claude` in tmux. Log it in once with `/login`: it
