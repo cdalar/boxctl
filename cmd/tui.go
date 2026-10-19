@@ -1,12 +1,9 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"sort"
 	"strings"
 	"time"
 
@@ -14,37 +11,36 @@ import (
 	bspinner "github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
 
-// `boxctl tui`: the box list as a full-screen, live view (Bubble Tea),
-// with the everyday commands on single keys. It is a front end to the
-// same client calls the subcommands make -- List, Pause, Resume, Keep,
-// Destroy, Create -- and shells out to `boxctl ssh` for a terminal, so
-// nothing here changes how those commands behave. The listing's columns
-// are ls's (runText, projectText, prText, sizeLabel, age) and its order
-// is ls's too (stateRank, newest first).
+// `boxctl tui`: your boxes the way k9s shows a cluster (Bubble Tea). A
+// header with an info block, the current view's hotkeys and a logo; a
+// bordered table per resource view (tuiviews.go), switched with a `:`
+// command and filtered with `/`; describe/json/logs pages you drill
+// into with esc to come back; breadcrumbs and flash messages at the
+// bottom. It is a front end to the same client calls the subcommands
+// make -- List, Pause, Resume, Keep, Destroy, Create, Expose, Unexpose,
+// Exec -- and shells out to `boxctl ssh` for a terminal, so nothing
+// here changes how those commands behave.
 
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
-	Short: "Browse and manage your boxes in a full-screen terminal UI",
-	Long: `Opens a live, full-screen view of your boxes. Move with the arrow keys
-(or j/k), press enter to open a terminal on the selected box, and use
-single keys for the usual commands:
+	Short: "Browse and manage your boxes in a k9s-style terminal UI",
+	Long: `Opens a live, full-screen view of your boxes, laid out like k9s.
 
-  enter, s   open a terminal (boxctl ssh)
-  c          create a box (name, image and size are asked)
-  p / r      pause / resume
-  d          destroy (asks first)
-  K          keep: hold the box off the idle reaper's deletion for a day
-  a          also show paused and stopped boxes
-  /          filter by name, image, project or label
-  i          show or hide the selected box's details
-  R          refresh now (the list refreshes itself every few seconds)
-  ?          help
-  q          quit`,
+  :boxes :urls :images :sizes :backups   switch view (also :q, :help, :create)
+  /text        filter the rows; esc clears
+  j/k, arrows  move; g/G top/bottom; shift+letter sorts by that column
+  enter, d     describe the box; y its JSON; l a --goal run's log
+  s            open a terminal on the box (boxctl ssh)
+  c            create a box (name, image and size are asked)
+  p / r / K    pause / resume / keep (hold off the idle reaper's deletion)
+  e            expose a port at a public URL; ctrl-d in :urls takes it down
+  ctrl-d       delete the box (asks first)
+  0 / 1 / 2    all boxes / running only / paused only
+  esc          back; ctrl-c or :q quits`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !isTTY() || !term.IsTerminal(int(os.Stdin.Fd())) {
@@ -70,26 +66,24 @@ func init() {
 // going on; an action's completion refreshes at once.
 const tuiRefreshEvery = 5 * time.Second
 
-// tuiMode is which keys the next keypress goes to.
-type tuiMode int
-
-const (
-	modeList    tuiMode = iota // the table
-	modeFilter                 // typing a filter in the footer
-	modeConfirm                // a y/N question in the footer
-	modeCreate                 // the create form
-	modeHelp                   // the key reference
-)
+// tuiFlashFor is how long a flash message stays on the crumbs line (a
+// variable so tests, which run every command, needn't wait for it).
+var tuiFlashFor = 5 * time.Second
 
 // Messages from the commands the model runs.
 type (
-	tuiBoxesMsg struct {
-		vms []client.VM
-		err error
+	tuiListMsg struct {
+		resource string // boxes, images, sizes, backups
+		vms      []client.VM
+		images   []client.Image
+		sizes    []client.Size
+		backups  []client.Backup
+		err      error
 	}
 	tuiActionMsg struct {
 		name, verb string
 		err        error
+		result     string // what to flash on success, "" for the default
 	}
 	tuiSSHDoneMsg struct {
 		name   string
@@ -100,74 +94,160 @@ type (
 		vm  *client.VM
 		err error
 	}
-	tuiTickMsg time.Time
+	tuiTextMsg struct { // a text page's content arrived (logs)
+		title string
+		box   string
+		lines []string
+		err   error
+	}
+	tuiFlashGoneMsg int
+	tuiTickMsg      time.Time
 )
+
+// pageKind is what a page of the navigation stack shows.
+type pageKind int
+
+const (
+	pageTable pageKind = iota
+	pageText
+)
+
+// page is one level of the navigation stack: a table view with its own
+// cursor and sort, or a text page (describe, json, logs, help).
+type page struct {
+	kind     pageKind
+	view     *tableView // pageTable
+	cursor   int
+	selected string // the row key under the cursor, to find it again after a refresh
+	sortCol  int    // -1: the view's own order
+	sortDesc bool
+
+	title  string   // pageText: the crumb
+	box    string   // pageText: the box it describes, "" when not about one
+	lines  []string // pageText
+	scroll int
+	// refresh regenerates lines from the model's data after a refresh
+	// (describe/json pages); nil for fixed text.
+	refresh func(m *tuiModel) []string
+}
+
+// tuiDialog is a modal: a y/N question, or a one-line prompt.
+type tuiDialog struct {
+	title  string
+	body   []string
+	input  *textinput.Model // a prompt; nil for a question
+	yes    func(m tuiModel) (tea.Model, tea.Cmd)
+	submit func(m tuiModel, value string) (tea.Model, tea.Cmd)
+}
 
 type tuiModel struct {
 	c *client.Client
 
-	vms  []client.VM // every box, sorted as ls sorts them
-	rows []client.VM // the ones shown: after showAll and filter
+	vms     []client.VM // every box, as ls sorts them
+	images  []client.Image
+	sizes   []client.Size
+	backups []client.Backup
+	loaded  map[string]bool // resources listed at least once
+	loading map[string]bool // listings in flight
 
-	cursor   int
-	selected string // the box under the cursor, to find it again after a refresh
-	showAll  bool
-	filter   textinput.Model
-	mode     tuiMode
-	confirm  tuiConfirm
-	create   *tuiCreateForm
-	detail   bool
-	width    int
-	height   int
-	loading  bool              // a List in flight
-	creating bool              // a Create in flight
-	pending  map[string]string // box -> verb in flight ("pausing")
-	spin     bspinner.Model
-	spinning bool
+	pages       []page // the navigation stack; the last is shown
+	stateFilter stateFilter
+	filter      textinput.Model
+	filtering   bool // typing in the filter prompt
+	command     textinput.Model
+	commanding  bool // typing in the : prompt
+	dialog      *tuiDialog
+	create      *tuiCreateForm
+	creating    bool
+	pending     map[string]string // box -> verb in flight
+	spin        bspinner.Model
+	spinning    bool
 
-	refreshedAt time.Time
-	status      string // the last thing that happened, in the footer
-	statusErr   bool
-	fatal       error // makes RunE fail once the program ends
-}
+	flash    string
+	flashErr bool
+	flashID  int
 
-// tuiConfirm is a y/N question: what to do if the answer is yes.
-type tuiConfirm struct {
-	prompt string
-	warn   string // an extra line above the prompt, for rm's unfinished-run check
-	yes    func(m tuiModel) (tea.Model, tea.Cmd)
+	width, height int
+	refreshedAt   time.Time
+	fatal         error
 }
 
 func newTUI(c *client.Client) tuiModel {
 	f := textinput.New()
-	f.Prompt = "/ "
-	f.Placeholder = "name, image, project or label"
+	f.Prompt = ""
+	f.Placeholder = "filter"
 	f.CharLimit = 80
+	cmd := textinput.New()
+	cmd.Prompt = ""
+	cmd.Placeholder = "boxes, urls, images, sizes, backups, create, help, q"
+	cmd.CharLimit = 80
 	sp := bspinner.New(bspinner.WithSpinner(bspinner.Spinner{Frames: spinnerFrames, FPS: 80 * time.Millisecond}))
-	sp.Style = tuiStyles.accent
+	sp.Style = k9s.logo
 	return tuiModel{
-		c:       c,
-		filter:  f,
-		detail:  true,
-		pending: map[string]string{},
-		spin:    sp,
-		loading: true,
+		c:           c,
+		loaded:      map[string]bool{},
+		loading:     map[string]bool{},
+		pages:       []page{{kind: pageTable, view: boxesView, sortCol: -1}},
+		stateFilter: showAllBoxes,
+		filter:      f,
+		command:     cmd,
+		pending:     map[string]string{},
+		spin:        sp,
 	}
 }
 
 func (m tuiModel) Init() tea.Cmd {
-	return tea.Batch(m.fetch(), m.tick(), m.spin.Tick)
+	return tea.Batch(m.list("boxes"), m.tick(), m.spin.Tick)
 }
 
-// fetch lists the boxes.
-func (m tuiModel) fetch() tea.Cmd {
+// top is the page shown.
+func (m *tuiModel) top() *page { return &m.pages[len(m.pages)-1] }
+
+// push shows p on top of the current page.
+func (m *tuiModel) push(p page) { m.pages = append(m.pages, p) }
+
+// pop goes back one page; the root stays.
+func (m *tuiModel) pop() {
+	if len(m.pages) > 1 {
+		m.pages = m.pages[:len(m.pages)-1]
+	}
+}
+
+// list fetches one resource.
+func (m *tuiModel) list(resource string) tea.Cmd {
+	if m.loading[resource] {
+		return nil
+	}
+	m.loading[resource] = true
 	c := m.c
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		vms, err := c.List(ctx)
-		return tuiBoxesMsg{vms: vms, err: err}
+		msg := tuiListMsg{resource: resource}
+		switch resource {
+		case "boxes":
+			msg.vms, msg.err = c.List(ctx)
+		case "images":
+			msg.images, msg.err = c.ListImages(ctx)
+		case "sizes":
+			msg.sizes, msg.err = c.ListSizes(ctx)
+		case "backups":
+			msg.backups, msg.err = c.ListBackups(ctx)
+			sortBackups(msg.backups)
+		}
+		return msg
 	}
+}
+
+// refresh lists the boxes (the header and most pages need them) and the
+// top page's resource when it's another.
+func (m *tuiModel) refresh() tea.Cmd {
+	cmds := []tea.Cmd{m.list("boxes")}
+	if t := m.top(); t.kind == pageTable && t.view.resource != "boxes" {
+		cmds = append(cmds, m.list(t.view.resource))
+	}
+	cmds = append(cmds, m.spinIfBusy())
+	return tea.Batch(cmds...)
 }
 
 func (m tuiModel) tick() tea.Cmd {
@@ -177,7 +257,7 @@ func (m tuiModel) tick() tea.Cmd {
 // busy reports whether something is in flight, i.e. the spinner should
 // turn.
 func (m tuiModel) busy() bool {
-	return m.loading || m.creating || len(m.pending) > 0
+	return len(m.loading) > 0 || m.creating || len(m.pending) > 0
 }
 
 // spinIfBusy starts the spinner when work begins and it isn't turning.
@@ -189,6 +269,23 @@ func (m *tuiModel) spinIfBusy() tea.Cmd {
 	return nil
 }
 
+// say flashes a message on the crumbs line for a while.
+func (m *tuiModel) say(format string, a ...any) tea.Cmd {
+	return m.setFlash(fmt.Sprintf(format, a...), false)
+}
+
+// fail flashes an error.
+func (m *tuiModel) fail(format string, a ...any) tea.Cmd {
+	return m.setFlash(fmt.Sprintf(format, a...), true)
+}
+
+func (m *tuiModel) setFlash(s string, isErr bool) tea.Cmd {
+	m.flash, m.flashErr = s, isErr
+	m.flashID++
+	id := m.flashID
+	return tea.Tick(tuiFlashFor, func(time.Time) tea.Msg { return tuiFlashGoneMsg(id) })
+}
+
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -196,12 +293,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuiTickMsg:
-		var cmd tea.Cmd
-		if !m.loading {
-			m.loading = true
-			cmd = m.fetch()
-		}
-		return m, tea.Batch(cmd, m.tick(), m.spinIfBusy())
+		return m, tea.Batch(m.refresh(), m.tick())
 
 	case bspinner.TickMsg:
 		if !m.busy() {
@@ -212,36 +304,58 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
 
-	case tuiBoxesMsg:
-		m.loading = false
-		if msg.err != nil {
-			m.setStatus("listing boxes: "+msg.err.Error(), true)
-			return m, nil
+	case tuiFlashGoneMsg:
+		if int(msg) == m.flashID {
+			m.flash = ""
 		}
-		m.vms = msg.vms
-		sortBoxes(m.vms)
-		m.refreshedAt = time.Now()
-		m.rebuildRows()
+		return m, nil
+
+	case tuiListMsg:
+		delete(m.loading, msg.resource)
+		if msg.err != nil {
+			return m, m.fail("listing %s: %v", msg.resource, msg.err)
+		}
+		m.loaded[msg.resource] = true
+		switch msg.resource {
+		case "boxes":
+			m.vms = msg.vms
+			sortBoxes(m.vms)
+			m.refreshedAt = time.Now()
+		case "images":
+			m.images = msg.images
+		case "sizes":
+			m.sizes = msg.sizes
+		case "backups":
+			m.backups = msg.backups
+		}
+		// A describe/json page follows its box.
+		for i := range m.pages {
+			if p := &m.pages[i]; p.kind == pageText && p.refresh != nil {
+				if lines := p.refresh(&m); lines != nil {
+					p.lines = lines
+				}
+			}
+		}
 		return m, nil
 
 	case tuiActionMsg:
 		delete(m.pending, msg.name)
 		if msg.err != nil {
-			m.setStatus(fmt.Sprintf("%s %s: %v", msg.verb, msg.name, msg.err), true)
-		} else {
-			m.setStatus(fmt.Sprintf("%s %s", pastTense(msg.verb), msg.name), false)
+			return m, tea.Batch(m.fail("%s %s: %v", presentTense(msg.verb), msg.name, msg.err), m.refresh())
 		}
-		return m, m.refreshNow()
+		result := msg.result
+		if result == "" {
+			result = fmt.Sprintf("%s %s", pastTense(msg.verb), msg.name)
+		}
+		return m, tea.Batch(m.say("%s", result), m.refresh())
 
 	case tuiCreatedMsg:
 		m.creating = false
 		if msg.err != nil {
-			m.setStatus("creating a box: "+msg.err.Error(), true)
-		} else {
-			m.setStatus(fmt.Sprintf("created %s (%s, %s)", msg.vm.Name, msg.vm.State, sizeLabel(*msg.vm)), false)
-			m.selected = msg.vm.Name
+			return m, tea.Batch(m.fail("creating a box: %v", msg.err), m.refresh())
 		}
-		return m, m.refreshNow()
+		m.selectRow(msg.vm.Name)
+		return m, tea.Batch(m.say("created %s (%s, %s)", msg.vm.Name, msg.vm.State, sizeLabel(*msg.vm)), m.refresh())
 
 	case tuiSSHDoneMsg:
 		if msg.err != nil {
@@ -255,11 +369,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if reason == "" {
 				reason = msg.err.Error()
 			}
-			m.setStatus(fmt.Sprintf("ssh %s: %s", msg.name, reason), true)
-		} else {
-			m.setStatus(fmt.Sprintf("left %s", msg.name), false)
+			return m, tea.Batch(m.fail("ssh %s: %s", msg.name, reason), m.refresh())
 		}
-		return m, m.refreshNow()
+		return m, m.refresh()
+
+	case tuiTextMsg:
+		delete(m.pending, "logs:"+msg.box)
+		if msg.err != nil {
+			return m, m.fail("%s: %v", msg.title, msg.err)
+		}
+		m.push(page{kind: pageText, title: msg.title, box: msg.box, lines: msg.lines})
+		return m, nil
 
 	case tuiCatalogMsg:
 		if m.create != nil {
@@ -278,336 +398,133 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateInputs passes msg to the focused text input, if any.
 func (m *tuiModel) updateInputs(msg tea.Msg) tea.Cmd {
-	switch m.mode {
-	case modeFilter:
-		var cmd tea.Cmd
+	var cmd tea.Cmd
+	switch {
+	case m.filtering:
 		m.filter, cmd = m.filter.Update(msg)
-		return cmd
-	case modeCreate:
-		if m.create != nil {
-			return m.create.update(msg)
+	case m.commanding:
+		m.command, cmd = m.command.Update(msg)
+	case m.dialog != nil && m.dialog.input != nil:
+		*m.dialog.input, cmd = m.dialog.input.Update(msg)
+	case m.create != nil:
+		cmd = m.create.update(msg)
+	}
+	return cmd
+}
+
+// selectRow puts the top table's cursor on key at the next render.
+func (m *tuiModel) selectRow(key string) {
+	if t := m.top(); t.kind == pageTable {
+		t.selected = key
+	}
+}
+
+// rows is the top table's rows as shown: the view's, filtered and
+// sorted. The cursor is clamped and put back on the selected row here,
+// since that is the one place the rows are known.
+func (m *tuiModel) rows() []tableRow {
+	t := m.top()
+	if t.kind != pageTable {
+		return nil
+	}
+	rows := filterRows(t.view.rows(m), m.filter.Value())
+	sortRows(rows, t.sortCol, t.sortDesc)
+	t.cursor = 0
+	for i, r := range rows {
+		if r.key == t.selected {
+			t.cursor = i
+			break
+		}
+	}
+	if len(rows) > 0 {
+		t.selected = rows[t.cursor].key
+	}
+	return rows
+}
+
+// currentRow is the row under the cursor, nil with none.
+func (m *tuiModel) currentRow() *tableRow {
+	rows := m.rows()
+	t := m.top()
+	if t.cursor < 0 || t.cursor >= len(rows) {
+		return nil
+	}
+	return &rows[t.cursor]
+}
+
+// currentBox is the box the top page is about: the row's, in the boxes
+// and urls views, or a text page's box.
+func (m *tuiModel) currentBox() *client.VM {
+	t := m.top()
+	var name string
+	switch {
+	case t.kind == pageText:
+		name = t.box
+	case t.view == boxesView:
+		if r := m.currentRow(); r != nil {
+			name = r.key
+		}
+	case t.view == urlsView:
+		if r := m.currentRow(); r != nil {
+			name, _, _ = strings.Cut(r.key, ":")
+		}
+	}
+	return m.box(name)
+}
+
+// box finds name among the boxes, nil when it isn't there.
+func (m *tuiModel) box(name string) *client.VM {
+	for i := range m.vms {
+		if m.vms[i].Name == name {
+			return &m.vms[i]
 		}
 	}
 	return nil
 }
 
-// refreshNow lists again right away, unless a listing is already on its
-// way.
-func (m *tuiModel) refreshNow() tea.Cmd {
-	if m.loading {
-		return m.spinIfBusy()
-	}
-	m.loading = true
-	return tea.Batch(m.fetch(), m.spinIfBusy())
-}
-
-func (m *tuiModel) setStatus(s string, isErr bool) {
-	m.status = s
-	m.statusErr = isErr
-}
-
-func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.Type == tea.KeyCtrlC {
-		return m, tea.Quit
-	}
-	switch m.mode {
-	case modeFilter:
-		return m.handleFilterKey(msg)
-	case modeConfirm:
-		return m.handleConfirmKey(msg)
-	case modeCreate:
-		return m.handleCreateKey(msg)
-	case modeHelp:
-		m.mode = modeList
-		return m, nil
-	}
-
-	// Keys typed quickly (or held) can arrive as one message with
-	// several runes; each is a keypress of its own here.
-	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 && !msg.Paste {
-		var cmds []tea.Cmd
-		var next tea.Model = m
-		for _, r := range msg.Runes {
-			var cmd tea.Cmd
-			next, cmd = next.(tuiModel).handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-			cmds = append(cmds, cmd)
-		}
-		return next, tea.Batch(cmds...)
-	}
-
-	switch msg.String() {
-	case "q":
-		return m, tea.Quit
-	case "esc":
-		// Clear a filter first; quit only without one.
-		if m.filter.Value() != "" {
-			m.filter.SetValue("")
-			m.rebuildRows()
-			return m, nil
-		}
-		return m, tea.Quit
-	case "up", "k":
-		m.move(-1)
-	case "down", "j":
-		m.move(1)
-	case "pgup":
-		m.move(-m.tableRows())
-	case "pgdown":
-		m.move(m.tableRows())
-	case "home", "g":
-		m.cursor = 0
-		m.remember()
-	case "end", "G":
-		m.cursor = len(m.rows) - 1
-		m.remember()
-	case "enter", "s":
-		return m.ssh()
-	case "c", "n":
-		m.status = ""
-		return m.openCreate()
-	case "p":
-		return m.act("pause", "running", func(ctx context.Context, name string) error {
-			_, err := m.c.Pause(ctx, name)
-			return err
-		})
-	case "r":
-		return m.act("resume", "paused", func(ctx context.Context, name string) error {
-			_, err := m.c.Resume(ctx, name)
-			return err
-		})
-	case "K":
-		return m.act("keep", "", func(ctx context.Context, name string) error {
-			_, err := m.c.Keep(ctx, name)
-			return err
-		})
-	case "d", "x", "delete", "backspace":
-		return m.askDestroy()
-	case "a":
-		m.showAll = !m.showAll
-		m.rebuildRows()
-	case "/":
-		m.status = ""
-		m.mode = modeFilter
-		return m, m.filter.Focus()
-	case "i":
-		m.detail = !m.detail
-	case "R", "ctrl+r", "f5":
-		return m, m.refreshNow()
-	case "?":
-		m.mode = modeHelp
-	}
-	return m, nil
-}
-
-func (m tuiModel) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEsc:
-		m.filter.SetValue("")
-		m.filter.Blur()
-		m.mode = modeList
-		m.rebuildRows()
-		return m, nil
-	case tea.KeyEnter:
-		m.filter.Blur()
-		m.mode = modeList
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.filter, cmd = m.filter.Update(msg)
-	m.rebuildRows()
-	return m, cmd
-}
-
-func (m tuiModel) handleConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	yes := m.confirm.yes
-	m.mode = modeList
-	m.confirm = tuiConfirm{}
-	if s := msg.String(); s == "y" || s == "Y" {
-		return yes(m)
-	}
-	m.setStatus("cancelled", false)
-	return m, nil
-}
-
 // move shifts the cursor by n rows, within the list.
 func (m *tuiModel) move(n int) {
-	if len(m.rows) == 0 {
-		m.cursor = 0
+	rows := m.rows()
+	t := m.top()
+	if len(rows) == 0 {
 		return
 	}
-	m.cursor = min(max(m.cursor+n, 0), len(m.rows)-1)
-	m.remember()
+	t.cursor = min(max(t.cursor+n, 0), len(rows)-1)
+	t.selected = rows[t.cursor].key
 }
 
-// remember notes which box the cursor is on, so a refresh that reorders
-// the list keeps the cursor on it.
-func (m *tuiModel) remember() {
-	if m.cursor >= 0 && m.cursor < len(m.rows) {
-		m.selected = m.rows[m.cursor].Name
-	}
-}
-
-// current is the box under the cursor, nil with an empty list.
-func (m tuiModel) current() *client.VM {
-	if m.cursor < 0 || m.cursor >= len(m.rows) {
-		return nil
-	}
-	return &m.rows[m.cursor]
-}
-
-// rebuildRows recomputes the visible rows from vms, showAll and the
-// filter, and puts the cursor back on the selected box.
-func (m *tuiModel) rebuildRows() {
-	m.rows = visibleBoxes(m.vms, m.showAll, m.filter.Value())
-	m.cursor = 0
-	for i, vm := range m.rows {
-		if vm.Name == m.selected {
-			m.cursor = i
-			break
-		}
-	}
-	if len(m.rows) == 0 {
-		m.cursor = 0
+// moveTo puts the cursor on the first or the last row.
+func (m *tuiModel) moveTo(last bool) {
+	rows := m.rows()
+	t := m.top()
+	if len(rows) == 0 {
 		return
 	}
-	m.selected = m.rows[m.cursor].Name
+	t.cursor = 0
+	if last {
+		t.cursor = len(rows) - 1
+	}
+	t.selected = rows[t.cursor].key
 }
 
-// visibleBoxes is the rows the table shows: live boxes only unless all
-// (ls's rule), and with a filter only the boxes whose name, state,
-// image, project, branch or a label contains it (case-insensitively).
-// vms must already be sorted; the order is kept.
-func visibleBoxes(vms []client.VM, all bool, filter string) []client.VM {
-	filter = strings.ToLower(strings.TrimSpace(filter))
-	var out []client.VM
-	for _, vm := range vms {
-		if !all && stateRank(vm.State) != 0 {
-			continue
-		}
-		if filter != "" && !boxMatches(vm, filter) {
-			continue
-		}
-		out = append(out, vm)
-	}
-	return out
+// openView makes v the only page (k9s's `:resource`), listing what it
+// needs.
+func (m *tuiModel) openView(v *tableView) tea.Cmd {
+	m.pages = []page{{kind: pageTable, view: v, sortCol: -1}}
+	m.filter.SetValue("")
+	return tea.Batch(m.list(v.resource), m.spinIfBusy())
 }
 
-// boxMatches reports whether filter (lowercase) is in one of vm's
-// searchable fields.
-func boxMatches(vm client.VM, filter string) bool {
-	fields := []string{vm.Name, vm.State, vm.Image, vm.Size, vm.Provider, vm.IP, projectText(vm), branchText(vm), runText(vm)}
-	for k, v := range vm.Labels {
-		fields = append(fields, k+"="+v)
-	}
-	for _, f := range fields {
-		if strings.Contains(strings.ToLower(f), filter) {
-			return true
+// sortBackups is newest first, as `boxctl backups` lists them.
+func sortBackups(backups []client.Backup) {
+	for i := 1; i < len(backups); i++ {
+		for j := i; j > 0 && backups[j].CreatedAt.After(backups[j-1].CreatedAt); j-- {
+			backups[j], backups[j-1] = backups[j-1], backups[j]
 		}
 	}
-	return false
 }
 
-// sortBoxes orders vms as ls does: live, paused, other; newest first
-// within a group; id as the tiebreak.
-func sortBoxes(vms []client.VM) {
-	sort.SliceStable(vms, func(i, j int) bool {
-		ri, rj := stateRank(vms[i].State), stateRank(vms[j].State)
-		if ri != rj {
-			return ri < rj
-		}
-		if !vms[i].CreatedAt.Equal(vms[j].CreatedAt) {
-			return vms[i].CreatedAt.After(vms[j].CreatedAt)
-		}
-		return vms[i].ID < vms[j].ID
-	})
-}
-
-// act runs one of the client's per-box calls on the selected box, in
-// the background, with the box marked pending meanwhile. wantState, when
-// not empty, is the state the box must be in (pause needs running), so
-// a sure-to-fail request isn't sent.
-func (m tuiModel) act(verb, wantState string, fn func(ctx context.Context, name string) error) (tea.Model, tea.Cmd) {
-	vm := m.current()
-	if vm == nil {
-		return m, nil
-	}
-	if v, ok := m.pending[vm.Name]; ok {
-		m.setStatus(fmt.Sprintf("%s is being %s", vm.Name, pastTense(v)), true)
-		return m, nil
-	}
-	if wantState != "" && vm.State != wantState {
-		m.setStatus(fmt.Sprintf("%s is %s, not %s; can't %s it", vm.Name, vm.State, wantState, verb), true)
-		return m, nil
-	}
-	name := vm.Name
-	m.pending[name] = verb
-	m.setStatus(fmt.Sprintf("%s %s…", presentTense(verb), name), false)
-	run := func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
-		return tuiActionMsg{name: name, verb: verb, err: fn(ctx, name)}
-	}
-	return m, tea.Batch(run, m.spinIfBusy())
-}
-
-// askDestroy is rm's two confirmations in one: the usual question, with
-// the unfinished-goal-run warning above it when it applies (from the
-// list already loaded, as rm reads the one List call).
-func (m tuiModel) askDestroy() (tea.Model, tea.Cmd) {
-	vm := m.current()
-	if vm == nil {
-		return m, nil
-	}
-	if v, ok := m.pending[vm.Name]; ok {
-		m.setStatus(fmt.Sprintf("%s is being %s", vm.Name, pastTense(v)), true)
-		return m, nil
-	}
-	name := vm.Name
-	m.confirm = tuiConfirm{
-		prompt: fmt.Sprintf("Destroy %s? This cannot be undone. [y/N]", name),
-		yes: func(m tuiModel) (tea.Model, tea.Cmd) {
-			return m.act("destroy", "", m.c.Destroy)
-		},
-	}
-	if len(filterUnfinished([]client.VM{*vm}, nil)) > 0 {
-		m.confirm.warn = fmt.Sprintf("%s is not done (%s): its work may not be fetched yet.", name, runText(*vm))
-	}
-	m.mode = modeConfirm
-	return m, nil
-}
-
-// ssh hands the terminal to `boxctl ssh <name>` -- a separate process,
-// so its stdin reader (which runSSH can't cancel) dies with it instead
-// of swallowing this program's next keypress. Its stderr is kept to show
-// why it failed, since the alternate screen hides whatever it printed.
-func (m tuiModel) ssh() (tea.Model, tea.Cmd) {
-	vm := m.current()
-	if vm == nil {
-		return m, nil
-	}
-	if vm.State == "paused" {
-		m.setStatus(fmt.Sprintf("%s is paused; press r to resume it first", vm.Name), true)
-		return m, nil
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		m.setStatus("finding boxctl: "+err.Error(), true)
-		return m, nil
-	}
-	args := []string{"ssh", vm.Name}
-	if apiURLFlag != "" {
-		args = append(args, "--api-url", apiURLFlag)
-	}
-	cmd := exec.Command(exe, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	name := vm.Name
-	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return tuiSSHDoneMsg{name: name, err: err, stderr: stderr.String()}
-	})
-}
-
-// presentTense/pastTense word the status line: "pausing my-box", "paused
+// presentTense/pastTense word the flash: "pausing my-box", "paused
 // my-box".
 func presentTense(verb string) string {
 	switch verb {
@@ -621,13 +538,17 @@ func presentTense(verb string) string {
 		return "destroying"
 	case "create":
 		return "creating"
+	case "expose":
+		return "exposing"
+	case "unexpose":
+		return "unexposing"
 	}
 	return verb + "ing"
 }
 
 func pastTense(verb string) string {
 	switch verb {
-	case "pause", "resume", "create":
+	case "pause", "resume", "create", "expose", "unexpose":
 		return verb + "d"
 	case "keep":
 		return "kept"
@@ -635,390 +556,4 @@ func pastTense(verb string) string {
 		return "destroyed"
 	}
 	return verb + "ed"
-}
-
-// --- rendering ---
-
-var tuiStyles = struct {
-	title, accent, dim, header, selected, err, ok, warn, key lipgloss.Style
-	state                                                    map[string]lipgloss.Style
-}{
-	title:    lipgloss.NewStyle().Bold(true),
-	accent:   lipgloss.NewStyle().Foreground(lipgloss.Color("6")),
-	dim:      lipgloss.NewStyle().Faint(true),
-	header:   lipgloss.NewStyle().Bold(true).Underline(true),
-	selected: lipgloss.NewStyle().Reverse(true).Bold(true),
-	err:      lipgloss.NewStyle().Foreground(lipgloss.Color("1")),
-	ok:       lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
-	warn:     lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
-	key:      lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")),
-	state: map[string]lipgloss.Style{
-		"running":      lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
-		"paused":       lipgloss.NewStyle().Foreground(lipgloss.Color("3")),
-		"provisioning": lipgloss.NewStyle().Foreground(lipgloss.Color("6")),
-		"stopping":     lipgloss.NewStyle().Foreground(lipgloss.Color("6")),
-	},
-}
-
-// tuiColumns are the table's columns: ls's, in ls's order.
-var tuiColumns = []struct {
-	title string
-	cell  func(vm client.VM) string
-}{
-	{"NAME", func(vm client.VM) string { return vm.Name }},
-	{"STATE", func(vm client.VM) string { return vm.State }},
-	{"IMAGE", func(vm client.VM) string {
-		if vm.Image == "" {
-			return "-"
-		}
-		return vm.Image
-	}},
-	{"SIZE", sizeLabel},
-	{"AGE", func(vm client.VM) string { return age(vm.CreatedAt) }},
-	{"RUN", runText},
-	{"PROJECT", projectText},
-	{"PR", prText},
-}
-
-const tuiStateColumn = 1
-
-// Fixed line counts around the table: the title line and a blank one
-// above, the table header, and the status and key lines below.
-const (
-	tuiChromeAbove = 3
-	tuiChromeBelow = 2
-)
-
-// detailHeight is how many lines the detail pane takes (0 when hidden or
-// there is no box to describe).
-func (m tuiModel) detailHeight() int {
-	if !m.detail || m.current() == nil {
-		return 0
-	}
-	return len(m.detailLines(m.current())) + 1 // plus a blank line above
-}
-
-// tableRows is how many box rows fit on the screen.
-func (m tuiModel) tableRows() int {
-	if m.height == 0 {
-		return 20
-	}
-	return max(m.height-tuiChromeAbove-tuiChromeBelow-m.detailHeight(), 1)
-}
-
-func (m tuiModel) View() string {
-	if m.width == 0 {
-		return "loading…"
-	}
-	var b strings.Builder
-	b.WriteString(m.titleLine() + "\n\n")
-	switch m.mode {
-	case modeHelp:
-		b.WriteString(m.helpView())
-	case modeCreate:
-		b.WriteString(m.create.view(m.width))
-	default:
-		b.WriteString(m.tableView())
-		if m.detail {
-			if vm := m.current(); vm != nil {
-				b.WriteString("\n")
-				for _, l := range m.detailLines(vm) {
-					b.WriteString(fit(l, m.width) + "\n")
-				}
-			}
-		}
-	}
-	// Push the footer to the bottom of the screen.
-	lines := strings.Count(b.String(), "\n")
-	for ; lines < m.height-tuiChromeBelow; lines++ {
-		b.WriteString("\n")
-	}
-	b.WriteString(m.statusLine() + "\n")
-	b.WriteString(m.keyLine())
-	return b.String()
-}
-
-func (m tuiModel) titleLine() string {
-	left := tuiStyles.title.Render("boxctl")
-	if m.busy() {
-		left += " " + m.spin.View()
-	}
-	var parts []string
-	live := 0
-	for _, vm := range m.vms {
-		if stateRank(vm.State) == 0 {
-			live++
-		}
-	}
-	parts = append(parts, boxCount(len(m.vms)))
-	if hidden := len(m.vms) - live; hidden > 0 && !m.showAll {
-		parts = append(parts, fmt.Sprintf("%d not running (a shows them)", hidden))
-	}
-	if f := m.filter.Value(); f != "" && m.mode != modeFilter {
-		parts = append(parts, fmt.Sprintf("filter %q", f))
-	}
-	if !m.refreshedAt.IsZero() {
-		parts = append(parts, "refreshed "+shortAgo(time.Since(m.refreshedAt)))
-	}
-	right := tuiStyles.dim.Render(strings.Join(parts, " · "))
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		return fit(left, m.width)
-	}
-	return left + strings.Repeat(" ", gap) + right
-}
-
-// shortAgo is "now", "12s ago", "3m ago".
-func shortAgo(d time.Duration) string {
-	switch {
-	case d < 2*time.Second:
-		return "just now"
-	case d < time.Minute:
-		return fmt.Sprintf("%ds ago", int(d.Seconds()))
-	default:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	}
-}
-
-func (m tuiModel) tableView() string {
-	if len(m.rows) == 0 {
-		switch {
-		case m.loading && m.refreshedAt.IsZero():
-			return tuiStyles.dim.Render("Loading your boxes…") + "\n"
-		case m.filter.Value() != "":
-			return tuiStyles.dim.Render("No boxes match the filter.") + "\n"
-		case len(m.vms) > 0:
-			return tuiStyles.dim.Render("No running boxes. Press a to show the others.") + "\n"
-		default:
-			return tuiStyles.dim.Render("No boxes yet. Press c to create one.") + "\n"
-		}
-	}
-	// Column widths from the plain cells, over every visible row, so the
-	// table doesn't shift as it scrolls.
-	cells := make([][]string, len(m.rows))
-	widths := make([]int, len(tuiColumns))
-	for i, col := range tuiColumns {
-		widths[i] = lipgloss.Width(col.title)
-	}
-	for r, vm := range m.rows {
-		cells[r] = make([]string, len(tuiColumns))
-		for i, col := range tuiColumns {
-			s := col.cell(vm)
-			if v, ok := m.pending[vm.Name]; ok && i == tuiStateColumn {
-				s = presentTense(v)
-			}
-			cells[r][i] = s
-			widths[i] = max(widths[i], lipgloss.Width(s))
-		}
-	}
-	var b strings.Builder
-	var header []string
-	for i, col := range tuiColumns {
-		header = append(header, padRight(col.title, widths[i]))
-	}
-	b.WriteString(fit(tuiStyles.header.Render(strings.Join(header, "  ")), m.width) + "\n")
-
-	// The window of rows that keeps the cursor on screen.
-	rows := m.tableRows()
-	top := 0
-	if m.cursor >= rows {
-		top = m.cursor - rows + 1
-	}
-	end := min(top+rows, len(m.rows))
-	for r := top; r < end; r++ {
-		vm := m.rows[r]
-		var line string
-		if r == m.cursor {
-			var cs []string
-			for i, s := range cells[r] {
-				cs = append(cs, padRight(s, widths[i]))
-			}
-			line = tuiStyles.selected.Render(fit(strings.Join(cs, "  "), m.width))
-		} else {
-			var cs []string
-			for i, s := range cells[r] {
-				s = padRight(s, widths[i])
-				if i == tuiStateColumn {
-					if _, ok := m.pending[vm.Name]; ok {
-						s = tuiStyles.accent.Render(s)
-					} else if st, ok := tuiStyles.state[vm.State]; ok {
-						s = st.Render(s)
-					}
-				}
-				cs = append(cs, s)
-			}
-			line = fit(strings.Join(cs, "  "), m.width)
-		}
-		b.WriteString(line + "\n")
-	}
-	if top > 0 || end < len(m.rows) {
-		b.WriteString(tuiStyles.dim.Render(fmt.Sprintf("%d-%d of %d", top+1, end, len(m.rows))) + "\n")
-	}
-	return b.String()
-}
-
-// detailLines describes vm under the table: what ls -o wide and the
-// dashboard's box page show, only the parts that apply.
-func (m tuiModel) detailLines(vm *client.VM) []string {
-	var lines []string
-	title := tuiStyles.title.Render(vm.Name)
-	parts := []string{vm.State}
-	if vm.IP != "" {
-		parts = append(parts, vm.IP)
-	}
-	if vm.Provider != "" {
-		parts = append(parts, vm.Provider)
-	}
-	if vm.State == "running" {
-		if vm.Ready {
-			parts = append(parts, "ready")
-		} else {
-			parts = append(parts, "not ready yet")
-		}
-	}
-	if vm.VCPU > 0 {
-		parts = append(parts, fmt.Sprintf("%s (%d vCPU, %s)", sizeLabel(*vm), vm.VCPU, memLabel(vm.MemMiB)))
-	}
-	if vm.Image != "" {
-		parts = append(parts, vm.Image)
-	}
-	lines = append(lines, title+"  "+tuiStyles.dim.Render(strings.Join(parts, " · ")))
-
-	var when []string
-	if !vm.CreatedAt.IsZero() {
-		when = append(when, "created "+vm.CreatedAt.Local().Format(time.DateTime)+" ("+age(vm.CreatedAt)+")")
-	}
-	if vm.LastActivityAt != nil {
-		when = append(when, "last used "+age(*vm.LastActivityAt)+" ago")
-	}
-	if vm.KeepUntil != nil && vm.KeepUntil.After(time.Now()) {
-		when = append(when, "kept until "+vm.KeepUntil.Local().Format(time.DateTime))
-	} else if vm.DeleteAt != nil {
-		when = append(when, tuiStyles.warn.Render("idle: deleted "+vm.DeleteAt.Local().Format(time.DateTime)+" unless resumed (K keeps it a day)"))
-	}
-	if len(when) > 0 {
-		lines = append(lines, "  "+strings.Join(when, " · "))
-	}
-
-	if run := runText(*vm); run != "-" {
-		rl := []string{"run: " + run}
-		if b := branchText(*vm); b != "-" {
-			rl = append(rl, "branch "+b)
-		}
-		if st, _ := parseGoalStatus(vm.RunStatus); st != nil {
-			rl = append(rl, st.PRURLs...)
-			if len(st.PRURLs) == 0 && st.PRURL != "" {
-				rl = append(rl, st.PRURL)
-			}
-			if st.Error != "" {
-				rl = append(rl, tuiStyles.err.Render(st.Error))
-			}
-		}
-		lines = append(lines, "  "+strings.Join(rl, " · "))
-	}
-
-	if len(vm.Labels) > 0 {
-		keys := make([]string, 0, len(vm.Labels))
-		for k := range vm.Labels {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		var kv []string
-		for _, k := range keys {
-			kv = append(kv, k+"="+vm.Labels[k])
-		}
-		lines = append(lines, "  "+tuiStyles.dim.Render("labels: "+strings.Join(kv, " ")))
-	}
-
-	for _, in := range vm.Ingress {
-		s := fmt.Sprintf("  public: %s → port %d (%s)", in.URL, in.Port, in.Status)
-		lines = append(lines, s)
-	}
-	return lines
-}
-
-func (m tuiModel) statusLine() string {
-	switch m.mode {
-	case modeFilter:
-		return fit(m.filter.View(), m.width)
-	case modeConfirm:
-		s := tuiStyles.warn.Render(m.confirm.prompt)
-		if m.confirm.warn != "" {
-			s = tuiStyles.warn.Render("! "+m.confirm.warn) + "  " + s
-		}
-		return fit(s, m.width)
-	}
-	if m.status == "" {
-		return ""
-	}
-	if m.statusErr {
-		return fit(tuiStyles.err.Render("✘ "+m.status), m.width)
-	}
-	return fit(tuiStyles.ok.Render("✔ ")+m.status, m.width)
-}
-
-// keyLine is the footer's key reference, cut to what fits.
-func (m tuiModel) keyLine() string {
-	var keys [][2]string
-	switch m.mode {
-	case modeFilter:
-		keys = [][2]string{{"enter", "keep filter"}, {"esc", "clear"}}
-	case modeConfirm:
-		keys = [][2]string{{"y", "yes"}, {"any other key", "no"}}
-	case modeCreate:
-		keys = [][2]string{{"tab", "next field"}, {"←/→", "change"}, {"enter", "create"}, {"esc", "cancel"}}
-	case modeHelp:
-		keys = [][2]string{{"any key", "back"}}
-	default:
-		keys = [][2]string{{"enter", "ssh"}, {"c", "create"}, {"p", "pause"}, {"r", "resume"}, {"d", "destroy"}, {"K", "keep"}, {"a", "all"}, {"/", "filter"}, {"i", "details"}, {"R", "refresh"}, {"?", "help"}, {"q", "quit"}}
-	}
-	var parts []string
-	for _, k := range keys {
-		parts = append(parts, tuiStyles.key.Render(k[0])+" "+tuiStyles.dim.Render(k[1]))
-	}
-	// Whole items only: drop from the end until the line fits.
-	for len(parts) > 1 && lipgloss.Width(strings.Join(parts, "  ")) > m.width {
-		parts = parts[:len(parts)-1]
-	}
-	return fit(strings.Join(parts, "  "), m.width)
-}
-
-func (m tuiModel) helpView() string {
-	help := []struct{ key, what string }{
-		{"↑/k ↓/j", "move; pgup/pgdn, g/G jump"},
-		{"enter, s", "open a terminal on the box (boxctl ssh)"},
-		{"c", "create a box: name (empty for a generated one), image and size"},
-		{"p", "pause the box (running only)"},
-		{"r", "resume the box (paused only)"},
-		{"d, x", "destroy the box, after a y/N question"},
-		{"K", "keep: hold the box off the idle reaper's deletion for a day"},
-		{"a", "also show paused and stopped boxes (ls -a)"},
-		{"/", "filter by name, state, image, project, branch or label; esc clears"},
-		{"i", "show or hide the selected box's details"},
-		{"R", "refresh now; the list refreshes itself every " + tuiRefreshEvery.String()},
-		{"q", "quit (esc clears the filter first)"},
-	}
-	var b strings.Builder
-	b.WriteString(tuiStyles.title.Render("Keys") + "\n\n")
-	for _, h := range help {
-		b.WriteString("  " + tuiStyles.key.Render(padRight(h.key, 10)) + " " + h.what + "\n")
-	}
-	b.WriteString("\n" + tuiStyles.dim.Render("Everything here is what the matching boxctl subcommand does; the box list is boxctl ls's.") + "\n")
-	return b.String()
-}
-
-// padRight pads s with spaces to w cells (no-op when it's wider).
-func padRight(s string, w int) string {
-	if n := lipgloss.Width(s); n < w {
-		return s + strings.Repeat(" ", w-n)
-	}
-	return s
-}
-
-// fit cuts s to w cells, ANSI styling kept.
-func fit(s string, w int) string {
-	if w <= 0 || lipgloss.Width(s) <= w {
-		return s
-	}
-	return lipgloss.NewStyle().MaxWidth(w).Render(s)
 }

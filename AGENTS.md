@@ -102,22 +102,36 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   repository; unlabeled, named `<agent>-<dir>[-<task>]`), `-l` filters
   by label on the server, and `-o wide` adds IP, PROVIDER, READY and
   BRANCH. `printBoxes` is the listing itself, shared with `claude ls`.
-- `cmd/tui.go`, `cmd/tuicreate.go` — `tui`: the box list as a live,
-  full-screen view (Bubble Tea, with Lip Gloss and Bubbles' textinput and
-  spinner -- the one place those are used), refreshing every 5s, with
-  the everyday commands on single keys: enter/s ssh, c create (a form:
-  name, image, size from `/api/images` and `/api/sizes`), p pause, r
-  resume, d destroy (rm's confirmation, with its unfinished-goal warning
-  from the list already loaded), K keep, a all, / filter, i details. It
-  is a front end only: every action is the matching `Client` call the
-  subcommand makes, and the columns, sorting and visibility rule are
-  `ls`'s (`runText`, `projectText`, `prText`, `sizeLabel`, `age`,
-  `stateRank`). A terminal is `boxctl ssh <name>` run as a child process
-  through `tea.ExecProcess` -- in-process `runSSH` would leave its
-  uncancellable stdin reader behind to eat the next keypress -- with
-  `--api-url` passed on and its stderr captured for the status line.
+- `cmd/tui.go`, `tuiviews.go`, `tuiactions.go`, `tuirender.go`,
+  `tuicreate.go` — `tui`: the boxes the way k9s shows a cluster (Bubble
+  Tea, with Lip Gloss and Bubbles' textinput and spinner -- the one
+  place those are used). `tuiviews.go` defines the resource views, each
+  a table over one listing (`:boxes`, `:urls` from the boxes' `ingress`,
+  `:images`, `:sizes`, `:backups`) with its columns, hotkeys and
+  shift+letter sort keys; rows are recomputed from the model's data at
+  every render, so a refresh never patches a table. `tui.go` is the
+  model: a navigation stack of pages (a table, or a text page -- describe,
+  json, logs, help), the listings (boxes every 5s plus the top view's
+  resource), flashes. `tuiactions.go` is the keys: the `:` prompt
+  (`findView`, `:q`, `:help`, `:create`, `:ssh`), `/` filter, modal
+  dialogs (ctrl-d delete with rm's unfinished-goal warning from the list
+  already loaded; `e` expose asks for a port; ctrl-d in `:urls`
+  unexposes), `0/1/2` for all/running/paused (k9s's namespace keys), and
+  the box actions (`s` shell, `p`/`r`/`K`, `l` logs: `logsScript` over
+  `Client.Exec` through `logFormatter`, so it needs no ssh key). Every
+  action is the matching `Client` call the subcommand makes, and the
+  boxes columns, order and the live/paused split are `ls`'s (`runText`,
+  `projectText`, `prText`, `sizeLabel`, `age`, `stateRank`).
+  `tuirender.go` draws it: header (info block, the view's hotkeys, the
+  logo; hidden under 18 lines), the prompt line, one bordered box with a
+  `Title(filter)[count]`, the crumbs line with the flash at its right;
+  `k9s` holds the colours. A terminal is `boxctl ssh <name>` run as a
+  child process through `tea.ExecProcess` -- in-process `runSSH` would
+  leave its uncancellable stdin reader behind to eat the next keypress
+  -- with `--api-url` passed on and its stderr captured for the flash.
   `tui_test.go` drives the model with messages and keys against an
-  `httptest` server; the pure parts are `visibleBoxes`/`sortBoxes`.
+  `httptest` server (`tuiFlashFor` is a variable so the flash timers it
+  runs don't wait). The plain, pre-k9s version is tagged `tui-plain`.
 - `cmd/create.go` — `create -a <script>` blocks until the server's
   `onctl create -a` finishes, so meanwhile `applyLogTail` polls the
   script's log (`~/.onctl/applyNN/output-<script>.log`, where onctl's
