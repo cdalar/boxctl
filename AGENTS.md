@@ -227,6 +227,13 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   (tmpfs), which the session's command sources and deletes -- never
   argv, never disk. Always `tmux ... -t =<name>`: a bare `-t claude`
   prefix-matches `claude-auth`.
+  A box that outlives the run (`--keep`/`--box`/`--detach`/`--task`,
+  i.e. `!claudeTarget.ephemeral`) sets `taskSession.shellAfter`: the
+  session's command runs the agent without `exec` and ends in `exec
+  bash`, so quitting the agent (Ctrl+D twice) leaves a shell in the tmux
+  session to run `claude --continue` in, not an ended session. Ephemeral
+  runs keep `exec`: `claudeTarget.end` fetches and deletes on the session
+  ending.
 - `cmd/claudegoal.go` — `claude --repo owner/name [--goal "..."]` and
   `claude logs <box>`: a new box, the repo cloned (default branch) onto
   `boxctl/<slug>-<id>`, no local copy. Without `--goal` (and without

@@ -188,3 +188,20 @@ func TestResolveTask(t *testing.T) {
 		t.Errorf("own box: task %q box %q", claudeTask, claudeBox)
 	}
 }
+
+// TestSessionShellAfterExit: a kept box's session runs the agent without
+// exec and ends in a shell, so the session outlives the agent.
+func TestSessionShellAfterExit(t *testing.T) {
+	s := newTaskSession("/w/app", "")
+	if strings.Contains(s.commandLine("", nil), "exec bash") {
+		t.Error("an ephemeral session must end with the agent")
+	}
+	s.shellAfter = true
+	line := s.commandLine("", nil)
+	if !strings.Contains(line, "exec bash") || strings.Contains(line, "exec claude") {
+		t.Errorf("got %q", line)
+	}
+	if !strings.Contains(line, `export PATH="$HOME/.local/bin:$PATH"; claude`) {
+		t.Errorf("PATH isn't exported for the shell: %q", line)
+	}
+}
