@@ -282,9 +282,11 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `created`), since nothing of the user's is on it yet and a box with no
   run never reports the `run_status` the reaper waits for; a `--box` that
   already existed is only closed. `--goal`
-  without `--repo` takes the cwd's GitHub origin. Unverified against a
-  real box: `IS_SANDBOX=1` letting `--dangerously-skip-permissions` run as
-  root.
+  without `--repo` takes the cwd's GitHub origin. The runner's `IS_SANDBOX=1`
+  is verified against Claude Code 2.1.303: as root it refuses
+  `--dangerously-skip-permissions` unless that variable is exactly the
+  string `1` (not `true`/`yes`), so keep it that way. Whether the
+  harness's deny rules still hold under the flag is not verified.
 - `cmd/claudeharness.go` — `claude --harness <dir|name>`: rules for the
   box's Claude that don't touch the local `~/.claude`. `CLAUDE.md` and
   `managed-settings.json` go to `/etc/claude-code/` (managed memory and

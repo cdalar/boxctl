@@ -259,7 +259,9 @@ determined agent -- the real boundary is the credentials (`--github store`
 with a one-repository fine-grained token, and branch protection on
 `main` so nothing merges without review). And whether deny rules hold
 under `--goal`'s `--dangerously-skip-permissions` is unverified against a
-real box.
+real box. (The flag itself is: Claude Code refuses it as root unless
+`IS_SANDBOX=1` is set, which the goal runner does, checked against Claude
+Code 2.1.303.)
 
 **Which harness a run gets.** `--harness none` means none; `--harness
 <dir|name>` means that one (`pr-only` is the built-in, unless
