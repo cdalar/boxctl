@@ -148,7 +148,10 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   command stays usable in `$(...)`; keep it that way. The server's
   `status` (`pending`/`active`/`paused`) drives the note, and an unknown
   status is treated as "not yet" rather than an error, so a newer server
-  doesn't break an older CLI.
+  doesn't break an older CLI. `expose ls` lists every box's URLs from the
+  `ingress` field of the one `List` call (what the dashboard's Public
+  URLs tab does), not a request per box. A box named `ls` is shadowed by
+  that subcommand.
 - `cmd/sshproxy.go` — `ssh-proxy <name> [port]`: stdin/stdout relayed
   to a box port (22 by default) over the same `Client.DialPort` tunnel as
   `port-forward`, for ssh's `ProxyCommand` -- real ssh to a box with
