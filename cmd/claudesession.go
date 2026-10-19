@@ -22,6 +22,9 @@ type taskSession struct {
 	task string // "" for the main checkout
 	dir  string // where Claude runs on the box
 	tmux string // its tmux session: the agent's name, -<task> for a task
+	// shellAfter: when the agent exits, leave a shell in the session
+	// instead of ending it, so it can be started again (--continue).
+	shellAfter bool
 }
 
 func newTaskSession(project, task string) taskSession {
@@ -61,6 +64,12 @@ func (s taskSession) commandLine(prompt string, args []string) string {
 		"if [ -f " + f + " ]; then . " + f + "; rm -f " + f + "; fi;",
 		`PATH="$HOME/` + agent.binDir + `:$PATH"`, "exec", agent.bin,
 	}
+	if s.shellAfter {
+		// No exec, and PATH exported, for the shell that follows.
+		words = []string{
+			words[0], `export PATH="$HOME/` + agent.binDir + `:$PATH";`, agent.bin,
+		}
+	}
 	for _, a := range args {
 		words = append(words, shellQuote(a))
 	}
@@ -70,7 +79,21 @@ func (s taskSession) commandLine(prompt string, args []string) string {
 		}
 		words = append(words, shellQuote(prompt))
 	}
-	return strings.Join(words, " ")
+	line := strings.Join(words, " ")
+	if s.shellAfter {
+		line += "; echo; echo " + shellQuote(agent.title+" exited. This shell keeps the session; "+agent.bin+" starts it again"+resumeHint()+".") +
+			"; exec bash"
+	}
+	return line
+}
+
+// resumeHint is how the agent picks its last conversation back up, if it
+// can: Claude's --continue.
+func resumeHint() string {
+	if agent.name == "claude" {
+		return " (--continue resumes the conversation)"
+	}
+	return ""
 }
 
 // tmuxCommand starts this session's agent in tmux, or with -A attaches

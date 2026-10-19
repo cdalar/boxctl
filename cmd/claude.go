@@ -401,6 +401,9 @@ func startSession(ctx context.Context, t *claudeTarget, sess taskSession, runnin
 	if running && (claudePrompt != "" || len(args) > 0) {
 		fmt.Fprintf(os.Stderr, "%s is already running there; attaching to it (--prompt and %s arguments only apply to a new session).\n", agent.title, agent.bin)
 	}
+	// A box that outlives the run keeps its session when the agent exits;
+	// an ephemeral one ends with it (end fetches and deletes on that).
+	sess.shellAfter = !t.ephemeral
 	line := sess.commandLine(claudePrompt, args)
 	if claudeDetach {
 		if !running {
