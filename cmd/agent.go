@@ -48,8 +48,9 @@ func (a *boxAgent) runs(run func(*cobra.Command, []string) error) func(*cobra.Co
 }
 
 // setupScript makes sure the box can run the agent in tmux. On the
-// claude-agent image only the agent's own install does anything, once;
-// other images get tmux from apt.
+// claude-agent image already has tmux and Claude Code, so this does
+// nothing; other images get tmux from apt and the agent's own install,
+// once.
 func (a *boxAgent) setupScript() string {
 	return `set -e
 export PATH="$HOME/` + a.binDir + `:$PATH"
