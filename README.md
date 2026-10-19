@@ -31,6 +31,7 @@ boxctl rm my-box                            # done
 |---|---|
 | `login` / `logout` | Save or forget your personal token |
 | `create`, `ls`, `rm`, `pause`, `resume`, `keep` | Box lifecycle (`rm`/`pause`/`resume` also take `all`) |
+| `tui` | All of the above in a full-screen, live view: pick a box, press a key |
 | `images`, `sizes` | What you can boot, and at what size |
 | `ssh`, `ssh-proxy` | Shell or one-off command; real `ssh`/`scp`/`rsync` through a proxy |
 | `port-forward`, `expose`, `unexpose` | Reach a box port locally, or publish it on the internet |
@@ -105,6 +106,7 @@ boxctl ls                         # running boxes
 boxctl ls -a                      # all of them, paused and stopped too
 boxctl ls -p                      # this directory's project's boxes: its own, its runs and goals
 boxctl ls -o json                 # for scripts; images and sizes take -o json too
+boxctl tui                        # the list as a live, full-screen view: enter opens a terminal, c/p/r/d/K act on a box, ? for the keys
 # on a terminal, ls then fills in each PR's state (open, merged, closed) via `gh pr view` without holding up the list
 boxctl images
 boxctl create my-box

@@ -102,6 +102,22 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   repository; unlabeled, named `<agent>-<dir>[-<task>]`), `-l` filters
   by label on the server, and `-o wide` adds IP, PROVIDER, READY and
   BRANCH. `printBoxes` is the listing itself, shared with `claude ls`.
+- `cmd/tui.go`, `cmd/tuicreate.go` — `tui`: the box list as a live,
+  full-screen view (Bubble Tea, with Lip Gloss and Bubbles' textinput and
+  spinner -- the one place those are used), refreshing every 5s, with
+  the everyday commands on single keys: enter/s ssh, c create (a form:
+  name, image, size from `/api/images` and `/api/sizes`), p pause, r
+  resume, d destroy (rm's confirmation, with its unfinished-goal warning
+  from the list already loaded), K keep, a all, / filter, i details. It
+  is a front end only: every action is the matching `Client` call the
+  subcommand makes, and the columns, sorting and visibility rule are
+  `ls`'s (`runText`, `projectText`, `prText`, `sizeLabel`, `age`,
+  `stateRank`). A terminal is `boxctl ssh <name>` run as a child process
+  through `tea.ExecProcess` -- in-process `runSSH` would leave its
+  uncancellable stdin reader behind to eat the next keypress -- with
+  `--api-url` passed on and its stderr captured for the status line.
+  `tui_test.go` drives the model with messages and keys against an
+  `httptest` server; the pure parts are `visibleBoxes`/`sortBoxes`.
 - `cmd/create.go` — `create -a <script>` blocks until the server's
   `onctl create -a` finishes, so meanwhile `applyLogTail` polls the
   script's log (`~/.onctl/applyNN/output-<script>.log`, where onctl's
