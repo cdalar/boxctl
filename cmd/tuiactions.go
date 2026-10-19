@@ -238,6 +238,10 @@ func (m tuiModel) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.askUnexpose()
 		}
 		return m.askDestroy()
+	case "r":
+		if t.view == backupsView {
+			return m.askRestore()
+		}
 	}
 	// shift+letter sorts by the column with that letter.
 	if len(key) == 1 && key[0] >= 'A' && key[0] <= 'Z' {
@@ -367,6 +371,11 @@ func (m *tuiModel) pushHelp() {
 	}
 	if len(sorts) > 0 {
 		lines = append(lines, "", "  sort:          "+strings.Join(sorts, ", "))
+	}
+	if v == backupsView {
+		lines = append(lines, "", "Backups",
+			"  r asks for a name (the backed-up box's by default) and restores the backup as a new box,",
+			"  paused at its own size (`boxctl restore`); a size after the name boots it fresh at that size.")
 	}
 	if v == boxesView {
 		lines = append(lines, "", "Boxes",
@@ -520,6 +529,68 @@ func (m tuiModel) askExpose(vm *client.VM) (tea.Model, tea.Cmd) {
 				return fmt.Sprintf("%s → %s port %d (%s)", in.URL, name, port, in.Status), nil
 			})
 		})
+	return m, cmd
+}
+
+// askRestore is `boxctl restore <backup> [-n name] [--size]` for the
+// backups view's row: a prompt for the new box's name, the backed-up
+// box's by default, with an optional size after it.
+func (m tuiModel) askRestore() (tea.Model, tea.Cmd) {
+	r := m.currentRow()
+	if r == nil {
+		return m, nil
+	}
+	var b *client.Backup
+	for i := range m.backups {
+		if m.backups[i].ID == r.key {
+			b = &m.backups[i]
+		}
+	}
+	if b == nil {
+		return m, nil
+	}
+	backup := *b
+	cmd := m.prompt("Restore "+backup.ID, []string{
+		fmt.Sprintf("%s's backup from %s ago, %s.", backup.VMName, age(backup.CreatedAt), client.FormatBytes(backup.SizeBytes)),
+		"",
+		"Name for the new box; it comes back paused at its own size.",
+		"A size after the name (`" + backup.VMName + " large`) boots it fresh at that size instead.",
+	}, "name [size]", func(m tuiModel, value string) (tea.Model, tea.Cmd) {
+		words := strings.Fields(value)
+		if len(words) == 0 || len(words) > 2 {
+			return m, m.fail("want a name, optionally followed by a size")
+		}
+		name, size := words[0], ""
+		if len(words) == 2 {
+			size = words[1]
+		}
+		if m.box(name) != nil {
+			return m, m.fail("a box named %s already exists", name)
+		}
+		if v, ok := m.pending[name]; ok {
+			return m, m.fail("%s is being %s", name, pastTense(v))
+		}
+		m.pending[name] = "restore"
+		c := m.c
+		run := func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			vm, err := c.Restore(ctx, backup.ID, name, size)
+			if err != nil {
+				return tuiActionMsg{name: name, verb: "restore", err: err}
+			}
+			result := fmt.Sprintf("restored %s (%s, %s)", vm.Name, vm.State, sizeLabel(*vm))
+			if vm.State == "paused" {
+				result += " -- r in :boxes resumes it"
+			}
+			return tuiActionMsg{name: name, verb: "restore", result: result}
+		}
+		return m, tea.Batch(run, m.say("restoring %s's backup as %s…", backup.VMName, name), m.spinIfBusy())
+	})
+	if m.dialog != nil && m.dialog.input != nil {
+		m.dialog.input.SetValue(backup.VMName)
+		m.dialog.input.CursorEnd()
+	}
 	return m, cmd
 }
 

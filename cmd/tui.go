@@ -38,6 +38,7 @@ var tuiCmd = &cobra.Command{
   c            create a box (name, image and size are asked)
   p / r / K    pause / resume / keep (hold off the idle reaper's deletion)
   e            expose a port at a public URL; ctrl-d in :urls takes it down
+  r            in :backups, restore the backup as a new box (asks for a name)
   ctrl-d       delete the box (asks first)
   0 / 1 / 2    all boxes / running only / paused only
   esc          back; ctrl-c or :q quits`,
@@ -46,6 +47,8 @@ var tuiCmd = &cobra.Command{
 		if !isTTY() || !term.IsTerminal(int(os.Stdin.Fd())) {
 			return fmt.Errorf("boxctl tui needs a terminal; use `boxctl ls` on a pipe")
 		}
+		// Restore polls with a spinner on stderr; the screen is ours.
+		client.QuietProgress()
 		p := tea.NewProgram(newTUI(newClient()), tea.WithAltScreen())
 		final, err := p.Run()
 		if err != nil {
@@ -542,13 +545,15 @@ func presentTense(verb string) string {
 		return "exposing"
 	case "unexpose":
 		return "unexposing"
+	case "restore":
+		return "restoring"
 	}
 	return verb + "ing"
 }
 
 func pastTense(verb string) string {
 	switch verb {
-	case "pause", "resume", "create", "expose", "unexpose":
+	case "pause", "resume", "create", "expose", "unexpose", "restore":
 		return verb + "d"
 	case "keep":
 		return "kept"

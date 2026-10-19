@@ -88,6 +88,7 @@ func TestTUIRowsSortAndFilter(t *testing.T) {
 func fakeBoxServer(t *testing.T, vms []client.VM) (*client.Client, *[]string) {
 	t.Helper()
 	var calls []string
+	var restored map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer tok" {
 			http.Error(w, "nope", http.StatusUnauthorized)
@@ -98,7 +99,17 @@ func fakeBoxServer(t *testing.T, vms []client.VM) (*client.Client, *[]string) {
 			return
 		}
 		calls = append(calls, r.Method+" "+r.URL.Path)
-		_, _ = w.Write([]byte(`{}`))
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/restore"):
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_, _ = w.Write([]byte(`{"import_id":"imp-1"}`))
+			restored = body
+		case r.URL.Path == "/api/imports/imp-1":
+			_, _ = w.Write([]byte(`{"status":"done","vm":{"name":"` + restored["name"] + `","state":"paused","size":"small"}}`))
+		default:
+			_, _ = w.Write([]byte(`{}`))
+		}
 	}))
 	t.Cleanup(srv.Close)
 	return client.New(srv.URL, "tok"), &calls
@@ -352,6 +363,50 @@ func TestTUIListAndKeys(t *testing.T) {
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Error(":q didn't quit")
+	}
+}
+
+func TestTUIRestore(t *testing.T) {
+	tuiFlashFor = time.Millisecond
+	c, calls := fakeBoxServer(t, tuiFixture())
+	m := newTUI(c)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = next.(tuiModel)
+	next, _ = m.Update(m.list("boxes")())
+	m = next.(tuiModel)
+	next, _ = m.Update(tuiListMsg{resource: "backups", backups: []client.Backup{
+		{ID: "bk-1", VMName: "old-paused", SizeBytes: 1 << 20, CreatedAt: time.Now().Add(-time.Hour), UploadStatus: "uploaded"}}})
+	m = next.(tuiModel)
+	m, _ = press(t, m, ":")
+	m = typeIn(t, m, "backups")
+	m, _ = press(t, m, "enter")
+	if m.top().view != backupsView || !strings.Contains(m.View(), "<r>") {
+		t.Fatalf(":backups: view:\n%s", m.View())
+	}
+	// r asks for a name, the backed-up box's by default; that one still
+	// exists, so it's refused.
+	m, _ = press(t, m, "r")
+	if m.dialog == nil || m.dialog.input == nil || m.dialog.input.Value() != "old-paused" {
+		t.Fatalf("r: dialog=%#v", m.dialog)
+	}
+	m, cmd := press(t, m, "enter")
+	if hasAction(cmd) != nil || !strings.Contains(m.flash, "already exists") {
+		t.Errorf("restore over an existing box: flash=%q", m.flash)
+	}
+	// A new name and a size go through, and the box is pending meanwhile.
+	m, _ = press(t, m, "r")
+	m.dialog.input.SetValue("")
+	m = typeIn(t, m, "old-again large")
+	m, cmd = press(t, m, "enter")
+	if m.pending["old-again"] != "restore" {
+		t.Fatalf("pending=%v", m.pending)
+	}
+	am := hasAction(cmd)
+	if am == nil || am.err != nil || !strings.Contains(am.result, "restored old-again (paused, small)") {
+		t.Fatalf("restore's result: %#v", am)
+	}
+	if len(*calls) < 2 || (*calls)[0] != "POST /api/backups/bk-1/restore" || (*calls)[1] != "GET /api/imports/imp-1" {
+		t.Errorf("server saw %v", *calls)
 	}
 }
 
