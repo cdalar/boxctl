@@ -116,7 +116,11 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   (`findView`, `:q`, `:help`, `:create`, `:ssh`), `/` filter, modal
   dialogs (ctrl-d delete with rm's unfinished-goal warning from the list
   already loaded; `e` expose asks for a port; ctrl-d in `:urls`
-  unexposes), `0/1/2` for all/running/paused (k9s's namespace keys), and
+  unexposes; `r` in `:backups` asks for a name, the backed-up box's by
+  default, with an optional size after it, and runs `Client.Restore` --
+  which polls with a spinner on stderr, so `tui`'s `RunE` first calls
+  `client.QuietProgress`, the one thing in `internal/client` that exists
+  for the tui), `0/1/2` for all/running/paused (k9s's namespace keys), and
   the box actions (`s` shell, `p`/`r`/`K`, `l` logs: `logsScript` over
   `Client.Exec` through `logFormatter`, so it needs no ssh key). Every
   action is the matching `Client` call the subcommand makes, and the

@@ -14,6 +14,12 @@ import (
 // messy) once piped to a file or another program, e.g. in a script.
 var showProgress = term.IsTerminal(int(os.Stderr.Fd()))
 
+// QuietProgress turns the progress and waiting lines off for the rest
+// of the process, for a caller that owns the terminal itself (`boxctl
+// tui`, whose alternate screen a carriage-return spinner on stderr
+// would scribble over). It only ever turns them off.
+func QuietProgress() { showProgress = false }
+
 // progressInterval throttles how often a progress line is reprinted --
 // otherwise a fast local transfer would repaint the terminal on every
 // single Read/Write call.

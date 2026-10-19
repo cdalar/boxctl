@@ -205,7 +205,7 @@ var backupsView = &tableView{
 	columns:  []column{{"ID", 'I'}, {"BOX", 'B'}, {"SIZE", 'Z'}, {"STATUS", 'S'}, {"AGE", 'A'}},
 	stateCol: 3,
 	empty:    "No backups yet. Pause a box and run `boxctl download <name>` to make one.",
-	hotkeys:  []hotkey{{"d", "describe"}},
+	hotkeys:  []hotkey{{"r", "restore"}, {"d", "describe"}, {"y", "json"}},
 	rows: func(m *tuiModel) []tableRow {
 		var rows []tableRow
 		for _, b := range m.backups {
@@ -407,7 +407,7 @@ func describeBackup(b client.Backup) []string {
 		lines = append(lines, kv("Upload Error", b.UploadError))
 	}
 	lines = append(lines, kv("Created", stamp(b.CreatedAt)+" ("+age(b.CreatedAt)+" ago)"))
-	lines = append(lines, "", "Restore it as a new box with `boxctl restore "+b.ID+"`.")
+	lines = append(lines, "", "r restores it as a new box (`boxctl restore "+b.ID+"`).")
 	return lines
 }
 
