@@ -34,6 +34,7 @@ use port-forward instead.
 
   boxctl expose my-box 3000        # https://my-box-k7f2q9xd.boxctl.app -> my-box:3000
   boxctl expose my-box             # list my-box's public URLs
+  boxctl expose ls                 # list them across all your boxes
   boxctl unexpose my-box 3000      # take it down
 
 An account can have up to five public URLs, across all its boxes.
@@ -100,6 +101,61 @@ while people are on it.`,
 		fmt.Fprintln(os.Stderr, exposeNote(name, in))
 		return nil
 	},
+}
+
+var exposeLsCmd = &cobra.Command{
+	Use:   "ls",
+	Short: "List the public URLs of all your boxes",
+	Long: `Lists every public URL across all your boxes, paused ones included
+(their URLs come back when they resume). To see one box's, run
+boxctl expose <name>.`,
+	Example: `  boxctl expose ls
+  boxctl expose ls -o json`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		asJSON, err := wantJSON(cmd)
+		if err != nil {
+			return err
+		}
+		vms, err := newClient().List(cmd.Context())
+		if err != nil {
+			return err
+		}
+		var rows []boxIngress
+		for _, vm := range vms {
+			for _, in := range vm.Ingress {
+				rows = append(rows, boxIngress{Box: vm.Name, Ingress: in})
+			}
+		}
+		if asJSON {
+			return printJSON(rows)
+		}
+		if len(rows) == 0 {
+			fmt.Println("No public URLs. Expose a port with `boxctl expose <name> <port>`.")
+			return nil
+		}
+		return printBoxIngressTable(rows)
+	},
+}
+
+// boxIngress is one public URL with the box it belongs to, the shape
+// `expose ls` prints and, with -o json, emits.
+type boxIngress struct {
+	Box string `json:"box"`
+	client.Ingress
+}
+
+func printBoxIngressTable(rows []boxIngress) error {
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "BOX\tPORT\tSTATUS\tURL\tAGE"); err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if _, err := fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\n", r.Box, r.Port, r.Status, r.URL, age(r.CreatedAt)); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
 }
 
 var unexposeCmd = &cobra.Command{
@@ -223,6 +279,8 @@ func init() {
 	exposeCmd.Flags().StringVar(&exposeHostHeader, "host-header", "", "Host header the app should see instead of the public hostname (e.g. localhost:3000)")
 	exposeCmd.Flags().BoolVar(&exposeNoWait, "no-wait", false, "print the URL without waiting for it to start serving")
 	addOutputFlag(exposeCmd)
+	addOutputFlag(exposeLsCmd)
+	exposeCmd.AddCommand(exposeLsCmd)
 	rootCmd.AddCommand(exposeCmd)
 	rootCmd.AddCommand(unexposeCmd)
 }
