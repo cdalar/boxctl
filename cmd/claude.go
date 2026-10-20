@@ -402,7 +402,8 @@ func startSession(ctx context.Context, t *claudeTarget, sess taskSession, runnin
 		fmt.Fprintf(os.Stderr, "%s is already running there; attaching to it (--prompt and %s arguments only apply to a new session).\n", agent.title, agent.bin)
 	}
 	// A box that outlives the run keeps its session when the agent exits;
-	// an ephemeral one ends with it (end fetches and deletes on that).
+	// an ephemeral one ends with it (end fetches and deletes on that),
+	// unless you only detached, which keeps the box (below).
 	sess.shellAfter = !t.ephemeral
 	line := sess.commandLine(claudePrompt, args)
 	if claudeDetach {
@@ -420,6 +421,17 @@ func startSession(ctx context.Context, t *claudeTarget, sess taskSession, runnin
 		// run's to end: an ephemeral one is kept, work and all.
 		t.ephemeral = false
 		return fmt.Errorf("lost the connection to %s, where %s is still running -- attach again with: %s", t.name, agent.title, sess.attachHint(t.name))
+	}
+	if err == nil && t.ephemeral {
+		// Detaching from tmux (Ctrl-b d) returns here with the agent still
+		// running -- maybe an ongoing session -- so the box isn't this
+		// run's to end either.
+		sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if sessionRunning(sctx, t.box, sess) {
+			t.ephemeral = false
+			sayNote("%s is still running on %s, so it's kept -- attach with: %s", agent.title, bold(t.name), sess.attachHint(t.name))
+		}
 	}
 	return err
 }

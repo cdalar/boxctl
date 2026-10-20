@@ -11,9 +11,10 @@ import (
 
 // An ephemeral run -- boxctl claude (or kilo) without --keep, --box,
 // --detach or --task -- gets a box of its own, created for this run and
-// deleted when it ends: the session quits, you detach, or setup fails.
-// Not when the connection drops: that's reconnected, and if you give up
-// on it the box is kept, its session still running (see startSession). Before the box goes, its branches and
+// deleted when it ends: the session quits or setup fails.
+// Not when you detach or the connection drops (that's reconnected, and if
+// you give up on it): the box is kept, its session still running (see
+// startSession). Before the box goes, its branches and
 // uncommitted work are fetched here as box/* (the same as boxctl claude
 // fetch), so nothing Claude did is lost with it.
 
