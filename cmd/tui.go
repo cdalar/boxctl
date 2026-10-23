@@ -22,19 +22,22 @@ import (
 // into with esc to come back; breadcrumbs and flash messages at the
 // bottom. It is a front end to the same client calls the subcommands
 // make -- List, Pause, Resume, Keep, Destroy, Create, Expose, Unexpose,
-// Exec -- and shells out to `boxctl ssh` for a terminal, so nothing
-// here changes how those commands behave.
+// Exec -- and shells out to `boxctl ssh` for a terminal and to `boxctl
+// claude --repo` from `:repos` (tuirepos.go), so nothing here changes
+// how those commands behave.
 
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Browse and manage your boxes in a k9s-style terminal UI",
 	Long: `Opens a live, full-screen view of your boxes, laid out like k9s.
 
-  :boxes :urls :images :sizes :backups   switch view (also :q, :help, :create)
+  :boxes :urls :images :sizes :backups :repos   switch view (also :q, :help, :create)
   /text        filter the rows; esc clears
   j/k, arrows  move; g/G top/bottom; shift+letter sorts by that column
   enter, d     describe the box; y its JSON; l a --goal run's log
   s            open a terminal on the box (boxctl ssh)
+  enter        in :repos (your GitHub repos, newest push first, from gh),
+               start Claude on a fresh box with the repo cloned (boxctl claude --repo)
   c            create a box (name, image and size are asked)
   p / r / K    pause / resume / keep (hold off the idle reaper's deletion)
   e            expose a port at a public URL; ctrl-d in :urls takes it down
@@ -76,11 +79,12 @@ var tuiFlashFor = 5 * time.Second
 // Messages from the commands the model runs.
 type (
 	tuiListMsg struct {
-		resource string // boxes, images, sizes, backups
+		resource string // boxes, images, sizes, backups, repos
 		vms      []client.VM
 		images   []client.Image
 		sizes    []client.Size
 		backups  []client.Backup
+		repos    []ghRepo
 		err      error
 	}
 	tuiActionMsg struct {
@@ -90,6 +94,11 @@ type (
 	}
 	tuiSSHDoneMsg struct {
 		name   string
+		err    error
+		stderr string
+	}
+	tuiClaudeDoneMsg struct { // `boxctl claude --repo` from :repos ended
+		repo   string
 		err    error
 		stderr string
 	}
@@ -150,6 +159,8 @@ type tuiModel struct {
 	images  []client.Image
 	sizes   []client.Size
 	backups []client.Backup
+	repos   []ghRepo        // GitHub's, newest push first (tuirepos.go)
+	reposAt time.Time       // when repos came from GitHub, or the cache did
 	loaded  map[string]bool // resources listed at least once
 	loading map[string]bool // listings in flight
 
@@ -182,7 +193,7 @@ func newTUI(c *client.Client) tuiModel {
 	f.CharLimit = 80
 	cmd := textinput.New()
 	cmd.Prompt = ""
-	cmd.Placeholder = "boxes, urls, images, sizes, backups, create, help, q"
+	cmd.Placeholder = "boxes, urls, images, sizes, backups, repos, create, help, q"
 	cmd.CharLimit = 80
 	sp := bspinner.New(bspinner.WithSpinner(bspinner.Spinner{Frames: spinnerFrames, FPS: 80 * time.Millisecond}))
 	sp.Style = k9s.logo
@@ -218,6 +229,9 @@ func (m *tuiModel) pop() {
 
 // list fetches one resource.
 func (m *tuiModel) list(resource string) tea.Cmd {
+	if resource == "repos" {
+		return m.listRepos(false)
+	}
 	if m.loading[resource] {
 		return nil
 	}
@@ -243,10 +257,11 @@ func (m *tuiModel) list(resource string) tea.Cmd {
 }
 
 // refresh lists the boxes (the header and most pages need them) and the
-// top page's resource when it's another.
+// top page's resource when it's another -- unless that view is listed
+// on demand (:repos asks GitHub), which R does on its own.
 func (m *tuiModel) refresh() tea.Cmd {
 	cmds := []tea.Cmd{m.list("boxes")}
-	if t := m.top(); t.kind == pageTable && t.view.resource != "boxes" {
+	if t := m.top(); t.kind == pageTable && t.view.resource != "boxes" && !t.view.onDemand {
 		cmds = append(cmds, m.list(t.view.resource))
 	}
 	cmds = append(cmds, m.spinIfBusy())
@@ -330,6 +345,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sizes = msg.sizes
 		case "backups":
 			m.backups = msg.backups
+		case "repos":
+			m.repos = msg.repos
+			m.reposAt = time.Now()
 		}
 		// A describe/json page follows its box.
 		for i := range m.pages {
@@ -375,6 +393,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.fail("ssh %s: %s", msg.name, reason), m.refresh())
 		}
 		return m, m.refresh()
+
+	case tuiClaudeDoneMsg:
+		if msg.err != nil {
+			return m, tea.Batch(m.fail("claude on %s: %s", msg.repo, claudeFailure(msg.stderr, msg.err)), m.refresh())
+		}
+		return m, tea.Batch(m.say("claude on %s ended", msg.repo), m.refresh())
 
 	case tuiTextMsg:
 		delete(m.pending, "logs:"+msg.box)

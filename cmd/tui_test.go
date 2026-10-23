@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -506,5 +509,153 @@ func TestTUICreateForm(t *testing.T) {
 	m = next.(tuiModel)
 	if m.create == nil || m.create.sizeName() != "large" {
 		t.Errorf("c from sizes: form=%v", m.create)
+	}
+}
+
+func TestTUIRepos(t *testing.T) {
+	tuiFlashFor = time.Millisecond
+	cache := filepath.Join(t.TempDir(), "repos.json")
+	repoCachePath = func() (string, error) { return cache, nil }
+	now := time.Now()
+	fetched := 0
+	listGitHubRepos = func(context.Context) ([]ghRepo, error) {
+		fetched++
+		return []ghRepo{
+			{FullName: "cdalar/boxctl", Description: "the CLI", Language: "Go", PushedAt: now.Add(-time.Hour)},
+			{FullName: "acme/web", Private: true, Fork: true, Language: "TypeScript", PushedAt: now.Add(-48 * time.Hour)},
+			{FullName: "acme/old", Archived: true, PushedAt: now.Add(-24 * 30 * time.Hour)},
+		}, nil
+	}
+
+	c, _ := fakeBoxServer(t, nil)
+	m := newTUI(c)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m = next.(tuiModel)
+	// :repos with no cache asks GitHub.
+	m, cmd := press(t, m, ":")
+	for _, r := range "repos" {
+		m, _ = press(t, m, string(r))
+	}
+	m, cmd = press(t, m, "enter")
+	if m.top().view != reposView || cmd == nil || !m.loading["repos"] {
+		t.Fatalf("view=%v loading=%v cmd=%v", m.top().view, m.loading, cmd != nil)
+	}
+	var listed *tuiListMsg
+	for _, msg := range runCmd(cmd) {
+		if lm, ok := msg.(tuiListMsg); ok && lm.resource == "repos" {
+			listed = &lm
+		}
+	}
+	if listed == nil || listed.err != nil || fetched != 1 {
+		t.Fatalf("listing: %#v fetched=%d", listed, fetched)
+	}
+	next, _ = m.Update(*listed)
+	m = next.(tuiModel)
+	if got, want := keys(m.rows()), "cdalar/boxctl acme/web acme/old"; got != want {
+		t.Fatalf("rows = %q, want %q", got, want)
+	}
+	view := m.View()
+	for _, want := range []string{"GitHub Repos[3]", "<repos>", "private fork", "archived public", "TypeScript", "the CLI", "<enter>", "claude on a new box"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view lacks %q:\n%s", want, view)
+		}
+	}
+	// shift-p by PUSHED keeps newest first; the other way round reverses it.
+	m, _ = press(t, m, "P")
+	if got, want := keys(m.rows()), "cdalar/boxctl acme/web acme/old"; got != want {
+		t.Errorf("by pushed = %q, want %q", got, want)
+	}
+	m, _ = press(t, m, "P")
+	if got, want := keys(m.rows()), "acme/old acme/web cdalar/boxctl"; got != want {
+		t.Errorf("by pushed desc = %q, want %q", got, want)
+	}
+	m, _ = press(t, m, "P")
+	m.filter.SetValue("acme")
+	if got, want := keys(m.rows()), "acme/web acme/old"; got != want {
+		t.Errorf("filtered = %q, want %q", got, want)
+	}
+	m.filter.SetValue("")
+	m, _ = press(t, m, "g")
+
+	// d describes the row; the page names the command enter runs.
+	m, _ = press(t, m, "d")
+	if m.top().kind != pageText || !strings.Contains(m.View(), "boxctl claude --repo cdalar/boxctl") {
+		t.Errorf("describe page:\n%s", m.View())
+	}
+	m, _ = press(t, m, "esc")
+	// enter hands the terminal to boxctl claude --repo.
+	m, cmd = press(t, m, "enter")
+	if cmd == nil || m.flash != "" {
+		t.Errorf("enter: cmd=%v flash=%q", cmd != nil, m.flash)
+	}
+
+	// The list was cached: a fresh model shows it at once and doesn't
+	// ask GitHub again...
+	m2 := newTUI(c)
+	next, _ = m2.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m2 = next.(tuiModel)
+	cmd = m2.openView(reposView)
+	if !m2.loaded["repos"] || m2.loading["repos"] || len(m2.repos) != 3 || len(runCmd(cmd)) > 0 && fetched != 1 {
+		t.Fatalf("from the cache: loaded=%v loading=%v repos=%d fetched=%d", m2.loaded, m2.loading, len(m2.repos), fetched)
+	}
+	// ...R does...
+	m2, cmd = press(t, m2, "R")
+	runCmd(cmd)
+	if fetched != 2 {
+		t.Errorf("R fetched %d times, want 2", fetched-1)
+	}
+	// ...and so does opening it once the cache is an hour old, with the
+	// cache shown meanwhile.
+	stale, _ := json.Marshal(repoCache{FetchedAt: now.Add(-2 * time.Hour), Repos: []ghRepo{{FullName: "cdalar/stale"}}})
+	_ = os.WriteFile(cache, stale, 0o600)
+	m3 := newTUI(c)
+	cmd = m3.openView(reposView)
+	if keys(m3.rows()) != "cdalar/stale" || !m3.loading["repos"] {
+		t.Errorf("stale cache: rows=%q loading=%v", keys(m3.rows()), m3.loading)
+	}
+	runCmd(cmd)
+	if fetched != 3 {
+		t.Errorf("stale cache fetched %d times, want 3", fetched)
+	}
+	if c := readRepoCache(); c == nil || len(c.Repos) != 3 || time.Since(c.FetchedAt) > time.Minute {
+		t.Errorf("cache after the fetch: %#v", c)
+	}
+}
+
+func TestTUIClaudeDone(t *testing.T) {
+	m := newTUI(nil)
+	next, _ := m.Update(tuiClaudeDoneMsg{repo: "cdalar/boxctl", err: errors.New("exit status 1"),
+		stderr: "Cloning cdalar/boxctl on boxctl-rapid-stone-ab12...\nError: cloning cdalar/boxctl on boxctl-rapid-stone-ab12: exit status 128\n  fatal: repository not found\n"})
+	m = next.(tuiModel)
+	if !m.flashErr || m.flash != "claude on cdalar/boxctl: cloning cdalar/boxctl on boxctl-rapid-stone-ab12: exit status 128" {
+		t.Errorf("flash = %q", m.flash)
+	}
+	next, _ = m.Update(tuiClaudeDoneMsg{repo: "cdalar/boxctl", err: errors.New("signal: killed"), stderr: "ssh: connection closed\n"})
+	m = next.(tuiModel)
+	if m.flash != "claude on cdalar/boxctl: ssh: connection closed" {
+		t.Errorf("flash = %q", m.flash)
+	}
+	next, _ = m.Update(tuiClaudeDoneMsg{repo: "cdalar/boxctl"})
+	m = next.(tuiModel)
+	if m.flashErr || m.flash != "claude on cdalar/boxctl ended" {
+		t.Errorf("flash = %q", m.flash)
+	}
+}
+
+func TestParseRepoPage(t *testing.T) {
+	repos, err := parseRepoPage([]byte(`[{"full_name":"cdalar/boxctl","description":null,"private":false,"fork":false,"archived":false,
+		"language":"Go","default_branch":"main","pushed_at":"2026-10-23T14:17:26Z","html_url":"https://github.com/cdalar/boxctl","permissions":{"push":true}},
+		{"full_name":"acme/empty","pushed_at":null,"permissions":{"push":false}}]`))
+	if err != nil || len(repos) != 2 {
+		t.Fatalf("parse: %v, %d repos", err, len(repos))
+	}
+	if r := repos[0]; r.FullName != "cdalar/boxctl" || r.Language != "Go" || !r.Permissions.Push || r.PushedAt.Year() != 2026 {
+		t.Errorf("repo = %#v", r)
+	}
+	if r := repos[1]; !r.PushedAt.IsZero() || r.Permissions.Push {
+		t.Errorf("empty repo = %#v", r)
+	}
+	if _, err := parseRepoPage([]byte(`{"message":"Bad credentials"}`)); err == nil {
+		t.Error("an error page parsed")
 	}
 }

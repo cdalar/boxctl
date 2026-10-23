@@ -103,13 +103,23 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   by label on the server, and `-o wide` adds IP, PROVIDER, READY and
   BRANCH. `printBoxes` is the listing itself, shared with `claude ls`.
 - `cmd/tui.go`, `tuiviews.go`, `tuiactions.go`, `tuirender.go`,
-  `tuicreate.go` — `tui`: the boxes the way k9s shows a cluster (Bubble
+  `tuicreate.go`, `tuirepos.go` — `tui`: the boxes the way k9s shows a cluster (Bubble
   Tea, with Lip Gloss and Bubbles' textinput and spinner -- the one
   place those are used). `tuiviews.go` defines the resource views, each
   a table over one listing (`:boxes`, `:urls` from the boxes' `ingress`,
   `:images`, `:sizes`, `:backups`) with its columns, hotkeys and
   shift+letter sort keys; rows are recomputed from the model's data at
-  every render, so a refresh never patches a table. `tui.go` is the
+  every render, so a refresh never patches a table. `tuirepos.go` is
+  `:repos`, the one view that isn't a boxctl-vms listing: the GitHub
+  repositories gh's account can reach (`gh api user/repos`, newest
+  push first, up to 5 pages of 100), enter running `boxctl claude
+  --repo owner/name` as a child process the way `s` runs `boxctl ssh`
+  (its stderr teed into a tail buffer so the flash can say why it
+  failed). The list is cached in `~/.boxctl/repos.json`: opening the
+  view shows the cache at once and asks GitHub in the background only
+  when it's over an hour old (`repoCacheMaxAge`), R always asks, and
+  the view is `onDemand` so the 5s tick never does (`listRepos`, not
+  `list`, is where that lives). `tui.go` is the
   model: a navigation stack of pages (a table, or a text page -- describe,
   json, logs, help), the listings (boxes every 5s plus the top view's
   resource), flashes. `tuiactions.go` is the keys: the `:` prompt

@@ -101,7 +101,7 @@ func (m tuiModel) runCommand(line string) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	}
-	return m, m.fail("unknown command %q (try :boxes, :urls, :images, :sizes, :backups, :help, :q)", words[0])
+	return m, m.fail("unknown command %q (try :boxes, :urls, :images, :sizes, :backups, :repos, :help, :q)", words[0])
 }
 
 // --- the / filter ---------------------------------------------------------
@@ -211,6 +211,9 @@ func (m tuiModel) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "R", "ctrl+r", "f5":
+		if t.view == reposView {
+			return m, tea.Batch(m.refresh(), m.listRepos(true), m.spinIfBusy())
+		}
 		return m, m.refresh()
 	case "0", "1", "2":
 		if t.view == boxesView {
@@ -229,7 +232,15 @@ func (m tuiModel) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m.openCreate("", "")
-	case "enter", "d":
+	case "enter":
+		if t.view == reposView {
+			if r := m.currentRow(); r != nil {
+				return m.claudeRepo(r.key)
+			}
+			return m, nil
+		}
+		return m.describe()
+	case "d":
 		return m.describe()
 	case "y":
 		return m.showJSON()
@@ -348,7 +359,7 @@ func (m *tuiModel) pushHelp() {
 	}
 	lines := []string{"General", ""}
 	general := [][2]string{
-		{":<view>", "switch view: boxes, urls, images, sizes, backups (`:boxes web` filters too)"},
+		{":<view>", "switch view: boxes, urls, images, sizes, backups, repos (`:boxes web` filters too)"},
 		{":create", "create a box"}, {":ssh <box>", "open a terminal on a box"},
 		{":help", "this page"}, {":q", "quit (ctrl-c too)"},
 		{"/text", "filter the rows; esc clears"},
@@ -377,6 +388,13 @@ func (m *tuiModel) pushHelp() {
 			"  r asks for a name (the backed-up box's by default) and restores the backup as a new box,",
 			"  paused at its own size (`boxctl restore`); a size after the name boots it fresh at that size.")
 	}
+	if v == reposView {
+		lines = append(lines, "", "GitHub Repos",
+			"  The repositories gh's account can reach (gh api user/repos), newest push first;",
+			"  enter runs `boxctl claude --repo owner/name`: a fresh box with the repo cloned on a new branch,",
+			"  Claude attached, and the box deleted when Claude quits once its work is pushed.",
+			"  The list is cached (~/.boxctl/repos.json) and asked of GitHub again when an hour old, or with R.")
+	}
 	if v == boxesView {
 		lines = append(lines, "", "Boxes",
 			"  s shell runs `boxctl ssh <box>`; l logs is `boxctl claude logs` (a --goal run's log);",
@@ -391,6 +409,14 @@ func (m *tuiModel) pushHelp() {
 // describe pushes the page's box or backup as a describe page.
 func (m tuiModel) describe() (tea.Model, tea.Cmd) {
 	t := m.top()
+	if t.kind == pageTable && t.view == reposView {
+		if r := m.currentRow(); r != nil {
+			if repo := m.repo(r.key); repo != nil {
+				m.push(page{kind: pageText, title: repo.FullName, lines: describeRepo(*repo)})
+			}
+		}
+		return m, nil
+	}
 	if t.kind == pageTable && t.view == backupsView {
 		r := m.currentRow()
 		if r == nil {
@@ -425,6 +451,14 @@ func (m tuiModel) describe() (tea.Model, tea.Cmd) {
 // showJSON pushes the page's box as the API returns it.
 func (m tuiModel) showJSON() (tea.Model, tea.Cmd) {
 	t := m.top()
+	if t.kind == pageTable && t.view == reposView {
+		if r := m.currentRow(); r != nil {
+			if repo := m.repo(r.key); repo != nil {
+				m.push(page{kind: pageText, title: repo.FullName + ".json", lines: jsonLines(*repo)})
+			}
+		}
+		return m, nil
+	}
 	if t.kind == pageTable && t.view == backupsView {
 		if r := m.currentRow(); r != nil {
 			for _, b := range m.backups {

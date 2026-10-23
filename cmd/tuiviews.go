@@ -12,7 +12,8 @@ import (
 
 // The tui's resource views, k9s-style: each is a table over one of the
 // listings the CLI has (`:boxes`, `:images`, `:sizes`, `:backups`,
-// `:urls`), with its own columns, hotkeys and sort keys. A view's rows
+// `:urls`) or gh has (`:repos`, tuirepos.go), with its own columns,
+// hotkeys and sort keys. A view's rows
 // are computed from the model's data every render, so a refresh or a
 // filter never has to patch a table.
 
@@ -50,7 +51,8 @@ type tableView struct {
 	name     string   // the `:name` that opens it, and its crumb
 	aliases  []string // other `:names`
 	title    string   // the table's title: "Boxes"
-	resource string   // the listing it needs: boxes, images, sizes, backups
+	resource string   // the listing it needs: boxes, images, sizes, backups, repos
+	onDemand bool     // listed when opened and on R only, not on every tick (it's slow, or not ours)
 	columns  []column
 	rows     func(m *tuiModel) []tableRow
 	hotkeys  []hotkey // the view's own, before the common ones
@@ -63,7 +65,7 @@ var commonHotkeys = []hotkey{
 	{":", "command"}, {"/", "filter"}, {"?", "help"}, {"esc", "back"}, {"ctrl-c", "quit"},
 }
 
-var tuiViews = []*tableView{boxesView, urlsView, imagesView, sizesView, backupsView}
+var tuiViews = []*tableView{boxesView, urlsView, imagesView, sizesView, backupsView, reposView}
 
 // findView is the view `:name` means, nil for none.
 func findView(name string) *tableView {

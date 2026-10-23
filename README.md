@@ -31,7 +31,7 @@ boxctl rm my-box                            # done
 |---|---|
 | `login` / `logout` | Save or forget your personal token |
 | `create`, `ls`, `rm`, `pause`, `resume`, `keep` | Box lifecycle (`rm`/`pause`/`resume` also take `all`) |
-| `tui` | All of the above in a k9s-style full-screen view: `:boxes`, `:urls`, `:images`, `:sizes`, `:backups`; `/` to filter |
+| `tui` | All of the above in a k9s-style full-screen view: `:boxes`, `:urls`, `:images`, `:sizes`, `:backups`, `:repos` (your GitHub repos, newest push first; enter starts `claude --repo` on one); `/` to filter |
 | `images`, `sizes` | What you can boot, and at what size |
 | `ssh`, `ssh-proxy` | Shell or one-off command; real `ssh`/`scp`/`rsync` through a proxy |
 | `port-forward`, `expose`, `unexpose` | Reach a box port locally, or publish it on the internet |
@@ -106,7 +106,7 @@ boxctl ls                         # running boxes
 boxctl ls -a                      # all of them, paused and stopped too
 boxctl ls -p                      # this directory's project's boxes: its own, its runs and goals
 boxctl ls -o json                 # for scripts; images and sizes take -o json too
-boxctl tui                        # k9s-style: :boxes/:urls/:images/:sizes/:backups, / filter, s shell, d describe, ctrl-d delete, ? keys
+boxctl tui                        # k9s-style: :boxes/:urls/:images/:sizes/:backups/:repos, / filter, s shell, d describe, ctrl-d delete, ? keys
 # on a terminal, ls then fills in each PR's state (open, merged, closed) via `gh pr view` without holding up the list
 boxctl images
 boxctl create my-box
