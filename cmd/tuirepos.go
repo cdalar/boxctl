@@ -23,7 +23,10 @@ import (
 // owner/name` as a child process, the way `s` runs `boxctl ssh`: a
 // fresh box with the repository cloned on a new branch, Claude
 // attached, and the box deleted when Claude quits once its work is on
-// GitHub. The list is cached in ~/.boxctl/repos.json, since it hardly
+// GitHub. `g` asks for a goal and runs `boxctl claude --repo owner/name
+// --goal "..."` the same way: that starts Claude unattended on a new
+// box and returns, so the flash names the box, whose RUN column in
+// :boxes then follows the run. The list is cached in ~/.boxctl/repos.json, since it hardly
 // changes and a page of 100 repositories takes gh a few seconds:
 // opening the view shows the cache at once, asks GitHub again in the
 // background only when the cache is older than repoCacheMaxAge, and R
@@ -194,7 +197,7 @@ var reposView = &tableView{
 	columns:  []column{{"REPO", 'R'}, {"PUSHED", 'P'}, {"LANGUAGE", 'L'}, {"VISIBILITY", 'V'}, {"DESCRIPTION", 'D'}},
 	stateCol: 3,
 	empty:    "No repositories: gh lists the ones its account can reach (gh auth login).",
-	hotkeys:  []hotkey{{"enter", "claude on a new box"}, {"d", "describe"}, {"y", "json"}, {"R", "refresh"}},
+	hotkeys:  []hotkey{{"enter", "claude on a new box"}, {"g", "goal run"}, {"d", "describe"}, {"y", "json"}, {"R", "refresh"}},
 	rows: func(m *tuiModel) []tableRow {
 		var rows []tableRow
 		for _, r := range m.repos {
@@ -254,7 +257,8 @@ func describeRepo(r ghRepo) []string {
 	if !r.PushedAt.IsZero() {
 		lines = append(lines, kv("Pushed", stamp(r.PushedAt)+" ("+age(r.PushedAt)+" ago)"))
 	}
-	lines = append(lines, "", "enter starts Claude on a fresh box with it cloned (`"+strings.Join(append([]string{"boxctl"}, claudeRepoArgs(r.FullName)...), " ")+"`).")
+	lines = append(lines, "", "enter starts Claude on a fresh box with it cloned (`"+strings.Join(append([]string{"boxctl"}, claudeRepoArgs(r.FullName, "")...), " ")+"`);",
+		"g asks for a goal and runs it unattended there (--goal), ending in a pull request.")
 	if !r.Permissions.Push {
 		lines = append(lines, "Without push access Claude can't push its branch or open a pull request there.")
 	}
@@ -271,10 +275,13 @@ func (m *tuiModel) repo(name string) *ghRepo {
 	return nil
 }
 
-// claudeRepoArgs is the command line `enter` runs for repo, less the
-// binary.
-func claudeRepoArgs(repo string) []string {
+// claudeRepoArgs is the command line `enter` (or, with a goal, `g`)
+// runs for repo, less the binary.
+func claudeRepoArgs(repo, goal string) []string {
 	args := []string{"claude", "--repo", repo}
+	if goal != "" {
+		args = append(args, "--goal", goal)
+	}
 	if apiURLFlag != "" {
 		args = append(args, "--api-url", apiURLFlag)
 	}
@@ -285,18 +292,52 @@ func claudeRepoArgs(repo string) []string {
 // child process, as ssh is: its output -- the progress lines, then
 // Claude itself over ssh -- goes to the terminal the alternate screen
 // gives back). Its stderr is also kept, the end of it, to say why it
-// failed, since the tui's redraw hides what it printed.
-func (m tuiModel) claudeRepo(repo string) (tea.Model, tea.Cmd) {
+// failed, since the tui's redraw hides what it printed. With a goal
+// the run starts Claude and returns, and nothing needs the terminal,
+// so its stdout is kept too: the "Box:" line it prints names the box.
+func (m tuiModel) claudeRepo(repo, goal string) (tea.Model, tea.Cmd) {
 	exe, err := os.Executable()
 	if err != nil {
 		return m, m.fail("finding boxctl: %v", err)
 	}
-	cmd := exec.Command(exe, claudeRepoArgs(repo)...)
-	tail := &tailBuffer{max: 4096}
-	cmd.Stderr = io.MultiWriter(os.Stderr, tail)
+	cmd := exec.Command(exe, claudeRepoArgs(repo, goal)...)
+	errTail, outTail := &tailBuffer{max: 4096}, &tailBuffer{max: 4096}
+	cmd.Stderr = io.MultiWriter(os.Stderr, errTail)
+	if goal != "" {
+		cmd.Stdout = io.MultiWriter(os.Stdout, outTail)
+	}
 	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return tuiClaudeDoneMsg{repo: repo, err: err, stderr: tail.String()}
+		return tuiClaudeDoneMsg{repo: repo, goal: goal != "", err: err, stderr: errTail.String(), stdout: outTail.String()}
 	})
+}
+
+// askGoal asks what Claude should do on repo, then starts it unattended
+// there (`boxctl claude --repo <repo> --goal "..."`).
+func (m tuiModel) askGoal(repo string) (tea.Model, tea.Cmd) {
+	cmd := m.prompt("Goal for Claude on "+repo, []string{
+		"Claude works on it unattended on a new box (boxctl claude --goal) and opens a pull request.",
+		"boxctl ls, :boxes' RUN column and l on the box follow it.",
+	}, "what to do, e.g. bump Go and fix what breaks", func(m tuiModel, value string) (tea.Model, tea.Cmd) {
+		if value == "" {
+			return m, m.fail("a goal is needed")
+		}
+		return m.claudeRepo(repo, value)
+	})
+	if m.dialog != nil && m.dialog.input != nil {
+		m.dialog.input.CharLimit = 0 // a goal is a sentence or two
+	}
+	return m, cmd
+}
+
+// goalBoxName is the box a goal run printed ("Box:    name"), "" when
+// it printed none.
+func goalBoxName(stdout string) string {
+	for _, l := range strings.Split(stdout, "\n") {
+		if name, ok := strings.CutPrefix(strings.TrimSpace(l), "Box:"); ok {
+			return strings.TrimSpace(name)
+		}
+	}
+	return ""
 }
 
 // tailBuffer keeps the last max bytes written to it.

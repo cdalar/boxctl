@@ -31,7 +31,7 @@ boxctl rm my-box                            # done
 |---|---|
 | `login` / `logout` | Save or forget your personal token |
 | `create`, `ls`, `rm`, `pause`, `resume`, `keep` | Box lifecycle (`rm`/`pause`/`resume` also take `all`) |
-| `tui` | All of the above in a k9s-style full-screen view: `:boxes`, `:urls`, `:images`, `:sizes`, `:backups`, `:repos` (your GitHub repos, newest push first; enter starts `claude --repo` on one); `/` to filter |
+| `tui` | All of the above in a k9s-style full-screen view: `:boxes`, `:urls`, `:images`, `:sizes`, `:backups`, `:repos` (your GitHub repos, newest push first; enter starts `claude --repo` on one, `g` a `--goal` run); `/` to filter |
 | `images`, `sizes` | What you can boot, and at what size |
 | `ssh`, `ssh-proxy` | Shell or one-off command; real `ssh`/`scp`/`rsync` through a proxy |
 | `port-forward`, `expose`, `unexpose` | Reach a box port locally, or publish it on the internet |

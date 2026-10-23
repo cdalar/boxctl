@@ -147,6 +147,8 @@ func press(t *testing.T, m tuiModel, key string) (tuiModel, tea.Cmd) {
 		msg = tea.KeyMsg{Type: tea.KeyEsc}
 	case "ctrl+d":
 		msg = tea.KeyMsg{Type: tea.KeyCtrlD}
+	case "home":
+		msg = tea.KeyMsg{Type: tea.KeyHome}
 	default:
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}
@@ -575,7 +577,7 @@ func TestTUIRepos(t *testing.T) {
 		t.Errorf("filtered = %q, want %q", got, want)
 	}
 	m.filter.SetValue("")
-	m, _ = press(t, m, "g")
+	m, _ = press(t, m, "home") // g asks for a goal in this view
 
 	// d describes the row; the page names the command enter runs.
 	m, _ = press(t, m, "d")
@@ -587,6 +589,25 @@ func TestTUIRepos(t *testing.T) {
 	m, cmd = press(t, m, "enter")
 	if cmd == nil || m.flash != "" {
 		t.Errorf("enter: cmd=%v flash=%q", cmd != nil, m.flash)
+	}
+	// g asks for a goal; an empty one is refused, a typed one runs.
+	m, _ = press(t, m, "g")
+	if m.dialog == nil || m.dialog.input == nil || !strings.Contains(m.View(), "Goal for Claude on cdalar/boxctl") {
+		t.Fatalf("g didn't ask for a goal:\n%s", m.View())
+	}
+	m, cmd = press(t, m, "enter")
+	if m.dialog != nil || cmd == nil || !strings.Contains(m.flash, "a goal is needed") {
+		t.Errorf("empty goal: dialog=%v flash=%q", m.dialog != nil, m.flash)
+	}
+	m.flash, m.flashErr = "", false
+	m, _ = press(t, m, "g")
+	m.dialog.input.SetValue("bump Go")
+	m, cmd = press(t, m, "enter")
+	if m.dialog != nil || cmd == nil || m.flashErr {
+		t.Errorf("goal: dialog=%v cmd=%v flash=%q", m.dialog != nil, cmd != nil, m.flash)
+	}
+	if got := strings.Join(claudeRepoArgs("cdalar/boxctl", "bump Go"), " "); got != "claude --repo cdalar/boxctl --goal bump Go" {
+		t.Errorf("args = %q", got)
 	}
 
 	// The list was cached: a fresh model shows it at once and doesn't
@@ -638,6 +659,18 @@ func TestTUIClaudeDone(t *testing.T) {
 	next, _ = m.Update(tuiClaudeDoneMsg{repo: "cdalar/boxctl"})
 	m = next.(tuiModel)
 	if m.flashErr || m.flash != "claude on cdalar/boxctl ended" {
+		t.Errorf("flash = %q", m.flash)
+	}
+	// A goal run names the box it started.
+	next, _ = m.Update(tuiClaudeDoneMsg{repo: "cdalar/boxctl", goal: true,
+		stdout: "Box:    goal-boxctl-bump-go-ab12\nBranch: boxctl/bump-go-ab12\nLogs:   boxctl claude logs goal-boxctl-bump-go-ab12 [-f]\n"})
+	m = next.(tuiModel)
+	if m.flashErr || m.flash != "goal on cdalar/boxctl started on goal-boxctl-bump-go-ab12 (l in :boxes for its log)" {
+		t.Errorf("flash = %q", m.flash)
+	}
+	next, _ = m.Update(tuiClaudeDoneMsg{repo: "cdalar/boxctl", goal: true})
+	m = next.(tuiModel)
+	if m.flash != "goal on cdalar/boxctl started" {
 		t.Errorf("flash = %q", m.flash)
 	}
 }

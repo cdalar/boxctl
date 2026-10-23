@@ -180,7 +180,7 @@ func (m tuiModel) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "pgdown", "ctrl+f":
 		m.move(m.tableHeight())
 		return m, nil
-	case "home", "g":
+	case "home":
 		m.moveTo(false)
 		return m, nil
 	case "end", "G":
@@ -235,11 +235,20 @@ func (m tuiModel) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if t.view == reposView {
 			if r := m.currentRow(); r != nil {
-				return m.claudeRepo(r.key)
+				return m.claudeRepo(r.key, "")
 			}
 			return m, nil
 		}
 		return m.describe()
+	case "g":
+		if t.view == reposView {
+			if r := m.currentRow(); r != nil {
+				return m.askGoal(r.key)
+			}
+			return m, nil
+		}
+		m.moveTo(false)
+		return m, nil
 	case "d":
 		return m.describe()
 	case "y":
@@ -393,6 +402,8 @@ func (m *tuiModel) pushHelp() {
 			"  The repositories gh's account can reach (gh api user/repos), newest push first;",
 			"  enter runs `boxctl claude --repo owner/name`: a fresh box with the repo cloned on a new branch,",
 			"  Claude attached, and the box deleted when Claude quits once its work is pushed.",
+			"  g asks for a goal and runs `boxctl claude --repo owner/name --goal ...`: Claude works",
+			"  unattended on a new box and opens a pull request; :boxes' RUN column follows it (home is top here).",
 			"  The list is cached (~/.boxctl/repos.json) and asked of GitHub again when an hour old, or with R.")
 	}
 	if v == boxesView {

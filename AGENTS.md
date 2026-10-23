@@ -115,7 +115,10 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   push first, up to 5 pages of 100), enter running `boxctl claude
   --repo owner/name` as a child process the way `s` runs `boxctl ssh`
   (its stderr teed into a tail buffer so the flash can say why it
-  failed). The list is cached in `~/.boxctl/repos.json`: opening the
+  failed), and `g` asking for a goal and running the same with
+  `--goal` -- that returns once Claude is started, so its stdout is
+  teed too and `goalBoxName` reads the box off the `Box:` line for the
+  flash. In that view `g` isn't "top" (home still is). The list is cached in `~/.boxctl/repos.json`: opening the
   view shows the cache at once and asks GitHub in the background only
   when it's over an hour old (`repoCacheMaxAge`), R always asks, and
   the view is `onDemand` so the 5s tick never does (`listRepos`, not
