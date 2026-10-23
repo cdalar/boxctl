@@ -50,7 +50,7 @@ every target; it needs `goreleaser` on PATH.
 Tests are few -- this is a thin, mostly-I/O client -- and cover the
 pure parts (`go test ./...`: `boxctl claude`'s file selection, tar
 stream, settings filtering and shell quoting, reconnecting after a dropped connection (a fake
-`ssh` on PATH), `boxctl kilo`'s
+`ssh` on PATH), the herdr start script (a fake `herdr` on PATH), `boxctl kilo`'s
 credential environment, `internal/client`'s messages for boxctl-vms's
 409 `box_limit` / 503 `capacity` refusals). Otherwise rely on `go
 vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
@@ -220,7 +220,7 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   --exclude-standard` plus `.git`, so git's own ignore rules -- never
   translate them), the user-level Claude config (settings.json minus
   keys that point at this machine), the Claude Code install, and `tmux
-  new-session -A` running `claude`. It never syncs: once the project is
+  new-session -A` (or herdr, below) running `claude`. It never syncs: once the project is
   on the box, the box's copy is the one Claude works on.
   `cmd/claudegithub.go` is its GitHub side: `--github store` (the
   default) logs a token into the box's gh (`gh auth login --with-token`,
@@ -255,16 +255,39 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   it only matches because the project has the same absolute path on the
   box. The transcript is found before any box is touched.
   `cmd/claudesession.go`: a `taskSession` is the main checkout or a
-  `--task` worktree (`<dir>@<task>`, tmux `claude-<task>`). Claude's
+  `--task` worktree (`<dir>@<task>`, session `claude-<task>`). Claude's
   credentials (`cmd/claudeauth.go`: a `claude setup-token` token in the
-  Keychain) go to the box over ssh stdin into `/run/boxctl/<tmux>.env`
+  Keychain) go to the box over ssh stdin into `/run/boxctl/<session>.env`
   (tmpfs), which the session's command sources and deletes -- never
-  argv, never disk. Always `tmux ... -t =<name>`: a bare `-t claude`
-  prefix-matches `claude-auth`.
+  argv, never disk.
+  `cmd/mux.go` is what keeps that session alive on the box between
+  attaches: the `multiplexer` interface (start-or-attach, detached
+  start, running check, listing for `claude ls`, install), `tmuxMux`
+  (the default) and `herdrMux` (`--mux herdr`, `BOXCTL_MUX`), read from
+  the `mux` global that `boxAgent.runs` sets. tmux: one session per
+  `taskSession`, always `tmux ... -t =<name>` -- a bare `-t claude`
+  prefix-matches `claude-auth`. herdr (verified against 0.9.5, which
+  `go test` drives with a fake `herdr` on PATH): one headless server per
+  box (its default session), one workspace per `taskSession` labeled
+  with its name, the command typed into the workspace's shell from a
+  file in `/run/boxctl` (a typed line is capped by the tty); "running" is
+  "a workspace with that label exists", since a pane's exit closes its
+  workspace; `herdr status` exits 0 without a server, so `workspace
+  list` is the probe. A server started afresh restores its last layout
+  as plain shells, so the start closes those before making the
+  session's workspace. An attached client doesn't end when its workspace
+  does -- it opens a plain shell one -- so an ephemeral run's pane runs
+  `herdr server stop` after the agent, which is what makes the attach
+  return. `mux.start` records the choice in `/root/.boxctl/mux`, which
+  `projectCheckScript` reports with the project status, and `useBoxMux`
+  takes it unless `--mux` was given (then a session running in the other
+  one is refused). `runRepo` with an existing `--box` doesn't read it:
+  the flag or its default decides there. Adding a multiplexer is another
+  `multiplexer` in `mux.go` plus `muxNamed`.
   A box that outlives the run (`--keep`/`--box`/`--detach`/`--task`,
   i.e. `!claudeTarget.ephemeral`) sets `taskSession.shellAfter`: the
   session's command runs the agent without `exec` and ends in `exec
-  bash`, so quitting the agent (Ctrl+D twice) leaves a shell in the tmux
+  bash`, so quitting the agent (Ctrl+D twice) leaves a shell in the
   session to run `claude --continue` in, not an ended session. Ephemeral
   runs keep `exec`: `claudeTarget.end` fetches and deletes on the session
   ending.
@@ -279,8 +302,8 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   credentials once you've detached). That's why `cloneScript` maps every
   branch in `remote.origin.fetch` -- a `--single-branch` clone's push of
   a new branch leaves no remote-tracking ref otherwise. A PR is not
-  required: a pushed branch is enough. With `--goal`, a detached tmux
-  session runs a generated `run.sh` (`claude -p`, stream-json, in
+  required: a pushed branch is enough. With `--goal`, a detached
+  session (`mux.start`) runs a generated `run.sh` (`claude -p`, stream-json, in
   `/root/.boxctl/goals/<id>/`, `latest` symlinked) that records
   `status.json` (running/done/failed, pr_url) -- on the box, because
   boxctl-vms has no per-box metadata API; move it there if one appears.
@@ -341,7 +364,7 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   built-in too, unless `~/.boxctl/harness/pr-only` exists -- yours wins. `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
 - `cmd/agent.go`, `cmd/kilo.go` — `kilo`: the same for the Kilo CLI.
   A `boxAgent` is the little that differs between the two (name -- also
-  the box prefix and tmux session -- binary, install dir, installer,
+  the box prefix and the session's name -- binary, install dir, installer,
   how a first prompt is passed); everything in `claude*.go` that isn't
   Claude's own (config, token, handoff) reads the running command's
   agent from the `agent` global, which each command's `RunE` sets through

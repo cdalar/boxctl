@@ -14,14 +14,15 @@ import (
 // A Claude session on a box: the project's main checkout, or a task --
 // a git worktree of its own beside it (`--task auth` -> <dir>@auth, on
 // branch auth), so several Claudes can work on one project at once
-// without touching each other's files. Each runs in its own tmux session.
+// without touching each other's files. Each runs in a session of its own
+// in the box's multiplexer (mux: tmux, or herdr).
 
 var taskNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,29}$`)
 
 type taskSession struct {
 	task string // "" for the main checkout
 	dir  string // where Claude runs on the box
-	tmux string // its tmux session: the agent's name, -<task> for a task
+	name string // its session in the multiplexer: the agent's name, -<task> for a task
 	// shellAfter: when the agent exits, leave a shell in the session
 	// instead of ending it, so it can be started again (--continue).
 	shellAfter bool
@@ -29,12 +30,12 @@ type taskSession struct {
 
 func newTaskSession(project, task string) taskSession {
 	if task == "" {
-		return taskSession{dir: project, tmux: agent.name}
+		return taskSession{dir: project, name: agent.name}
 	}
 	return taskSession{
 		task: task,
 		dir:  taskDir(project, task),
-		tmux: agent.name + "-" + task,
+		name: agent.name + "-" + task,
 	}
 }
 
@@ -54,10 +55,11 @@ func (s taskSession) attachHint(box string) string {
 // envFile is where this session's secrets wait for Claude to start: in
 // /run, a tmpfs -- memory, never the box's disk -- read and deleted by the
 // session's command the moment it runs.
-func (s taskSession) envFile() string { return "/run/boxctl/" + s.tmux + ".env" }
+func (s taskSession) envFile() string { return muxRunDir + "/" + s.name + ".env" }
 
-// commandLine is the shell command tmux runs for this session: pick up
-// and delete the secrets, then the agent with the prompt and arguments.
+// commandLine is the shell command the multiplexer runs for this session
+// (mux.start): pick up and delete the secrets, then the agent with the
+// prompt and arguments.
 func (s taskSession) commandLine(prompt string, args []string) string {
 	f := shellQuote(s.envFile())
 	words := []string{
@@ -94,18 +96,6 @@ func resumeHint() string {
 		return " (--continue resumes the conversation)"
 	}
 	return ""
-}
-
-// tmuxCommand starts this session's agent in tmux, or with -A attaches
-// to it if it's already running. -u: the box has no locale set, and
-// Claude's interface is Unicode.
-func (s taskSession) tmuxCommand(line string, detached bool) string {
-	mode := "-A"
-	if detached {
-		mode = "-d"
-	}
-	return fmt.Sprintf("tmux -u new-session %s -s %s -c %s %s",
-		mode, s.tmux, shellQuote(s.dir), shellQuote(line))
 }
 
 // worktreeScript makes the task's worktree if it isn't there: on branch

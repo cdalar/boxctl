@@ -20,7 +20,7 @@ import (
 )
 
 // `boxctl kilo`: the Kilo CLI on a box, the way `boxctl claude` runs
-// Claude Code there -- the same box, project copy, tmux, tasks, GitHub
+// Claude Code there -- the same box, project copy, multiplexer, tasks, GitHub
 // and fetch/push (see claude.go and agent.go). What's Kilo's own is here:
 // its installer, its configuration (~/.config/kilo) and its credentials.
 
@@ -57,7 +57,8 @@ When Kilo exits or you detach, the box's work is fetched here as box/*
 and the box is deleted. A dropped connection is reconnected instead.
 
 --keep uses the project's own box (kilo-<project>) and keeps it: Kilo
-runs in tmux, so it keeps going when you detach (Ctrl-b d); run
+runs in tmux (or herdr, with --mux herdr), so it keeps going when you
+detach (Ctrl-b d; Ctrl-b q in herdr); run
 boxctl kilo --keep again to come back to it. The box's
 copy of the project is the one Kilo works on: later runs don't copy it
 again, and nothing is synced back -- Kilo commits and pushes from the

@@ -84,7 +84,7 @@ branch boxctl/<project>-<random> for Claude to work on; nothing local,
 uncommitted or unpushed, goes -- and anything else is copied. Then it
 installs Claude Code and your Claude configuration, and starts Claude in
 it. When Claude exits or you
-detach (Ctrl-b d), the box's branches and uncommitted work are fetched
+detach (Ctrl-b d; Ctrl-b q in herdr), the box's branches and uncommitted work are fetched
 here as box/* (as boxctl claude fetch does) and the box is deleted.
 
 A dropped connection doesn't end the run: Claude keeps going on the box
@@ -93,7 +93,11 @@ it's reconnecting gives up and keeps the box, to come back to with --box.
 
 --keep uses the project's own box (claude-<project>) instead, and keeps
 it: Claude runs in tmux, so it keeps going when you detach, and
-boxctl claude --keep comes back to it. The box's
+boxctl claude --keep comes back to it. --mux herdr runs it in herdr
+(herdr.dev) instead: a terminal workspace manager made for coding agents
+that shows every task on the box in one window, each marked working,
+blocked or idle; Ctrl-b q detaches. BOXCTL_MUX=herdr makes it the default,
+and a box keeps using whichever its sessions were started in. The box's
 copy of the project is the one Claude works on: later runs don't copy it
 again, and nothing is synced back -- Claude commits and pushes from the
 box. --box, --detach and --task keep their box too.
@@ -388,11 +392,10 @@ func inParallel(fns ...func()) {
 	wg.Wait()
 }
 
-// sessionRunning reports whether sess's agent is running in tmux on the
-// box. =name: exact. A bare -t name falls back to a prefix match, so
-// "claude" would find "claude-auth" and take the main session for running.
+// sessionRunning reports whether sess's agent is running on the box, in
+// its multiplexer.
 func sessionRunning(ctx context.Context, box *boxSSH, sess taskSession) bool {
-	return box.run(ctx, "tmux has-session -t ="+sess.tmux+" 2>/dev/null", nil) == nil
+	return box.run(ctx, mux.running(sess), nil) == nil
 }
 
 // startSession starts the agent in sess with --prompt and args, unless
@@ -408,14 +411,14 @@ func startSession(ctx context.Context, t *claudeTarget, sess taskSession, runnin
 	line := sess.commandLine(claudePrompt, args)
 	if claudeDetach {
 		if !running {
-			if err := t.box.run(ctx, sess.tmuxCommand(line, true), nil); err != nil {
+			if err := t.box.run(ctx, mux.start(sess, line, true), nil); err != nil {
 				return fmt.Errorf("starting %s on %s: %w", agent.title, t.name, err)
 			}
 		}
 		sayDone("%s is running on %s -- attach with: %s", agent.title, bold(t.name), sess.attachHint(t.name))
 		return nil
 	}
-	err := attachClaude(ctx, t.box, sess, sess.tmuxCommand(line, false))
+	err := attachClaude(ctx, t.box, sess, mux.start(sess, line, false))
 	if errors.Is(err, errConnectionLost) {
 		// The session is still running there, so its box isn't this
 		// run's to end: an ephemeral one is kept, work and all.
@@ -423,7 +426,7 @@ func startSession(ctx context.Context, t *claudeTarget, sess taskSession, runnin
 		return fmt.Errorf("lost the connection to %s, where %s is still running -- attach again with: %s", t.name, agent.title, sess.attachHint(t.name))
 	}
 	if err == nil && t.ephemeral {
-		// Detaching from tmux (Ctrl-b d) returns here with the agent still
+		// Detaching (Ctrl-b d in tmux, Ctrl-b q in herdr) returns here with the agent still
 		// running -- maybe an ongoing session -- so the box isn't this
 		// run's to end either.
 		sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -503,7 +506,7 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 	if err != nil {
 		return nil, err
 	}
-	needsCopy, other, err := checkProject(ctx, box, dir)
+	needsCopy, other, boxMux, err := checkProject(ctx, box, dir)
 	switch {
 	case err != nil:
 		box.close()
@@ -516,7 +519,34 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 		box.close()
 		return nil, fmt.Errorf("%s holds %s, not %s -- run boxctl %s from there, or pick another box with --box", box.name, other, dir, agent.name)
 	}
+	if err := useBoxMux(ctx, box, dir, boxMux); err != nil {
+		box.close()
+		return nil, err
+	}
 	return &claudeTarget{dir: dir, name: name, box: box, needsCopy: needsCopy}, nil
+}
+
+// useBoxMux makes the box's multiplexer -- the one its sessions were
+// started in, recorded on it by mux.start -- the run's, unless --mux was
+// given: then a session running in the other one is refused, rather than
+// started again beside it. A box with no record (nothing started yet, or
+// from before the record) takes --mux or its default.
+func useBoxMux(ctx context.Context, box *boxSSH, dir, name string) error {
+	if name == "" || name == mux.name() {
+		return nil
+	}
+	other, err := muxNamed(name)
+	if err != nil {
+		return nil // a newer boxctl's: nothing this one can do with it
+	}
+	if !muxExplicit {
+		mux = other
+		return nil
+	}
+	if box.run(ctx, other.running(newTaskSession(dir, claudeTask)), nil) == nil {
+		return fmt.Errorf("%s is running in %s on %s -- attach with --mux %s, or quit it first", agent.title, name, box.name, name)
+	}
+	return nil
 }
 
 // connectClaudeBox makes sure the box name is running (created first when
@@ -561,22 +591,31 @@ func connectClaudeBox(ctx context.Context, name, dir string, create, setTTL bool
 }
 
 // checkProject reports whether dir still has to be copied to the box, or
-// the other project the box holds instead. A box from before the marker
+// the other project the box holds instead, and the multiplexer the box's
+// sessions run in ("" if none has started). A box from before the marker
 // existed is taken to hold whichever project it has at dir.
-func checkProject(ctx context.Context, box *boxSSH, dir string) (needsCopy bool, other string, err error) {
+func checkProject(ctx context.Context, box *boxSSH, dir string) (needsCopy bool, other, boxMux string, err error) {
 	out, err := box.output(ctx, projectCheckScript(dir))
-	switch status := strings.TrimSpace(string(out)); {
+	status, boxMux := parseProjectCheck(string(out))
+	switch {
 	case err != nil:
-		return false, "", fmt.Errorf("checking %s's project: %w", box.name, err)
+		return false, "", "", fmt.Errorf("checking %s's project: %w", box.name, err)
 	case status == "copy":
-		return true, "", nil
+		return true, "", boxMux, nil
 	case status == "ok":
-		return false, "", nil
+		return false, "", boxMux, nil
 	case strings.HasPrefix(status, "other "):
-		return false, strings.TrimPrefix(status, "other "), nil
+		return false, strings.TrimPrefix(status, "other "), boxMux, nil
 	default:
-		return false, "", fmt.Errorf("checking %s's project: unexpected %q", box.name, status)
+		return false, "", "", fmt.Errorf("checking %s's project: unexpected %q", box.name, status)
 	}
+}
+
+// parseProjectCheck splits projectCheckScript's output: the project's
+// status on the first line, the box's multiplexer on the second.
+func parseProjectCheck(out string) (status, boxMux string) {
+	status, boxMux, _ = strings.Cut(strings.TrimSpace(out), "\n")
+	return strings.TrimSpace(status), strings.TrimSpace(boxMux)
 }
 
 // boxOnlyProject reports whether dir is where --repo clones on a box
@@ -589,10 +628,10 @@ func projectCheckScript(dir string) string { return projectCheckScriptAt(project
 
 func projectCheckScriptAt(marker, dir string) string {
 	d := shellQuote(dir)
-	return `m=` + shellQuote(marker) + `
-if [ -s "$m" ] && [ "$(cat "$m")" != ` + d + ` ]; then printf 'other %s' "$(cat "$m")"; exit 0; fi
-if [ -e ` + d + ` ]; then mkdir -p "$(dirname "$m")" && printf '%s' ` + d + ` >"$m"; echo ok; exit 0; fi
-echo copy`
+	return `m=` + shellQuote(marker) + `; s=copy
+if [ -s "$m" ] && [ "$(cat "$m")" != ` + d + ` ]; then s="other $(cat "$m")"
+elif [ -e ` + d + ` ]; then mkdir -p "$(dirname "$m")" && printf '%s' ` + d + ` >"$m"; s=ok; fi
+printf '%s\n' "$s"; cat ` + shellQuote(muxMarker) + ` 2>/dev/null || true`
 }
 
 // markProject records dir as the box's project, and lets boxctl claude

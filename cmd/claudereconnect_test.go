@@ -43,7 +43,7 @@ func TestAttachTellsALostConnectionFromAnEnd(t *testing.T) {
 }
 
 func TestSessionAlive(t *testing.T) {
-	sess := taskSession{tmux: "claude"}
+	sess := taskSession{name: "claude"}
 	for code, want := range map[int]struct{ running, reached bool }{0: {true, true}, 1: {false, true}, 255: {false, false}} {
 		fakeSSH(t, code)
 		running, err := sessionAlive(context.Background(), testBox(), sess)
@@ -54,7 +54,7 @@ func TestSessionAlive(t *testing.T) {
 }
 
 func TestReattach(t *testing.T) {
-	sess := taskSession{tmux: "claude"}
+	sess := taskSession{name: "claude"}
 	// Unreachable twice, then reachable with the session running.
 	fakeSSH(t, 255, 255, 0)
 	attaches := 0

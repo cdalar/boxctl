@@ -24,7 +24,8 @@ const reconnectMaxDelay = 15 * time.Second
 
 // reattach runs attach, and again each time the connection drops under it
 // (on a train, through a tunnel), once the box is reachable again and the
-// session still running there; Claude runs in tmux, so it never noticed.
+// session still running there; Claude runs in a multiplexer, so it never
+// noticed.
 // It returns attach's result when the session ends or you detach, nil if
 // the session ended while the connection was down, and errConnectionLost
 // if you gave up waiting (Ctrl-C).
@@ -77,7 +78,7 @@ func awaitBox(ctx context.Context, box *boxSSH, sess taskSession) (running bool,
 // would only repeat, under the spinner, that the network is down.
 func sessionAlive(ctx context.Context, box *boxSSH, sess taskSession) (bool, error) {
 	argv := append(append([]string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=15"}, box.args...),
-		"tmux has-session -t ="+sess.tmux+" 2>/dev/null")
+		mux.running(sess))
 	err := exec.CommandContext(ctx, "ssh", argv...).Run()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() != 255 {
