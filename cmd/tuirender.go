@@ -53,6 +53,8 @@ var k9s = struct {
 		"provisioning": lipgloss.NewStyle().Foreground(lipgloss.Color("51")),
 		"stopping":     lipgloss.NewStyle().Foreground(lipgloss.Color("51")),
 		"failed":       lipgloss.NewStyle().Foreground(lipgloss.Color("203")),
+		"private":      lipgloss.NewStyle().Foreground(lipgloss.Color("220")),
+		"archived":     lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
 	},
 }
 
