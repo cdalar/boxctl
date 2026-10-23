@@ -532,11 +532,11 @@ func TestTUIRepos(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
 	m = next.(tuiModel)
 	// :repos with no cache asks GitHub.
-	m, cmd := press(t, m, ":")
+	m, _ = press(t, m, ":")
 	for _, r := range "repos" {
 		m, _ = press(t, m, string(r))
 	}
-	m, cmd = press(t, m, "enter")
+	m, cmd := press(t, m, "enter")
 	if m.top().view != reposView || cmd == nil || !m.loading["repos"] {
 		t.Fatalf("view=%v loading=%v cmd=%v", m.top().view, m.loading, cmd != nil)
 	}
