@@ -38,6 +38,7 @@ var tuiCmd = &cobra.Command{
   s            open a terminal on the box (boxctl ssh)
   enter        in :repos (your GitHub repos, newest push first, from gh),
                start Claude on a fresh box with the repo cloned (boxctl claude --repo)
+  g            in :repos, ask for a goal and run it unattended there (--goal)
   c            create a box (name, image and size are asked)
   p / r / K    pause / resume / keep (hold off the idle reaper's deletion)
   e            expose a port at a public URL; ctrl-d in :urls takes it down
@@ -99,8 +100,10 @@ type (
 	}
 	tuiClaudeDoneMsg struct { // `boxctl claude --repo` from :repos ended
 		repo   string
+		goal   bool // a --goal run: it started Claude and returned
 		err    error
 		stderr string
+		stdout string // a goal run's, with the box it started
 	}
 	tuiCreatedMsg struct {
 		vm  *client.VM
@@ -397,6 +400,12 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuiClaudeDoneMsg:
 		if msg.err != nil {
 			return m, tea.Batch(m.fail("claude on %s: %s", msg.repo, claudeFailure(msg.stderr, msg.err)), m.refresh())
+		}
+		if msg.goal {
+			if box := goalBoxName(msg.stdout); box != "" {
+				return m, tea.Batch(m.say("goal on %s started on %s (l in :boxes for its log)", msg.repo, box), m.refresh())
+			}
+			return m, tea.Batch(m.say("goal on %s started", msg.repo), m.refresh())
 		}
 		return m, tea.Batch(m.say("claude on %s ended", msg.repo), m.refresh())
 
