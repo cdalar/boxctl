@@ -9,12 +9,12 @@ import (
 // boxAgent is a coding agent boxctl runs on a box -- `boxctl claude`,
 // `boxctl kilo` -- or rather the little that differs between them: what
 // it's called, and how it's installed and started. The box, the project
-// copy, tmux, tasks, GitHub and fetch/push are the same for all of them
+// copy, the multiplexer, tasks, GitHub and fetch/push are the same for all of them
 // (the claude*.go files), and read the running command's agent from
 // `agent`. So are the flags: each agent's command binds the same
 // variables (claudeBox, claudeTask, ...), since only one of them runs.
 type boxAgent struct {
-	name    string // the subcommand, the box-name prefix and the tmux session
+	name    string // the subcommand, the box-name prefix and the session's name
 	title   string // what messages call it
 	product string // what it's installed as
 	bin     string // its command on the box
@@ -39,22 +39,28 @@ func (a *boxAgent) fill(text string) string {
 	return strings.NewReplacer("{agent}", a.name, "{Agent}", a.title).Replace(text)
 }
 
-// runs is run as a RunE of one of this agent's commands.
+// runs is run as a RunE of one of this agent's commands: it makes the
+// agent, and --mux's multiplexer, the running command's.
 func (a *boxAgent) runs(run func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		agent = a
+		m, err := muxNamed(muxArg)
+		if err != nil {
+			return err
+		}
+		mux, muxExplicit = m, cmd.Flags().Changed("mux")
 		return run(cmd, args)
 	}
 }
 
-// setupScript makes sure the box can run the agent in tmux. On the
-// claude-agent image already has tmux and Claude Code, so this does
-// nothing; other images get tmux from apt and the agent's own install,
-// once.
+// setupScript makes sure the box can run the agent in the multiplexer.
+// The claude-agent image already has tmux and Claude Code, so this does
+// nothing there; other images get the multiplexer (mux.setup) and the
+// agent's own install, once.
 func (a *boxAgent) setupScript() string {
 	return `set -e
 export PATH="$HOME/` + a.binDir + `:$PATH"
-command -v tmux >/dev/null || { echo "Installing tmux..." >&2; apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux >/dev/null; }
+` + mux.setup() + `
 command -v ` + a.bin + ` >/dev/null || { echo "Installing ` + a.product + `..." >&2; ` + a.install + ` >&2; }`
 }
 
@@ -76,4 +82,6 @@ func (a *boxAgent) addFlags(c *cobra.Command) {
 	c.Flags().BoolVarP(&claudeKeep, "keep", "k", false, a.fill("use the project's own box, {agent}-<project>, and keep it -- instead of a new box deleted when the run ends (--box, --detach and --task keep it too)"))
 	c.Flags().BoolVarP(&claudeForce, "force", "f", false, "copy a project directory even if it isn't a git repository")
 	c.Flags().DurationVar(&claudeIdle, "idle-ttl", claudeDefaultIdleTTL, "pause the box after this long unused, 10m to 720h (set on a new box, or on an existing one when given)")
+	c.Flags().StringVar(&muxArg, "mux", defaultMux(), a.fill("what keeps {Agent} running on the box between attaches: tmux, or herdr (herdr.dev, installed on the box the first time). "+muxEnv+" sets the default; a box keeps the one its sessions started in"))
+	_ = c.RegisterFlagCompletionFunc("mux", cobra.FixedCompletions([]string{"tmux", "herdr"}, cobra.ShellCompDirectiveNoFileComp))
 }

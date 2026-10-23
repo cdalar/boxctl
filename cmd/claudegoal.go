@@ -20,7 +20,7 @@ import (
 // boxctl claude --repo owner/name [--goal "..."]: no local copy. A new box,
 // the repository's default branch cloned from GitHub onto a branch of its
 // own (boxctl/<slug>-<id>), and Claude started in it -- attached, or with
-// --goal unattended: `claude -p` in a detached tmux session, whose runner
+// --goal unattended: `claude -p` in a detached session (tmux or herdr, mux.start), whose runner
 // script opens nothing itself but records how the run ended
 // (<goalDir>/status.json: running, done or failed, and the PR's URL) beside
 // the log. Claude opens the pull request with gh.
@@ -154,7 +154,7 @@ type goalRun struct {
 	gh          string   // gh to ask about the pull request; "" for the box's
 }
 
-// runnerScript is the shell script tmux runs: pick up the credentials, run
+// runnerScript is the shell script the session runs: pick up the credentials, run
 // claude -p to the end, then find the pull request on the branch in each
 // repository and write down how it went. status.json's pr_url is the first
 // pull request, pr_urls all of them.
@@ -204,7 +204,7 @@ if [ "$rc" -ne 0 ]; then status failed "claude exited with status $rc"
 elif [ -z "$first" ]; then status failed "claude finished without opening a pull request"
 else status done ""
 fi
-# Let the reports finish before the session ends: tmux hangs up on the
+# Let the reports finish before the session ends: the multiplexer hangs up on the
 # session's process group when this exits, which can catch the last
 # boxctl-status before setsid has moved it out -- the final report was
 # lost that way. Seconds usually; the sender gives up after two minutes.
@@ -381,7 +381,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	sess := taskSession{dir: workDir, tmux: agent.name}
+	sess := taskSession{dir: workDir, name: agent.name}
 	// An attended run's box goes when it ends, once its work is on GitHub
 	// (repoWorkPushed); a goal's stays until the server pauses it. Until
 	// Claude is running, though, a box this run made holds nothing of
@@ -443,7 +443,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 		return startSession(ctx, t, sess, false, args)
 	}
 
-	sess.tmux = agent.name + "-goal-" + id
+	sess.name = agent.name + "-goal-" + id
 	g := goalRun{dir: workDir, repoDirs: dirs, branch: branch, goalDir: boxGoalsDir + "/" + id, envFile: sess.envFile(), args: args}
 	if err := stageClaudeEnv(ctx, box, sess, env); err != nil {
 		return fmt.Errorf("passing Claude its credentials: %w", err)
@@ -454,7 +454,7 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err := box.run(ctx, "cat >"+shellQuote(g.goalDir+"/run.sh")+" && ln -sfn "+shellQuote(g.goalDir)+" "+boxGoalsDir+"/latest", strings.NewReader(g.runnerScript())); err != nil {
 		return fmt.Errorf("writing the runner on %s: %w", name, err)
 	}
-	if err := box.run(ctx, sess.tmuxCommand("sh "+shellQuote(g.goalDir+"/run.sh"), true), nil); err != nil {
+	if err := box.run(ctx, mux.start(sess, "sh "+shellQuote(g.goalDir+"/run.sh"), true), nil); err != nil {
 		return fmt.Errorf("starting Claude on %s: %w", name, err)
 	}
 	started = true

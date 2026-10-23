@@ -18,7 +18,7 @@ func TestKiloSession(t *testing.T) {
 		t.Errorf("box name: %q", got)
 	}
 	main, auth := newTaskSession("/w/app", ""), newTaskSession("/w/app", "auth")
-	if main.tmux != "kilo" || auth.tmux != "kilo-auth" || auth.dir != "/w/app@auth" {
+	if main.name != "kilo" || auth.name != "kilo-auth" || auth.dir != "/w/app@auth" {
 		t.Errorf("sessions: %+v %+v", main, auth)
 	}
 	if got := auth.attachHint("kilo-app"); got != "boxctl kilo --box kilo-app --task auth" {

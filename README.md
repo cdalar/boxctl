@@ -173,7 +173,7 @@ Claude exits or you detach -- the box's branches and uncommitted work are
 fetched here as `box/*` (what `boxctl claude fetch` does) and the box is
 deleted -- or kept, with a message, if that fetch fails. A dropped
 connection (a train through a tunnel) doesn't end the run: Claude keeps
-going in tmux and boxctl reconnects once the box is reachable again;
+going in tmux (or herdr, below) and boxctl reconnects once the box is reachable again;
 Ctrl-C while it waits keeps the box, to attach again with `--box`. Ctrl-C during
 setup deletes it too. `--keep` uses the project's long-lived box
 (`claude-<directory>`) instead, as described below; `--box`, `--detach`
@@ -304,7 +304,7 @@ forgets it. Without a saved token, it falls back to `/login` on the box.
 **Several things at once.** `--task <name>` runs another Claude on the
 same box, in a git worktree of its own -- `<dir>@<name>`, on branch
 `<name>`, made from what the box's main checkout has -- in its own tmux
-session, so the two never touch each other's files. Starting one takes
+session (or herdr workspace), so the two never touch each other's files. Starting one takes
 seconds: no copy, no install, no login. `boxctl claude --task auth`
 again attaches to it; `boxctl claude ls` lists them all, running or
 not. They share the box's CPU, memory and ports -- `--task <name>
@@ -325,6 +325,21 @@ status line, plugins, `env` and credential helpers, which point at this
 machine), and starts `claude` in tmux. Log it in once with `/login`: it
 prints a URL to open here and a code to paste back, and the login stays
 on the box.
+
+**herdr instead of tmux.** `--mux herdr` runs Claude in
+[herdr](https://herdr.dev) rather than tmux: a terminal workspace manager
+made for coding agents, installed on the box the first time (its own
+installer, to `/usr/local/bin`). The box runs one herdr server, and each
+session -- the main checkout, every `--task`, a `--goal` run -- is a
+workspace of it labeled with the session's name, so an attached herdr
+shows every Claude on the box in its sidebar, marked working, blocked or
+idle, and `boxctl claude ls` shows that state in its ACTIVE column.
+`Ctrl-b q` detaches (`Ctrl-b d` in tmux); `Ctrl-b w` switches workspaces.
+`BOXCTL_MUX=herdr` makes it the default. A box remembers which one its
+sessions were started in, so later runs and `ls` look there without the
+flag; `--mux` the other way on such a box is refused only while a session
+is running in the first. herdr's Claude Code integration (a session hook)
+is installed on the box too, so a restored herdr can resume the session.
 
 **GitHub.** Claude on the box can `git push` and `gh pr create`/`merge`
 as you, attached or not: a token is logged in to the box's `gh` when the
@@ -363,7 +378,7 @@ uncommitted changes there, in which case git refuses rather than
 overwrite them. Both supply the ssh themselves; with the `Host *.box`
 config below, plain `git fetch box` works as well.
 
-With `--keep`, Claude keeps running when you detach (`Ctrl-b d`) or the connection
+With `--keep`, Claude keeps running when you detach (`Ctrl-b d`; `Ctrl-b q` in herdr) or the connection
 drops; `boxctl claude --keep` again attaches to it. Boxes it creates pause after
 `--idle-ttl` unused (default `1h`, the server's). A detached Claude
 working on its own makes no traffic the idle reaper counts, so give a
@@ -383,7 +398,7 @@ tunneled by `boxctl ssh-proxy`.
 ## Kilo on a box (`boxctl kilo`)
 
 The same thing for the [Kilo CLI](https://kilo.ai/docs): the box, the
-project copy, tmux, tasks, GitHub, `fetch`/`push` and the idle TTL all
+project copy, tmux or herdr (`--mux`), tasks, GitHub, `fetch`/`push` and the idle TTL all
 work as they do for `boxctl claude`, on a box of its own
 (a fresh `kilo-<directory>-<random>` deleted after the run, or
 `kilo-<directory>` with `--keep`).

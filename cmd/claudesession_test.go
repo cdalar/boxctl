@@ -12,14 +12,14 @@ import (
 
 func TestTaskSession(t *testing.T) {
 	main := newTaskSession("/w/app", "")
-	if main.dir != "/w/app" || main.tmux != "claude" {
+	if main.dir != "/w/app" || main.name != "claude" {
 		t.Errorf("main: %+v", main)
 	}
 	if main.attachHint("claude-app") != "boxctl claude --box claude-app" {
 		t.Error(main.attachHint("claude-app"))
 	}
 	auth := newTaskSession("/w/app", "auth")
-	if auth.dir != "/w/app@auth" || auth.tmux != "claude-auth" {
+	if auth.dir != "/w/app@auth" || auth.name != "claude-auth" {
 		t.Errorf("task: %+v", auth)
 	}
 	if auth.attachHint("claude-app") != "boxctl claude --box claude-app --task auth" {
