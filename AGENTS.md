@@ -413,8 +413,9 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `rm`/`pause`/`resume`): a `List` call with a short timeout, failing
   silently to no suggestions. Cobra's hidden `__complete` commands are in
   `commandsWithoutLogin`, and that gate checks the whole command path so
-  `completion bash` works before login -- `boxctl-web`'s `get.sh`/
-  `get-edge.sh` run it on the freshly downloaded binary to install
+  `completion bash` works before login -- `boxctl-web`'s `get.sh`
+  (`get-edge.sh` runs it with `BOXCTL_VERSION=edge`) runs it on the
+  freshly installed binary to install
   completion for the user's shell.
 - `internal/client/client.go` — the HTTP client: `List`/`Create`/
   `Destroy`/`Pause`/`Resume`/`MintTerminalTicket`, all bearer-token
