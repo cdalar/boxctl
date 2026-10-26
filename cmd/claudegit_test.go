@@ -106,6 +106,7 @@ func TestWipSnapshotWithoutCommits(t *testing.T) {
 
 // TestProjectCheck runs the box-side project check for real.
 func TestProjectCheck(t *testing.T) {
+	boxPaths(t) // the check also cats the mux marker; keep it off the real one
 	root := t.TempDir()
 	marker := filepath.Join(root, "boxctl", "project")
 	proj := filepath.Join(root, "work", "my proj")
