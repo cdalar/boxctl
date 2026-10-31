@@ -693,7 +693,7 @@ docs/media/              Screen recordings (terminal-output-preview: spinners an
 ### Releasing
 
 Push a `vX.Y.Z` tag and `.github/workflows/release.yml` does the rest via
-GoReleaser (`.goreleaser.yml`, mirroring onctl's) on the `onctl-4` runner:
+GoReleaser (`.goreleaser.yml`, mirroring onctl's) on a GitHub-hosted runner:
 Linux (amd64/arm64), macOS (amd64/arm64, unsigned) and Windows (amd64/arm64)
 binaries are built, `checksums.txt` is GPG-signed, and the GitHub release
 is created. The signed macOS build (quill signing/notarization) and the
