@@ -177,7 +177,12 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   connect and again whenever a 1s poll of the local terminal size
   changes. Polling instead of a `SIGWINCH` handler is deliberate: that
   signal doesn't exist on Windows, and goreleaser (`.goreleaser.yml`)
-  builds for it. `ssh <name> -- command [args...]`
+  builds for it. `--session N` (1-5) adds `persist=1&session=N` to the
+  WebSocket URL (`terminalWSURL`): boxctl-vms then attaches to (or
+  starts) that persistent tmux shell on the box, which shell 1 the
+  dashboard's terminal also uses, instead of a shell of its own. The box's
+  tmux has no detach key, so `sshEscape` gives every terminal ssh's
+  `Enter ~ .` disconnect (tested). `ssh <name> -- command [args...]`
   bypasses all of that: it joins the words after `--` and runs them via
   `Client.Exec` (the same no-pty endpoint `exec` uses), relaying
   stdout/stderr and exiting with the remote exit code.
