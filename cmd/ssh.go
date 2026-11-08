@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,13 @@ var sshTimeout time.Duration
 
 const maxSSHTimeout = 5 * time.Minute
 
+// sshSession is --session: 0 for a shell of its own, or one of the box's
+// persistent sessions, 1..maxSSHSessions (boxctl-vms's
+// ptyrelay.MaxSessions). Session 1 is the dashboard terminal's.
+var sshSession int
+
+const maxSSHSessions = 5
+
 var sshCmd = &cobra.Command{
 	Use:                   "ssh <name> [-- command [args...]]",
 	ValidArgsFunction:     completeBoxName,
@@ -48,7 +56,16 @@ joined with spaces and run through the box's shell, so quoting works
 the way it does with ssh:
 
   boxctl ssh my-box -- ls -al
-  boxctl ssh my-box -- "ls -la | grep foo"`,
+  boxctl ssh my-box -- "ls -la | grep foo"
+
+Each plain terminal is a shell of its own, gone when you disconnect.
+--session N (1-5) is one of the box's persistent shells instead: it
+keeps running after you disconnect, and the next --session N -- from
+here or the dashboard's terminal, whose shell 1 it is -- attaches to it,
+every attached terminal sharing it. Exiting the shell ends it; to leave
+it running, disconnect with Enter ~ . (as with ssh; ~~ sends a ~).
+
+  boxctl ssh my-box --session 2`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		dash := cmd.ArgsLenAtDash()
 		switch {
@@ -64,8 +81,14 @@ the way it does with ssh:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		remote := args[1:] // everything after --, empty for a bare "ssh <name> --"
+		if sshSession < 0 || sshSession > maxSSHSessions {
+			return fmt.Errorf("--session must be between 1 and %d", maxSSHSessions)
+		}
 		if len(remote) == 0 {
-			return runSSH(cmd.Context(), name)
+			return runSSH(cmd.Context(), name, sshSession)
+		}
+		if sshSession != 0 {
+			return fmt.Errorf("--session is for a terminal, not \"-- command\"")
 		}
 		if sshTimeout <= 0 || sshTimeout > maxSSHTimeout {
 			return fmt.Errorf("--timeout must be between 1s and %s", maxSSHTimeout)
@@ -80,6 +103,7 @@ the way it does with ssh:
 }
 
 func init() {
+	sshCmd.Flags().IntVarP(&sshSession, "session", "s", 0, fmt.Sprintf("attach to (or start) the box's persistent shell N, 1-%d, which outlives the connection", maxSSHSessions))
 	sshCmd.Flags().DurationVarP(&sshTimeout, "timeout", "T", 30*time.Second, "for \"-- command\": how long to let it run before it's killed (max 5m)")
 	rootCmd.AddCommand(sshCmd)
 }
@@ -105,15 +129,25 @@ func runSSHCommand(ctx context.Context, name, command string) (int, error) {
 	return result.ExitCode, nil
 }
 
-func runSSH(ctx context.Context, name string) error {
+// terminalWSURL is the /ws/terminal URL for vmID: a shell of its own for
+// session 0, else persistent session n (boxctl-vms's ?persist=1&session=N).
+func terminalWSURL(baseURL, vmID, ticket string, session int) string {
+	u := strings.Replace(baseURL, "http", "ws", 1) +
+		"/ws/terminal/" + url.PathEscape(vmID) + "?ticket=" + url.QueryEscape(ticket)
+	if session > 0 {
+		u += "&persist=1&session=" + strconv.Itoa(session)
+	}
+	return u
+}
+
+func runSSH(ctx context.Context, name string, session int) error {
 	c := newClient()
 	ticket, vmID, err := c.MintTerminalTicket(ctx, name)
 	if err != nil {
 		return fmt.Errorf("opening a terminal on %s: %w", name, err)
 	}
 
-	wsURL := strings.Replace(c.BaseURL(), "http", "ws", 1) +
-		"/ws/terminal/" + url.PathEscape(vmID) + "?ticket=" + url.QueryEscape(ticket)
+	wsURL := terminalWSURL(c.BaseURL(), vmID, ticket, session)
 
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
@@ -151,10 +185,20 @@ func runSSH(ctx context.Context, name string) error {
 
 	go func() {
 		buf := make([]byte, 4096)
+		var esc sshEscape
 		for {
 			n, err := os.Stdin.Read(buf)
 			if n > 0 {
-				if werr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+				out, quit := esc.feed(buf[:n])
+				if len(out) > 0 {
+					if werr := conn.WriteMessage(websocket.BinaryMessage, out); werr != nil {
+						return
+					}
+				}
+				if quit {
+					// Ends the read loop above, and so the session;
+					// a persistent shell keeps running on the box.
+					_ = conn.Close()
 					return
 				}
 			}
@@ -171,6 +215,41 @@ func runSSH(ctx context.Context, name string) error {
 	<-readDone
 	fmt.Println()
 	return nil
+}
+
+// sshEscape is ssh's escape character, the one part of it a terminal
+// here needs: Enter ~ . disconnects, which is how a --session shell is
+// left running (the box's tmux has no detach key). ~ at the start of a
+// line is held back until the next byte says what it was; ~~ sends one
+// ~, and ~ followed by anything else sends both.
+type sshEscape struct {
+	midLine bool // not at the start of a line (the zero value is)
+	tilde   bool // a ~ at the start of a line, held back
+}
+
+// feed returns what of in to send, and whether to disconnect (anything
+// after the ~. is dropped).
+func (e *sshEscape) feed(in []byte) (out []byte, quit bool) {
+	for _, b := range in {
+		if e.tilde {
+			e.tilde = false
+			switch b {
+			case '.':
+				return out, true
+			case '~':
+				out = append(out, '~')
+				e.midLine = true
+				continue
+			}
+			out = append(out, '~')
+		} else if !e.midLine && b == '~' {
+			e.tilde = true
+			continue
+		}
+		out = append(out, b)
+		e.midLine = b != '\r' && b != '\n'
+	}
+	return out, false
 }
 
 func sendResize(conn *websocket.Conn) {
