@@ -34,6 +34,7 @@ boxctl rm my-box                            # done
 | `tui` | All of the above in a k9s-style full-screen view: `:boxes`, `:urls`, `:images`, `:sizes`, `:backups`, `:repos` (your GitHub repos, newest push first; enter starts `claude --repo` on one, `g` a `--goal` run); `/` to filter |
 | `images`, `sizes` | What you can boot, and at what size |
 | `ssh`, `ssh-proxy` | Shell or one-off command; real `ssh`/`scp`/`rsync` through a proxy |
+| `cp` | Copy a file or directory (`-r`) between a box and this machine, any size |
 | `port-forward`, `expose`, `unexpose` | Reach a box port locally, or publish it on the internet |
 | `backups`, `restore` | Saved copies of paused boxes |
 | `claude`, `kilo` | Run a coding agent on a box with your project |
@@ -118,6 +119,7 @@ boxctl create long-job --idle-ttl 48h   # pause after 48h unused (default 1h)
 boxctl create k3s -a k3s/k3s-server.sh  # run an onctl-templates script on the new box, streaming its log
 boxctl ssh my-box
 boxctl ssh my-box -- ls -al   # run one command instead of a shell
+boxctl cp -r my-box:/root/out ./out   # box -> here; `boxctl cp ./f my-box:/srv/` the other way
 boxctl port-forward my-box 3000   # localhost:3000 -> port 3000 inside the box
 boxctl expose my-box 3000         # a public https://my-box-xxxxxxxx.boxctl.app -> port 3000
 boxctl unexpose my-box 3000       # take it down again
@@ -204,6 +206,7 @@ boxctl claude -R owner/name              # --repo for short: a fresh box with th
 boxctl claude --repo owner/name --goal "bump Go to 1.24 and fix what breaks"
 boxctl claude --repo owner/api --repo owner/web --goal "rename the /v1 route"   # several repos, a PR in each
 boxctl claude logs <box> [-f]           # how a --goal run is going
+boxctl claude evidence <box> [dir]      # the box's /root/evidence/ -> ./evidence/<box>/, files listed with sizes
 boxctl claude --harness pr-only         # extra rules for the box: CLAUDE.md, managed-settings.json (below)
 ```
 
@@ -482,6 +485,21 @@ that the session reads and deletes. `--env NAME` (repeatable) passes one
 more variable the same way. `--kilo-auth login` passes none of yours:
 log in on the box with `/connect`, and that login stays there. There is
 no `--handoff` for Kilo yet.
+
+## Copying files (`cp`)
+
+`boxctl cp <box>:<path> <local>` and `boxctl cp <local> <box>:<path>` copy
+a file, or with `-r` a directory, with the system's `rsync` (when both
+this machine and the box have it) or else `scp`, run through
+`boxctl ssh-proxy` and the key `boxctl claude` uses -- the same connection
+`claude fetch`/`push` use for git. It doesn't touch the one-shot `exec`
+path, so there is no timeout and no size limit short of the disk;
+a terminal shows progress. A paused box is resumed first. Exactly one
+side names a box; a path with a `/` before its first `:` (`./a:b`) is
+local. Like `scp -r`, a directory lands inside the target if it exists;
+`dir/.` copies its contents. `boxctl claude evidence <box> [dir]` fetches
+a run's `/root/evidence/` into `./evidence/<box>/` and lists the files;
+a box without that directory says so and exits non-zero.
 
 ## Real ssh (`ssh-proxy`)
 
