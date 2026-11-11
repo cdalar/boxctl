@@ -185,7 +185,22 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `Enter ~ .` disconnect (tested). `ssh <name> -- command [args...]`
   bypasses all of that: it joins the words after `--` and runs them via
   `Client.Exec` (the same no-pty endpoint `exec` uses), relaying
-  stdout/stderr and exiting with the remote exit code.
+  stdout/stderr and exiting with the remote exit code. `-T` is checked by
+  `client.ValidateExecTimeout` (whole seconds, 1s..5m: boxctl-vms silently
+  swaps a larger value for its 30s default), for `exec` before it creates a
+  box; `Client.Exec` passes the server's timeout message through (adding what
+  was asked for if the limits differ).
+  `cmd/sshdetach.go`: `--detach -- cmd` starts `run.sh` under nohup/setsid in
+  `~/.boxctl/detached/<id>/` (log, `pid` = pid + start time + boot id,
+  `status` = exit code; the command runs under the login shell, else sh;
+  fails if no pid appears; keeps the last 20 runs) and `--wait [id]
+  [--follow]` polls that run (`latest` by default) with short `Exec` calls.
+  A wrapper gone without a `status` is `lost` (exit 251); the wait itself
+  failing is 250; a failed poll is retried (`client.IsTransient`) with
+  backoff for 5m. The followed log travels base64 so it is byte-exact.
+  `--detach --idle-ttl` exists because a detached command isn't "use" for
+  the idle reaper. Tested by running the scripts for real behind a fake exec
+  endpoint.
 - `cmd/cp.go` — `cp` and `claude evidence`. `cp` is scp only (sftp
   protocol; no rsync: macOS's openrsync rejects `-s`/`--info`), run with
   `boxSSH`'s options (`sshOpts`) -- never over `Client.Exec`, which has a
@@ -407,7 +422,32 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `prepareHarness` returns removes; `harness.dir` stays that temp
   directory and only `harness.label` says "built-in pr-only" -- `apply`
   tars from `dir`). `--harness pr-only` names that
-  built-in too, unless `~/.boxctl/harness/pr-only` exists -- yours wins. `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
+  built-in too, unless `~/.boxctl/harness/pr-only` exists -- yours wins.
+  A harness with only a `model.json` (`!harness.rules()`) never replaces
+  an unattended run's rules: `withRules` loads the built-in in its place
+  with its model (`harness.modelFrom` names where that came from). `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
+- `cmd/claudemodel.go` — `claude --model/--effort`: passed to claude on
+  the box as its own `--model`/`--effort` flags (`modelChoice.args`,
+  prepended to the passthrough args: the goal runner's `claude -p` line
+  and an attached session's `commandLine` alike; Claude Code 2.1.322's
+  `--effort` takes low/medium/high/xhigh/max). `resolveModel`'s order: a
+  `-- --model`/`--effort` passthrough, the flags, the harness's
+  `model.json` (`loadHarnessModel`, never copied to the box),
+  `BOXCTL_CLAUDE_MODEL`/`_EFFORT`, `config.Config`'s
+  `claude_model`/`claude_effort`; nothing passed leaves the box's
+  settings in charge (`boxModelSettings`: the harness's
+  managed-settings.json, then the copied settings.json -- what
+  `describe` names). `chooseModel` runs before any box (bad effort or a
+  control character refused, an empty passthrough value dropped) and
+  sets `runModel`; `announceModel` prints the choice only once a new
+  session is known to start (`startSession`'s reattach warning names
+  `--model`/`--effort` instead). `withModelLabels` adds it to a new
+  box's labels and `relabelModel` to an existing one's when a new
+  session starts there -- not to a box this run created
+  (`claudeTarget.created`) -- (`boxctl.model`, `boxctl.effort`); `modelText` reads them for `claude ls`'s MODEL
+  column (`printBoxes`'s `model` argument; `boxctl ls` has none) and
+  `claude status`'s Model line. `boxAgent.runs` resets `runModel`, so
+  kilo has none.
 - `cmd/agent.go`, `cmd/kilo.go` — `kilo`: the same for the Kilo CLI.
   A `boxAgent` is the little that differs between the two (name -- also
   the box prefix and the session's name -- binary, install dir, installer,

@@ -342,6 +342,13 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err := checkRepoFlags(goal, claudeGitHub, conflicts); err != nil {
 		return err
 	}
+	model, args, err := chooseModel(args)
+	if err != nil {
+		return err
+	}
+	// Every run here starts a new session, attended or not.
+	announceModel(model)
+	args = append(model.args(), args...)
 	switch claudeGitHub {
 	case githubStore, githubOff:
 	default:
@@ -394,6 +401,9 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	box, created, err := connectClaudeBox(ctx, name, "", true, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {
 		return err
+	}
+	if !created {
+		relabelModel(ctx, name)
 	}
 	sess := taskSession{dir: workDir, name: agent.name}
 	// An attended run's box goes when it ends, once its work is on GitHub

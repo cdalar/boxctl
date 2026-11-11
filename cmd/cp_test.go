@@ -48,7 +48,7 @@ func fakeBoxSSH(t *testing.T, root string) {
 for a in "$@"; do last="$a"; done
 case "$last" in
   "test -d "*) p="${last#test -d }"; p="${p#\'}"; p="${p%\'}"; [ -d "$FAKE_ROOT$p" ] ;;
-  "tar -C /root/evidence"*) exec tar -C "$FAKE_ROOT/root/evidence" -cf - . ;;
+  "tar -C /root/evidence"*) COPYFILE_DISABLE=1 exec tar -C "$FAKE_ROOT/root/evidence" -cf - . ;;
 esac
 `
 	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(ssh), 0o755); err != nil {
