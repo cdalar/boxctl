@@ -363,9 +363,12 @@ func copyClaudeConfig(ctx context.Context, box *boxSSH) error {
 		return err
 	}
 	src := filepath.Join(home, ".claude")
-	files, size, err := configFiles(src)
+	files, size, rules, warnings, err := configFilesWithImports(src, home)
 	if err != nil {
 		return err
+	}
+	for _, w := range warnings {
+		sayWarn("%s", w)
 	}
 	settings, err := boxSettings(filepath.Join(src, "settings.json"))
 	if err != nil {
@@ -391,7 +394,11 @@ func copyClaudeConfig(ctx context.Context, box *boxSSH) error {
 		return err
 	})
 	if err == nil {
-		sayDone("Copied your Claude configuration %s", dim("("+client.FormatBytes(total)+")"))
+		what := client.FormatBytes(total)
+		if len(rules) > 0 {
+			what = strings.Join(rules, ", ") + "; " + what
+		}
+		sayDone("Copied your Claude configuration %s", dim("("+what+")"))
 	}
 	return err
 }

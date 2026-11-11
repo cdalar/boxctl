@@ -312,6 +312,14 @@ not. They share the box's CPU, memory and ports -- `--task <name>
 instead. `fetch` brings each task's branch back, and its uncommitted
 work as `box/wip-<name>`.
 
+A new box boots the image for the project's language when the server has
+one (`claude-agent-go` for a Go project), else `claude-agent`, and says
+which and why (`image claude-agent-go (go.mod in cdalar/boxctl)`).
+`--goal`/`--issue`/`--repo` runs read the stack from the current
+directory when they have no `--repo`, else from the first `--repo`'s root
+files on GitHub (one short API call; any error means `claude-agent`).
+`--image` overrides it.
+
 With `--keep`, the first run creates the project's box (`claude-<directory>`, from the
 `claude-agent` image, `ai-sandbox` size), puts the project at the **same
 absolute path** -- cloned as above, or, without a git origin, copied:
@@ -319,7 +327,8 @@ what git counts as the project (`git ls-files --cached --others
 --exclude-standard`, so uncommitted changes and untracked files go,
 `.gitignore`'d ones don't) plus `.git` -- installs
 Claude Code with Anthropic's installer (only if the image lacks it; the
-`claude-agent` images have it), copies your `~/.claude/CLAUDE.md`,
+`claude-agent` images have it), copies your `~/.claude/CLAUDE.md` (and the files it imports with
+`@path`, if they are under `~/.claude`; others are skipped with a warning),
 `agents/`, `skills/`, `commands/` and `settings.json` (minus hooks, the
 status line, plugins, `env` and credential helpers, which point at this
 machine), and starts `claude` in tmux. Log it in once with `/login`: it
