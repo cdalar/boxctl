@@ -312,6 +312,14 @@ not. They share the box's CPU, memory and ports -- `--task <name>
 instead. `fetch` brings each task's branch back, and its uncommitted
 work as `box/wip-<name>`.
 
+A new box boots the image for the project's language when the server has
+one (`claude-agent-go` for a Go project), else `claude-agent`, and says
+which and why (`image claude-agent-go (go.mod in cdalar/boxctl)`).
+`--goal`/`--issue`/`--repo` runs read the stack from the current
+directory when they have no `--repo`, else from the first `--repo`'s root
+files on GitHub (one short API call; any error means `claude-agent`).
+`--image` overrides it.
+
 With `--keep`, the first run creates the project's box (`claude-<directory>`, from the
 `claude-agent` image, `ai-sandbox` size), puts the project at the **same
 absolute path** -- cloned as above, or, without a git origin, copied:

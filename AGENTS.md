@@ -367,6 +367,15 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `--dangerously-skip-permissions` unless that variable is exactly the
   string `1` (not `true`/`yes`), so keep it that way. Whether the
   harness's deny rules still hold under the flag is not verified.
+- `cmd/imagepick.go` — the image of a new agent box: `--image`, else the
+  stack (`stacks`, `stackOfFiles`) matched against `/api/images`
+  (`pickImage`), else `claude-agent`; `sayNote` prints which and why.
+  `runRepo` (every `--repo`/`--goal`/`--issue` run) passes no local
+  directory to `connectClaudeBox`, so it picks through `runImage` and
+  hands the result over in `newBoxImage`: the cwd's project when there is
+  no `--repo`, else the first repository's root files from GitHub's
+  contents API (`repoRootFiles`, 5s, the run's token; errors mean the
+  default).
 - `cmd/claudeharness.go` — `claude --harness <dir|name>`: rules for the
   box's Claude that don't touch the local `~/.claude`. `CLAUDE.md` and
   `managed-settings.json` go to `/etc/claude-code/` (managed memory and
