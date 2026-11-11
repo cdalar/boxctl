@@ -240,6 +240,11 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   keys that point at this machine), the Claude Code install, and `tmux
   new-session -A` (or herdr, below) running `claude`. It never syncs: once the project is
   on the box, the box's copy is the one Claude works on.
+  `cmd/claudeimports.go`: `copyClaudeConfig` also sends the files `~/.claude/CLAUDE.md`
+  imports with `@path` (`importedConfigFiles`: relative to the importing file,
+  `~/`, 5 levels, loops ignored, code spans/blocks skipped), only regular files
+  under `~/.claude` and never an excluded path; others warn. `kilo` copies
+  its own `AGENTS.md` verbatim and has no such import step.
   `cmd/claudegithub.go` is its GitHub side: `--github store` (the
   default) logs a token into the box's gh (`gh auth login --with-token`,
   then `gh auth setup-git`) before the project goes there, so a private

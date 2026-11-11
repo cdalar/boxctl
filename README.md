@@ -319,7 +319,8 @@ what git counts as the project (`git ls-files --cached --others
 --exclude-standard`, so uncommitted changes and untracked files go,
 `.gitignore`'d ones don't) plus `.git` -- installs
 Claude Code with Anthropic's installer (only if the image lacks it; the
-`claude-agent` images have it), copies your `~/.claude/CLAUDE.md`,
+`claude-agent` images have it), copies your `~/.claude/CLAUDE.md` (and the files it imports with
+`@path`, if they are under `~/.claude`; others are skipped with a warning),
 `agents/`, `skills/`, `commands/` and `settings.json` (minus hooks, the
 status line, plugins, `env` and credential helpers, which point at this
 machine), and starts `claude` in tmux. Log it in once with `/login`: it
