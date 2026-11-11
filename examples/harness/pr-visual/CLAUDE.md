@@ -31,7 +31,7 @@ never commit evidence files).
 - **A change someone can see in a browser** (UI, page, dashboard): run the
   app on the box and drive it with Playwright (Chromium, headless). Save
   PNG screenshots of every state the change affects, and one short video
-  (mp4 or webm, under 60 seconds, 1280x800) that walks through the feature
+  (webm, under 60 seconds, 1280x800) that walks through the feature
   the way a user would. If the app needs a backend you don't have, mock the
   data at the network layer and say so. Where the app has light and dark
   themes, take the main screenshot in both.
@@ -39,7 +39,7 @@ never commit evidence files).
   exercises the real built binary or the real code path (not only unit
   tests) and shows the behaviour before and after where that is practical.
   Record it as a terminal recording: `asciinema rec` to a `.cast`, then
-  convert to a GIF with `agg` (install both). Keep it under two minutes and
+  convert to a GIF with `agg`. Keep it under two minutes and
   make the output readable: echo a one-line caption before each step.
   Also save the full test output as `tests.txt`.
 - **Docs only**: no recording needed.
@@ -59,19 +59,28 @@ comes first -- open the pull request even if a recording failed.
 ## What earlier runs on these boxes learned
 Other agents ran into these on the same image. Don't rediscover them.
 
-- `python3` is not installed. Use shell tools, `jq`, or the project's own
-  language for scripting; `apt-get install -y python3` only if you truly
-  need it.
-- On the plain `claude-agent` image there is no Go. If `go` is missing and
-  the project has a `go.mod`, install the version `go.mod` names once:
-  `curl -fsSL https://go.dev/dl/go<version>.linux-amd64.tar.gz | tar -C /usr/local -xz`
-  then `export PATH=$PATH:/usr/local/go/bin` in every command (each Bash
-  call starts a fresh shell).
-- Evidence tools are not preinstalled. Start their install in the
-  background as soon as you know you will need them, while you work on the
-  code: Playwright (`npm i playwright && npx playwright install --with-deps chromium`
-  in `/root/evidence-tools`), or `asciinema` (apt) and `agg` (a release
-  binary from github.com/asciinema/agg).
+- The evidence tools are already installed on the `claude-agent` images:
+  `python3`, `asciinema`, `agg`, Node, and Playwright with headless
+  Chromium. Don't install them again.
+- Use the installed Playwright, not `npm i playwright`: the browser on the
+  box matches that version, and a newer package would download its own.
+  `import { chromium } from "playwright"` resolves from any script under
+  `/root` (put evidence scripts in `/root/evidence-tools/`); from a
+  project elsewhere, run the script with `NODE_PATH=$(npm root -g)` and
+  `require`, or symlink `$(npm root -g)/playwright` into a `node_modules`
+  next to it.
+- There is no system `ffmpeg`. Playwright records `.webm` video without
+  it; leave the video as `.webm`.
+- `asciinema` needs a UTF-8 locale. Sessions have `LANG=C.UTF-8`; if you
+  override the locale, keep it UTF-8.
+- Go is installed on `claude-agent-go` (`/usr/local/bin/go`). On the plain
+  `claude-agent` image it isn't: if `go` is missing and the project has a
+  `go.mod`, install the version `go.mod` names once
+  (`curl -fsSL https://go.dev/dl/go<version>.linux-amd64.tar.gz | tar -C /usr/local -xz`)
+  and put `/usr/local/go/bin` on PATH in every command -- each Bash call
+  starts a fresh shell.
+- `zstd` is not installed, and some Go tests in boxctl-vms skip without
+  it: `apt-get install -y zstd` before the final test run.
 
 ## Report what slowed you down
 End `/root/evidence/README.md` with a section "Setup friction": every tool
