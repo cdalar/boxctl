@@ -44,6 +44,7 @@ func (a *boxAgent) fill(text string) string {
 func (a *boxAgent) runs(run func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		agent = a
+		runModel = nil
 		m, err := muxNamed(muxArg)
 		if err != nil {
 			return err

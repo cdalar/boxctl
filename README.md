@@ -191,6 +191,7 @@ boxctl claude                           # a new box for this run, deleted afterw
 boxctl claude --keep                    # create or reattach to claude-myproject
 boxctl claude --prompt "fix the flaky auth test"
 boxctl claude --detach --prompt "..."   # start it without attaching
+boxctl claude --model sonnet --effort medium   # which model, how hard it thinks (below)
 boxctl claude -- --model opus           # arguments for claude itself
 boxctl claude login                     # once: every box's Claude is logged in (below)
 boxctl claude --task auth               # a second Claude, in parallel, on its own branch
@@ -245,6 +246,7 @@ rules for box runs only. The directory may hold:
 | `CLAUDE.md` | `/etc/claude-code/CLAUDE.md` | managed memory, loaded in every session and not excludable |
 | `managed-settings.json` | `/etc/claude-code/managed-settings.json` | highest-precedence settings; user and project settings can't undo its permission rules |
 | `agents/`, `skills/`, `commands/` | `~/.claude`, on top of yours | e.g. an `/open-pr` command |
+| `model.json` | nowhere: boxctl reads it | the run's model and effort, `{"model": "sonnet", "effort": "medium"}` (either key optional; below) |
 
 ```json
 {"permissions": {"deny": ["Bash(gh pr merge:*)", "Bash(git push --force*)", "Bash(git push*main*)"]},
@@ -272,9 +274,45 @@ Code 2.1.303.)
 exists, applies to every run; otherwise a `--goal` run gets the built-in
 `pr-only` (pull request, never merge) -- it runs unattended with
 `--dangerously-skip-permissions`, so it's the run that most needs a
-guardrail you didn't have to ask for. Anything chosen implicitly is
+guardrail you didn't have to ask for. A harness that is nothing but a
+`model.json` has no rules, so it doesn't stand in for that: a `--goal` or
+`--issue` run with one (default or `--harness`) gets its model *and* the
+built-in `pr-only`, and says so. Anything chosen implicitly is
 announced on stderr. An attended run with no default directory gets no
 harness.
+
+**Model and effort.** `--model <name>` and `--effort <level>` choose the
+model Claude runs on the box and how hard it thinks, for attached runs
+and for `--goal`, `--issue` and `--task` alike. They reach Claude as its
+own `claude --model`/`--effort` flags, which work the same for `claude -p`
+and an interactive session and beat the `model`/`effortLevel` of the
+copied `settings.json` without rewriting it. The model name is passed
+through as given: an alias (`fable`, `sonnet`) is resolved by the Claude
+Code on the box. The effort is one of `low`, `medium`, `high`, `xhigh`,
+`max`; anything else is refused before a box is created. Where nothing
+is chosen, the copied settings decide -- so that every unattended run
+doesn't inherit your interactive setting, set a default. First match,
+for model and effort separately:
+
+1. `-- --model x` / `-- --effort y` passed through to claude, as before
+2. `--model` / `--effort`
+3. the harness's `model.json`
+4. `BOXCTL_CLAUDE_MODEL` / `BOXCTL_CLAUDE_EFFORT`
+5. `claude_model` / `claude_effort` in `~/.boxctl/config.json` (kept by
+   `boxctl login`, removed with the file by `boxctl logout`)
+6. the harness's `managed-settings.json` (`model`/`effortLevel`), then
+   your copied `~/.claude/settings.json`, else Claude Code's default
+
+An empty passed-through value (`-- --model ""`) counts as not given and
+isn't passed on. A model or effort with a control character in it is
+refused before a box is created. The run prints what a new session will
+use, and where that came from, and labels the box `boxctl.model`/`boxctl.effort`:
+`boxctl claude ls` shows them in its MODEL column and `boxctl claude
+status` on its Model line, `-` for a run that chose nothing. A box keeps
+the labels of the last session started on it; attaching to a running
+session changes neither, prints no Model line, and warns that `--model`
+and `--effort` only apply to a new session. `boxctl kilo` has no `--model`/`--effort`; pass
+`-- --model` there.
 
 **`--github` store, off -- and why a goal needs store.** `store` (the
 default) logs a token into the box's `gh`, where it stays until the box
