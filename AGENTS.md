@@ -186,16 +186,20 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   bypasses all of that: it joins the words after `--` and runs them via
   `Client.Exec` (the same no-pty endpoint `exec` uses), relaying
   stdout/stderr and exiting with the remote exit code.
-- `cmd/cp.go` — `cp` and `claude evidence`: the system's rsync (when
-  `rsync` is on both ends: `remoteHasRsync` asks the box over ssh) or
-  scp, run with `boxSSH`'s options (`sshOpts`: key, ssh-proxy
-  ProxyCommand) -- never over `Client.Exec`, which has a timeout and
-  truncates. `parseCp` picks the side that is `box:path` (a `/` before the
-  first `:` means local; both or neither remote is an error). rsync gets
-  `-s` so the remote path isn't shell-quoted twice (rsync 3.2.4+ takes
-  quotes literally). The box is reached with `connectClaudeBox`, which
-  resumes a paused one. Tested with fake `ssh`/`scp`/`rsync` on PATH
-  (`fakeCopyTools`).
+- `cmd/cp.go` — `cp` and `claude evidence`. `cp` is scp only (sftp
+  protocol; no rsync: macOS's openrsync rejects `-s`/`--info`), run with
+  `boxSSH`'s options (`sshOpts`) -- never over `Client.Exec`, which has a
+  timeout and truncates. `scpArgs` builds the vector: `--` before the
+  paths, and `localArg` puts `./` before a local path starting with `-` or
+  with a colon before any `/`. `parseCp`/`splitBoxPath` pick the `box:path`
+  side (a `/` or `\` before the first `:`, or a Windows drive, is local).
+  `connectCpBox` wraps `connectClaudeBox` with cp's own error wording
+  (it installs boxctl's key on the box). `evidence` tars
+  `/root/evidence` over ssh (no symlink following) into `extractTar`, a
+  fresh dir beside the destination, then renames it into place; symlinks
+  are skipped. Tests: `scpArgs`/parser/`fetchEvidence` with a fake `ssh`,
+  and `cp_sshd_test.go` against a throwaway localhost `sshd` (skipped
+  without it).
 - `cmd/portforward.go` — `port-forward`: a local listener per port spec,
   one `Client.DialPort` WebSocket (`GET /api/vms/{id}/port/{port}`,
   bearer token on the upgrade) per accepted TCP connection, raw bytes
@@ -533,3 +537,4 @@ with `shellcheck claude-plugin/bin/* claude-plugin/hooks/route-bash` and
 
 - `boxctl`'s ssh ProxyCommand (`newBoxSSH`) doesn't pass `--api-url` on, so anything run against a non-default API must use `~/.boxctl/config.json`'s `api_url`, not the flag.
 - CI runs `golangci-lint run ./...` (lint.yml) and govulncheck besides `go vet`/`gofmt`.
+- `cp_sshd_test.go` needs `sshd`, `scp` and `ssh-keygen` (apt `openssh-server`); without them it skips, so CI passing doesn't prove a real copy works.
