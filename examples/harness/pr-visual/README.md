@@ -31,9 +31,9 @@ Change it here, by pull request, and copy it again.
 The two memory sections work as a loop. Each run reports its setup
 friction; whoever manages the runs reads those reports between waves and
 moves anything new into "What earlier runs learned". A note there should
-be deleted once the image fixes it -- the evidence tools, for one, are
-baked into `claude-agent` since boxctl-images#12, and the notes about
-installing them go when hosts have that image. Facts about one
+be deleted or rewritten once the image fixes it: the notes on installing
+the evidence tools became "they are already installed" when
+boxctl-images#12 baked them into `claude-agent`. Facts about one
 repository don't belong here: runs write those into that repository's
 `AGENTS.md` themselves.
 
