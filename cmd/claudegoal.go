@@ -253,6 +253,14 @@ const goalPauseWhenDone = "10m"
 // creates: runRepo's, for its run box.
 var newBoxLabels map[string]string
 
+// newBoxImage, when set, is the image ensureClaudeBox gives that box,
+// and newBoxImageWhy what decided it: runRepo's, chosen from the local
+// project or the repository's root files.
+var (
+	newBoxImage    string
+	newBoxImageWhy string
+)
+
 // runLabels mark a --repo or --goal run's box for the server
 // (boxctl-vms's labels), so claude ls finds it -- and the repository,
 // branch and issue it's for -- without guessing from its name or
@@ -382,6 +390,12 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	}
 	branch := gen.branch()
 	newBoxLabels = runLabels(goal != "", repos, branch, claudeIssue)
+
+	localDir := ""
+	if len(claudeRepos) == 0 {
+		localDir, _ = projectDir() // reposToUse found the repository there
+	}
+	newBoxImage, newBoxImageWhy = runImage(ctx, newClient(), localDir, repos, token)
 
 	box, created, err := connectClaudeBox(ctx, name, "", true, cmd.Flags().Changed("idle-ttl"))
 	if err != nil {

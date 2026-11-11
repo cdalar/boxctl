@@ -721,7 +721,13 @@ func ensureClaudeBox(ctx context.Context, c *client.Client, name, dir string, cr
 	if !create {
 		return false, fmt.Errorf("no box %s -- start one with boxctl %s", name, agent.name)
 	}
-	image := imageFor(ctx, c, dir)
+	image, why := imageFor(ctx, c, dir)
+	if newBoxImage != "" {
+		image, why = newBoxImage, newBoxImageWhy
+	}
+	if why != "" {
+		sayNote("image %s (%s)", image, why)
+	}
 	detail := dim("(" + image + ", " + claudeSize + ")")
 	sp := startSpinner(fmt.Sprintf("Creating %s %s", bold(name), detail))
 	if _, err := c.Create(ctx, name, "", image, claudeSize, withModelLabels(newBoxLabels)); err != nil {
