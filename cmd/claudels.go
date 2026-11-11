@@ -89,7 +89,7 @@ func claudeList(ctx context.Context) error {
 	if rows > 0 {
 		fmt.Println()
 	}
-	return printBoxes(ctx, vms, "table", true, "", true)
+	return printBoxes(ctx, vms, "table", true, "", agent == claudeAgent) // kilo has no model to show
 }
 
 // printRunStatus is claude status's report on one run box, from its

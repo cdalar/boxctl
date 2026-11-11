@@ -274,7 +274,10 @@ Code 2.1.303.)
 exists, applies to every run; otherwise a `--goal` run gets the built-in
 `pr-only` (pull request, never merge) -- it runs unattended with
 `--dangerously-skip-permissions`, so it's the run that most needs a
-guardrail you didn't have to ask for. Anything chosen implicitly is
+guardrail you didn't have to ask for. A harness that is nothing but a
+`model.json` has no rules, so it doesn't stand in for that: a `--goal` or
+`--issue` run with one (default or `--harness`) gets its model *and* the
+built-in `pr-only`, and says so. Anything chosen implicitly is
 announced on stderr. An attended run with no default directory gets no
 harness.
 
@@ -297,14 +300,18 @@ for model and effort separately:
 4. `BOXCTL_CLAUDE_MODEL` / `BOXCTL_CLAUDE_EFFORT`
 5. `claude_model` / `claude_effort` in `~/.boxctl/config.json` (kept by
    `boxctl login`, removed with the file by `boxctl logout`)
-6. your copied `~/.claude/settings.json`, else Claude Code's default
+6. the harness's `managed-settings.json` (`model`/`effortLevel`), then
+   your copied `~/.claude/settings.json`, else Claude Code's default
 
-The run prints what it will use, and where that came from, before the box
-is created, and labels the box `boxctl.model`/`boxctl.effort`:
+An empty passed-through value (`-- --model ""`) counts as not given and
+isn't passed on. A model or effort with a control character in it is
+refused before a box is created. The run prints what a new session will
+use, and where that came from, and labels the box `boxctl.model`/`boxctl.effort`:
 `boxctl claude ls` shows them in its MODEL column and `boxctl claude
 status` on its Model line, `-` for a run that chose nothing. A box keeps
 the labels of the last session started on it; attaching to a running
-session changes neither. `boxctl kilo` has no `--model`/`--effort`; pass
+session changes neither, prints no Model line, and warns that `--model`
+and `--effort` only apply to a new session. `boxctl kilo` has no `--model`/`--effort`; pass
 `-- --model` there.
 
 **`--github` store, off -- and why a goal needs store.** `store` (the

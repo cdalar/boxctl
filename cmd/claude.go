@@ -164,7 +164,7 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	if err := checkSessionFlags(); err != nil {
 		return err
 	}
-	model, err := chooseModel(args)
+	model, args, err := chooseModel(args)
 	if err != nil {
 		return err
 	}
@@ -244,9 +244,13 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	}
 	if !running {
 		// A new session gets the run's model; one already running keeps
-		// its own, and so does the box's label.
+		// its own, and so does the box's label (startSession says so). A
+		// box this run created got the labels at create.
+		announceModel(model)
 		args = append(model.args(), args...)
-		relabelModel(ctx, name)
+		if !t.created {
+			relabelModel(ctx, name)
+		}
 		if env == "" && claudeAuth == claudeAuthAuto {
 			sayNote("Log Claude in on the box with /login -- or run boxctl claude login once, and every box's Claude is logged in")
 		}
@@ -412,8 +416,10 @@ func sessionRunning(ctx context.Context, box *boxSSH, sess taskSession) bool {
 // startSession starts the agent in sess with --prompt and args, unless
 // it's running already, and attaches to it unless --detach says not to.
 func startSession(ctx context.Context, t *claudeTarget, sess taskSession, running bool, args []string) error {
-	if running && (claudePrompt != "" || len(args) > 0) {
-		fmt.Fprintf(os.Stderr, "%s is already running there; attaching to it (--prompt and %s arguments only apply to a new session).\n", agent.title, agent.bin)
+	if running {
+		if given := newSessionOnly(args); given != "" {
+			fmt.Fprintf(os.Stderr, "%s is already running there; attaching to it (%s only apply to a new session).\n", agent.title, given)
+		}
 	}
 	// A box that outlives the run keeps its session when the agent exits;
 	// an ephemeral one ends with it (end fetches and deletes on that),
@@ -448,6 +454,27 @@ func startSession(ctx context.Context, t *claudeTarget, sess taskSession, runnin
 		}
 	}
 	return err
+}
+
+// newSessionOnly names what was given of what only a new session takes:
+// --prompt, --model, --effort and arguments for the agent; "" for none.
+func newSessionOnly(args []string) string {
+	var given []string
+	for _, f := range []struct{ name, v string }{{"--prompt", claudePrompt}, {"--model", claudeModelFlag}, {"--effort", claudeEffortFlag}} {
+		if f.v != "" {
+			given = append(given, f.name)
+		}
+	}
+	if len(args) > 0 {
+		given = append(given, agent.bin+" arguments")
+	}
+	switch len(given) {
+	case 0:
+		return ""
+	case 1:
+		return given[0]
+	}
+	return strings.Join(given[:len(given)-1], ", ") + " and " + given[len(given)-1]
 }
 
 // resolveTask checks --task and --own-box, and turns --own-box into the
@@ -489,6 +516,8 @@ type claudeTarget struct {
 	needsCopy bool
 	// ephemeral: the box is this run's, deleted by end.
 	ephemeral bool
+	// created: this run created the box (with newBoxLabels).
+	created bool
 	// repoDirs, for a --repo run: the clones end checks are on GitHub
 	// (repoWorkPushed) instead of fetching them here; sess is the
 	// session that keeps the box while it runs.
@@ -513,7 +542,7 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 	if create && newBoxLabels == nil {
 		newBoxLabels = sessionLabels("box", dir, "")
 	}
-	box, _, err := connectClaudeBox(ctx, name, dir, create, setTTL)
+	box, created, err := connectClaudeBox(ctx, name, dir, create, setTTL)
 	if err != nil {
 		return nil, err
 	}
@@ -534,7 +563,7 @@ func openClaudeBox(ctx context.Context, create, setTTL bool) (*claudeTarget, err
 		box.close()
 		return nil, err
 	}
-	return &claudeTarget{dir: dir, name: name, box: box, needsCopy: needsCopy}, nil
+	return &claudeTarget{dir: dir, name: name, box: box, needsCopy: needsCopy, created: created}, nil
 }
 
 // useBoxMux makes the box's multiplexer -- the one its sessions were

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/cdalar/boxctl/internal/client"
 	"github.com/cdalar/boxctl/internal/config"
@@ -86,6 +87,9 @@ func modelSources(h *harness, cfg *config.Config) []modelSource {
 	srcs := []modelSource{{"--model", "--effort", claudeModelFlag, claudeEffortFlag}}
 	if h != nil && h.model != nil {
 		from := "harness " + h.label
+		if h.modelFrom != "" {
+			from = "harness " + h.modelFrom
+		}
 		srcs = append(srcs, modelSource{from, from, h.model.Model, h.model.Effort})
 	}
 	srcs = append(srcs, modelSource{envClaudeModel, envClaudeEffort, os.Getenv(envClaudeModel), os.Getenv(envClaudeEffort)})
@@ -101,10 +105,10 @@ func modelSources(h *harness, cfg *config.Config) []modelSource {
 // check.
 func resolveModel(args []string, srcs []modelSource) (modelChoice, error) {
 	var c modelChoice
-	if v, ok := passedFlag(args, "--model"); ok {
+	if v, ok := passedFlag(args, "--model"); ok && strings.TrimSpace(v) != "" {
 		c.model, c.modelFrom, c.passedModel = v, "-- --model", true
 	}
-	if v, ok := passedFlag(args, "--effort"); ok {
+	if v, ok := passedFlag(args, "--effort"); ok && strings.TrimSpace(v) != "" {
 		c.effort, c.effortFrom, c.passedEffort = v, "-- --effort", true
 	}
 	for _, s := range srcs {
@@ -115,10 +119,41 @@ func resolveModel(args []string, srcs []modelSource) (modelChoice, error) {
 			c.effort, c.effortFrom = strings.ToLower(e), s.effortFrom
 		}
 	}
+	// Both end up in the box's labels, which the server refuses with a
+	// control character in them -- after the box is asked for.
+	if strings.ContainsFunc(c.model, unicode.IsControl) {
+		return modelChoice{}, fmt.Errorf("model %q (from %s) has a control character in it", c.model, c.modelFrom)
+	}
+	if strings.ContainsFunc(c.effort, unicode.IsControl) {
+		return modelChoice{}, fmt.Errorf("effort %q (from %s) has a control character in it", c.effort, c.effortFrom)
+	}
 	if c.effort != "" && !c.passedEffort && !slices.Contains(claudeEfforts, c.effort) {
 		return modelChoice{}, fmt.Errorf("effort %q (from %s): use one of %s", c.effort, c.effortFrom, strings.Join(claudeEfforts, ", "))
 	}
 	return c, nil
+}
+
+// dropEmptyFlags removes a passed-through --model or --effort whose value
+// is empty (--model "", --model=): resolveModel treats it as not
+// given, so claude mustn't get it either -- after the --model boxctl
+// adds, it would be the one claude takes.
+func dropEmptyFlags(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if (a == "--model" || a == "--effort") && i+1 < len(args) && strings.TrimSpace(args[i+1]) == "" {
+			i++
+			continue
+		}
+		if v, ok := strings.CutPrefix(a, "--model="); ok && strings.TrimSpace(v) == "" {
+			continue
+		}
+		if v, ok := strings.CutPrefix(a, "--effort="); ok && strings.TrimSpace(v) == "" {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 // passedFlag finds flag's value in args: "flag value" or "flag=value".
@@ -158,41 +193,65 @@ func (c modelChoice) labels() map[string]string {
 	return l
 }
 
-// describe is the line printed before the box is created. settings is
-// what the copied Claude settings say, which applies where nothing is
-// chosen.
-func (c modelChoice) describe(settings harnessModel) string {
-	part := func(v, from, setting string) string {
-		switch {
-		case v != "":
+// modelSetting is what a settings file on the box says the model and
+// effort are: from names it in describe.
+type modelSetting struct {
+	from string
+	harnessModel
+}
+
+// describe is the line saying what the run uses. settings are what the
+// settings files on the box say, highest precedence first, which apply
+// where nothing is chosen.
+func (c modelChoice) describe(settings []modelSetting) string {
+	part := func(v, from string, setting func(modelSetting) string) string {
+		if v != "" {
 			return v + " (" + from + ")"
-		case setting != "":
-			return setting + " (your Claude settings)"
+		}
+		for _, s := range settings {
+			if v := setting(s); v != "" {
+				return v + " (" + s.from + ")"
+			}
 		}
 		return "Claude Code's default"
 	}
-	return "Model: " + part(c.model, c.modelFrom, settings.Model) + "; effort: " + part(c.effort, c.effortFrom, settings.Effort)
+	return "Model: " + part(c.model, c.modelFrom, func(s modelSetting) string { return s.Model }) +
+		"; effort: " + part(c.effort, c.effortFrom, func(s modelSetting) string { return s.Effort })
 }
 
-// localClaudeModel is what ~/.claude/settings.json -- copied to the box --
-// says the model and effort are, for describe.
-func localClaudeModel() harnessModel {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return harnessModel{}
+// boxModelSettings are the settings files that decide the model and effort
+// on the box when nothing is chosen: the harness's managed-settings.json
+// (/etc/claude-code, which beats user settings), then your copied
+// ~/.claude/settings.json.
+func boxModelSettings(h *harness) []modelSetting {
+	var out []modelSetting
+	if h != nil && slices.Contains(h.managed, "managed-settings.json") {
+		if m, ok := settingsModel(filepath.Join(h.dir, "managed-settings.json")); ok {
+			out = append(out, modelSetting{"harness " + h.label + "'s managed-settings.json", m})
+		}
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if home, err := os.UserHomeDir(); err == nil {
+		if m, ok := settingsModel(filepath.Join(home, ".claude", "settings.json")); ok {
+			out = append(out, modelSetting{"your Claude settings", m})
+		}
+	}
+	return out
+}
+
+// settingsModel is the model and effortLevel of a Claude settings file.
+func settingsModel(path string) (harnessModel, bool) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return harnessModel{}
+		return harnessModel{}, false
 	}
 	var s struct {
 		Model       string `json:"model"`
 		EffortLevel string `json:"effortLevel"`
 	}
 	if json.Unmarshal(data, &s) != nil {
-		return harnessModel{}
+		return harnessModel{}, false
 	}
-	return harnessModel{Model: s.Model, Effort: s.EffortLevel}
+	return harnessModel{Model: s.Model, Effort: s.EffortLevel}, true
 }
 
 // runModel is the running claude command's choice, which a box created
@@ -200,16 +259,23 @@ func localClaudeModel() harnessModel {
 // none (kilo): boxAgent.runs resets it.
 var runModel *modelChoice
 
-// chooseModel resolves the run's model and effort, says what they are and
-// makes them runModel. Everything here happens before a box is created.
-func chooseModel(args []string) (modelChoice, error) {
+// chooseModel resolves the run's model and effort and makes them
+// runModel, before any box is created; args comes back without an empty
+// passed-through --model or --effort (dropEmptyFlags). It doesn't say
+// what they are: announceModel does, once it's known a new session
+// starts -- one already running keeps its own model.
+func chooseModel(args []string) (modelChoice, []string, error) {
 	c, err := resolveModel(args, modelSources(claudeHarness, cfg))
 	if err != nil {
-		return c, err
+		return c, args, err
 	}
-	sayNote("%s", c.describe(localClaudeModel()))
 	runModel = &c
-	return c, nil
+	return c, dropEmptyFlags(args), nil
+}
+
+// announceModel prints the model and effort a new session gets.
+func announceModel(c modelChoice) {
+	sayNote("%s", c.describe(boxModelSettings(claudeHarness)))
 }
 
 // withModelLabels is labels plus the run's model and effort, for a new box.

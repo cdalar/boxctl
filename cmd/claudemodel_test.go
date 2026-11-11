@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -285,5 +286,142 @@ func TestInvalidEffortFailsFast(t *testing.T) {
 		if c != "GET /api/vms" {
 			t.Errorf("request before the effort was checked: %s", c)
 		}
+	}
+}
+
+// TestModelOnlyHarnessKeepsBuiltin: a harness that is only a model.json
+// has no rules, so it mustn't stand in for the built-in pr-only an
+// unattended run gets -- the run gets both. An attended run gets just the
+// model.
+func TestModelOnlyHarnessKeepsBuiltin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv(envClaudeModel, "")
+	t.Setenv(envClaudeEffort, "")
+	t.Cleanup(func() { claudeHarnessArg, claudeGoal, claudeIssue, claudeHarness = "", "", 0, nil })
+	def := filepath.Join(home, ".boxctl", "harness", "default")
+	writeHarnessFile(t, def, harnessModelFile, `{"model":"sonnet","effort":"low"}`)
+	explicit := t.TempDir()
+	writeHarnessFile(t, explicit, harnessModelFile, `{"model":"haiku"}`)
+
+	for _, tt := range []struct {
+		name, arg, goal string
+		issue           int
+		builtin         bool
+		model, from     string
+	}{
+		{name: "goal, default", goal: "fix it", builtin: true, model: "sonnet", from: "harness " + def},
+		{name: "issue, default", issue: 7, builtin: true, model: "sonnet", from: "harness " + def},
+		{name: "goal, explicit", arg: explicit, goal: "fix it", builtin: true, model: "haiku", from: "harness " + explicit},
+		{name: "attended, default", model: "sonnet", from: "harness " + def},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			claudeHarnessArg, claudeGoal, claudeIssue = tt.arg, tt.goal, tt.issue
+			cleanup, err := prepareHarness()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			h := claudeHarness
+			if h == nil {
+				t.Fatal("no harness")
+			}
+			if got := h.label == "built-in pr-only"; got != tt.builtin {
+				t.Errorf("built-in = %v, want %v (harness %s)", got, tt.builtin, h.label)
+			}
+			if tt.builtin && !h.rules() {
+				t.Error("the built-in carries no rules")
+			}
+			c, err := resolveModel(nil, modelSources(h, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.model != tt.model || c.modelFrom != tt.from {
+				t.Errorf("model %q from %q, want %q from %q", c.model, c.modelFrom, tt.model, tt.from)
+			}
+		})
+	}
+	claudeHarnessArg, claudeGoal = "none", "fix it"
+	if _, err := prepareHarness(); err != nil || claudeHarness != nil {
+		t.Errorf("--harness none: %+v, %v", claudeHarness, err)
+	}
+}
+
+func TestDescribeHarnessSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	writeHarnessFile(t, filepath.Join(home, ".claude"), "settings.json", `{"model":"fable","effortLevel":"high"}`)
+	dir := t.TempDir()
+	writeHarnessFile(t, dir, "managed-settings.json", `{"model":"haiku"}`)
+	h, err := loadHarness(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := modelChoice{}.describe(boxModelSettings(h))
+	want := "Model: haiku (harness " + dir + "'s managed-settings.json); effort: high (your Claude settings)"
+	if got != want {
+		t.Errorf("describe = %q\nwant       %q", got, want)
+	}
+	got = modelChoice{model: "sonnet", modelFrom: "--model"}.describe(boxModelSettings(nil))
+	if want := "Model: sonnet (--model); effort: high (your Claude settings)"; got != want {
+		t.Errorf("describe = %q, want %q", got, want)
+	}
+}
+
+func TestEmptyPassthroughNotGiven(t *testing.T) {
+	setModelFlags(t, "sonnet", "")
+	t.Setenv(envClaudeModel, "")
+	t.Setenv(envClaudeEffort, "")
+	for _, args := range [][]string{{"--model", ""}, {"--model="}, {"--model", " ", "--verbose"}} {
+		c, err := resolveModel(args, modelSources(nil, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.passedModel || c.model != "sonnet" || c.modelFrom != "--model" {
+			t.Errorf("%q: %+v", args, c)
+		}
+		out := append(c.args(), dropEmptyFlags(args)...)
+		if slices.Contains(out, "") || slices.Contains(out, " ") || slices.Contains(out, "--model=") {
+			t.Errorf("%q: claude gets %q", args, out)
+		}
+		if out[0] != "--model" || out[1] != "sonnet" || slices.Index(out[2:], "--model") >= 0 {
+			t.Errorf("%q: claude gets %q", args, out)
+		}
+	}
+	if got := dropEmptyFlags([]string{"--model", "opus", "x"}); len(got) != 3 {
+		t.Errorf("a real value was dropped: %q", got)
+	}
+}
+
+func TestModelControlCharRefused(t *testing.T) {
+	t.Setenv(envClaudeEffort, "")
+	for _, m := range []string{"son\nnet", "a\x1bb"} {
+		t.Setenv(envClaudeModel, m)
+		if _, err := resolveModel(nil, modelSources(nil, nil)); err == nil || !strings.Contains(err.Error(), "control character") {
+			t.Errorf("%q: err = %v", m, err)
+		}
+		if _, err := resolveModel([]string{"--model", m}, nil); err == nil {
+			t.Errorf("passed %q: accepted", m)
+		}
+	}
+}
+
+func TestReattachWarnsOfModel(t *testing.T) {
+	agent = claudeAgent
+	t.Cleanup(func() { claudePrompt = "" })
+	setModelFlags(t, "", "")
+	if got := newSessionOnly(nil); got != "" {
+		t.Errorf("nothing given: %q", got)
+	}
+	setModelFlags(t, "opus", "")
+	if got := newSessionOnly(nil); got != "--model" {
+		t.Errorf("--model: %q", got)
+	}
+	setModelFlags(t, "opus", "high")
+	claudePrompt = "hi"
+	if got := newSessionOnly([]string{"--verbose"}); got != "--prompt, --model, --effort and claude arguments" {
+		t.Errorf("all: %q", got)
 	}
 }

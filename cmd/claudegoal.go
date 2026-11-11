@@ -342,11 +342,12 @@ func runRepo(cmd *cobra.Command, args []string) error {
 	if err := checkRepoFlags(goal, claudeGitHub, conflicts); err != nil {
 		return err
 	}
-	model, err := chooseModel(args)
+	model, args, err := chooseModel(args)
 	if err != nil {
 		return err
 	}
 	// Every run here starts a new session, attended or not.
+	announceModel(model)
 	args = append(model.args(), args...)
 	switch claudeGitHub {
 	case githubStore, githubOff:

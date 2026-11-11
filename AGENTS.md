@@ -393,7 +393,10 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `prepareHarness` returns removes; `harness.dir` stays that temp
   directory and only `harness.label` says "built-in pr-only" -- `apply`
   tars from `dir`). `--harness pr-only` names that
-  built-in too, unless `~/.boxctl/harness/pr-only` exists -- yours wins. `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
+  built-in too, unless `~/.boxctl/harness/pr-only` exists -- yours wins.
+  A harness with only a `model.json` (`!harness.rules()`) never replaces
+  an unattended run's rules: `withRules` loads the built-in in its place
+  with its model (`harness.modelFrom` names where that came from). `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
 - `cmd/claudemodel.go` — `claude --model/--effort`: passed to claude on
   the box as its own `--model`/`--effort` flags (`modelChoice.args`,
   prepended to the passthrough args: the goal runner's `claude -p` line
@@ -402,12 +405,17 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `-- --model`/`--effort` passthrough, the flags, the harness's
   `model.json` (`loadHarnessModel`, never copied to the box),
   `BOXCTL_CLAUDE_MODEL`/`_EFFORT`, `config.Config`'s
-  `claude_model`/`claude_effort`; nothing passed leaves the copied
-  settings.json in charge. `chooseModel` runs before any box (bad
-  effort refused, the choice printed) and sets `runModel`, which
-  `withModelLabels` adds to a new box's labels and `relabelModel` to an
-  existing one's when a new session starts there (`boxctl.model`,
-  `boxctl.effort`); `modelText` reads them for `claude ls`'s MODEL
+  `claude_model`/`claude_effort`; nothing passed leaves the box's
+  settings in charge (`boxModelSettings`: the harness's
+  managed-settings.json, then the copied settings.json -- what
+  `describe` names). `chooseModel` runs before any box (bad effort or a
+  control character refused, an empty passthrough value dropped) and
+  sets `runModel`; `announceModel` prints the choice only once a new
+  session is known to start (`startSession`'s reattach warning names
+  `--model`/`--effort` instead). `withModelLabels` adds it to a new
+  box's labels and `relabelModel` to an existing one's when a new
+  session starts there -- not to a box this run created
+  (`claudeTarget.created`) -- (`boxctl.model`, `boxctl.effort`); `modelText` reads them for `claude ls`'s MODEL
   column (`printBoxes`'s `model` argument; `boxctl ls` has none) and
   `claude status`'s Model line. `boxAgent.runs` resets `runModel`, so
   kilo has none.
