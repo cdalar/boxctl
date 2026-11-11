@@ -513,6 +513,20 @@ type ExecResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+// MaxExecTimeout is the longest command boxctl-vms's exec endpoint
+// runs (default 30s); a larger timeout_seconds is silently replaced by
+// the 30s default server-side, so the CLI refuses it instead.
+const MaxExecTimeout = 5 * time.Minute
+
+// ValidateExecTimeout refuses a timeout the exec endpoint cannot honour:
+// not a whole number of seconds, under 1s or over MaxExecTimeout.
+func ValidateExecTimeout(d time.Duration) error {
+	if d < time.Second || d > MaxExecTimeout || d%time.Second != 0 {
+		return fmt.Errorf("timeout %s not supported: a one-shot command takes a whole number of seconds from 1s to %s (the server's maximum); for longer commands use \"boxctl ssh <box> --detach -- command\"", d, MaxExecTimeout)
+	}
+	return nil
+}
+
 // Exec runs command on name over SSH, no pty -- unlike the interactive
 // ssh session above (WebSocket+pty relay), stdout/stderr/exit code come
 // back cleanly separated, for a caller (a script, an AI agent) that
@@ -522,6 +536,9 @@ type ExecResult struct {
 // deadline is timeout plus headroom for the round trip, via doLong since
 // c.http's fixed 60s would otherwise cut off a longer-running command.
 func (c *Client) Exec(ctx context.Context, name, command string, timeout time.Duration) (*ExecResult, error) {
+	if err := ValidateExecTimeout(timeout); err != nil {
+		return nil, err
+	}
 	body := map[string]any{
 		"command":         command,
 		"timeout_seconds": int(timeout.Seconds()),
@@ -532,6 +549,11 @@ func (c *Client) Exec(ctx context.Context, name, command string, timeout time.Du
 	var result ExecResult
 	if err := c.doLong(ctx, http.MethodPost, "/api/vms/"+url.PathEscape(name)+"/exec", body, &result); err != nil {
 		return nil, err
+	}
+	// Whatever the server's wording, the limit that applied is the one
+	// sent (validated above, so the server did not substitute its own).
+	if strings.Contains(result.Error, "timed out") {
+		result.Error = fmt.Sprintf("command timed out after %s", timeout)
 	}
 	return &result, nil
 }

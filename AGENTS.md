@@ -185,7 +185,14 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `Enter ~ .` disconnect (tested). `ssh <name> -- command [args...]`
   bypasses all of that: it joins the words after `--` and runs them via
   `Client.Exec` (the same no-pty endpoint `exec` uses), relaying
-  stdout/stderr and exiting with the remote exit code.
+  stdout/stderr and exiting with the remote exit code. `-T` is checked by
+  `client.ValidateExecTimeout` (whole seconds, 1s..5m: boxctl-vms silently
+  swaps a larger value for its 30s default), for `exec` before it creates a
+  box, and `Client.Exec` words a timeout with the limit it sent.
+  `cmd/sshdetach.go`: `--detach -- cmd` starts it under nohup/setsid in
+  `~/.boxctl/detached/<id>/` (log, `status` = exit code) and `--wait
+  [--follow]` polls the `latest` run with short `Exec` calls; tested by
+  running the scripts for real behind a fake exec endpoint.
 - `cmd/portforward.go` — `port-forward`: a local listener per port spec,
   one `Client.DialPort` WebSocket (`GET /api/vms/{id}/port/{port}`,
   bearer token on the upgrade) per accepted TCP connection, raw bytes

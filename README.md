@@ -608,8 +608,17 @@ that signal doesn't exist on Windows.
 words after `--` are joined with spaces (like `ssh host -- cmd`) and sent
 to `POST /api/vms/{name}/exec`, the same no-pty endpoint `boxctl exec`
 uses. The command's stdout and stderr are relayed to yours and the process
-exits with the command's own exit code; `-T/--timeout` (default 30s, max
-5m) bounds how long it may run.
+exits with the command's own exit code; `-T/--timeout` (default 30s, whole
+seconds, max 5m -- the server's limit, so a larger value is refused rather
+than silently replaced by its 30s default) bounds how long it may run, and
+a timeout message names that limit.
+
+For anything longer, `boxctl ssh <name> --detach -- command` starts the
+command on the box (nohup/setsid, output in `~/.boxctl/detached/<id>/log`)
+and returns; `boxctl ssh <name> --wait [--follow]` polls with short exec
+calls until it ends and exits with its exit status (`--follow` streams the
+log). `boxctl exec -T` has the same 5m cap and is refused above it before a
+box is created.
 
 ## `port-forward`
 
