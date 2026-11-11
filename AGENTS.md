@@ -250,6 +250,11 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   keys that point at this machine), the Claude Code install, and `tmux
   new-session -A` (or herdr, below) running `claude`. It never syncs: once the project is
   on the box, the box's copy is the one Claude works on.
+  `cmd/claudeimports.go`: `copyClaudeConfig` also sends the files `~/.claude/CLAUDE.md`
+  imports with `@path` (`importedConfigFiles`: relative to the importing file,
+  `~/`, 5 levels, loops ignored, code spans/blocks skipped), only regular files
+  under `~/.claude` and never an excluded path; others warn. `kilo` copies
+  its own `AGENTS.md` verbatim and has no such import step.
   `cmd/claudegithub.go` is its GitHub side: `--github store` (the
   default) logs a token into the box's gh (`gh auth login --with-token`,
   then `gh auth setup-git`) before the project goes there, so a private
@@ -372,6 +377,15 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `--dangerously-skip-permissions` unless that variable is exactly the
   string `1` (not `true`/`yes`), so keep it that way. Whether the
   harness's deny rules still hold under the flag is not verified.
+- `cmd/imagepick.go` — the image of a new agent box: `--image`, else the
+  stack (`stacks`, `stackOfFiles`) matched against `/api/images`
+  (`pickImage`), else `claude-agent`; `sayNote` prints which and why.
+  `runRepo` (every `--repo`/`--goal`/`--issue` run) passes no local
+  directory to `connectClaudeBox`, so it picks through `runImage` and
+  hands the result over in `newBoxImage`: the cwd's project when there is
+  no `--repo`, else the first repository's root files from GitHub's
+  contents API (`repoRootFiles`, 5s, the run's token; errors mean the
+  default).
 - `cmd/claudeharness.go` — `claude --harness <dir|name>`: rules for the
   box's Claude that don't touch the local `~/.claude`. `CLAUDE.md` and
   `managed-settings.json` go to `/etc/claude-code/` (managed memory and
