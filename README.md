@@ -276,6 +276,14 @@ guardrail you didn't have to ask for. Anything chosen implicitly is
 announced on stderr. An attended run with no default directory gets no
 harness.
 
+`examples/harness/pr-visual` is `pr-only` plus rules for runs whose result
+someone will check by eye: screenshots, a video or a terminal recording of
+what was built, kept on the box in `/root/evidence/`; the checks CI runs,
+before the pull request; and two kinds of memory -- notes on the box image
+that earlier runs paid for, and a rule to leave repository lessons in that
+repository's `AGENTS.md`. Copy it to `~/.boxctl/harness/` to use it; its
+README says how it's kept current.
+
 **`--github` store, off -- and why a goal needs store.** `store` (the
 default) logs a token into the box's `gh`, where it stays until the box
 is destroyed: `BOXCTL_GITHUB_TOKEN` if set -- make it a fine-grained
