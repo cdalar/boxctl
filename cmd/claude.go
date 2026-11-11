@@ -145,6 +145,9 @@ func init() {
 	claudeCmd.Flags().IntVar(&claudeIssue, "issue", 0, "number of a GitHub issue for Claude to resolve unattended, ending in a pull request that closes it (one repository)")
 	claudeCmd.Flags().StringVar(&claudeAuth, "claude-auth", claudeAuthAuto, "how Claude on the box logs in: auto (the token boxctl claude login saved, else /login), token, login or api-key")
 	_ = claudeCmd.RegisterFlagCompletionFunc("claude-auth", cobra.FixedCompletions([]string{claudeAuthAuto, claudeAuthToken, claudeAuthLogin, claudeAuthAPIKey}, cobra.ShellCompDirectiveNoFileComp))
+	claudeCmd.Flags().StringVar(&claudeModelFlag, "model", "", "model for Claude on the box, passed to claude --model as given (an alias like sonnet, or a full name); default: a harness's "+harnessModelFile+", "+envClaudeModel+", claude_model in ~/.boxctl/config.json, else your Claude settings")
+	claudeCmd.Flags().StringVar(&claudeEffortFlag, "effort", "", "effort level for Claude on the box ("+strings.Join(claudeEfforts, ", ")+"); default: a harness's "+harnessModelFile+", "+envClaudeEffort+", claude_effort in ~/.boxctl/config.json, else your Claude settings")
+	_ = claudeCmd.RegisterFlagCompletionFunc("effort", cobra.FixedCompletions(claudeEfforts, cobra.ShellCompDirectiveNoFileComp))
 	rootCmd.AddCommand(claudeCmd)
 }
 
@@ -159,6 +162,10 @@ func runClaude(cmd *cobra.Command, args []string) error {
 	}
 	ctx := cmd.Context()
 	if err := checkSessionFlags(); err != nil {
+		return err
+	}
+	model, err := chooseModel(args)
+	if err != nil {
 		return err
 	}
 	// Everything that can fail here fails before any box is created or
@@ -236,6 +243,10 @@ func runClaude(cmd *cobra.Command, args []string) error {
 		args = append([]string{"--resume", claudeHandoff}, args...)
 	}
 	if !running {
+		// A new session gets the run's model; one already running keeps
+		// its own, and so does the box's label.
+		args = append(model.args(), args...)
+		relabelModel(ctx, name)
 		if env == "" && claudeAuth == claudeAuthAuto {
 			sayNote("Log Claude in on the box with /login -- or run boxctl claude login once, and every box's Claude is logged in")
 		}
@@ -713,7 +724,7 @@ func ensureClaudeBox(ctx context.Context, c *client.Client, name, dir string, cr
 	image := imageFor(ctx, c, dir)
 	detail := dim("(" + image + ", " + claudeSize + ")")
 	sp := startSpinner(fmt.Sprintf("Creating %s %s", bold(name), detail))
-	if _, err := c.Create(ctx, name, "", image, claudeSize, newBoxLabels); err != nil {
+	if _, err := c.Create(ctx, name, "", image, claudeSize, withModelLabels(newBoxLabels)); err != nil {
 		sp.fail(fmt.Sprintf("%s: %v", name, err))
 		return false, fmt.Errorf("creating %s: %w", name, err)
 	}

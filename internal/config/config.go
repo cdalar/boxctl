@@ -16,6 +16,11 @@ const DefaultAPIURL = "https://vms-backend.boxctl.io"
 type Config struct {
 	APIURL string `json:"api_url"`
 	Token  string `json:"token"`
+	// ClaudeModel and ClaudeEffort are boxctl claude's default model and
+	// effort, below --model/--effort, a harness's and the environment's
+	// (BOXCTL_CLAUDE_MODEL/BOXCTL_CLAUDE_EFFORT).
+	ClaudeModel  string `json:"claude_model,omitempty"`
+	ClaudeEffort string `json:"claude_effort,omitempty"`
 }
 
 func dir() (string, error) {

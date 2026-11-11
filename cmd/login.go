@@ -64,7 +64,13 @@ shells that won't have the variable.`,
 			return fmt.Errorf("that token didn't work against %s: %w", apiURL, err)
 		}
 
-		if err := config.Save(&config.Config{APIURL: apiURL, Token: token}); err != nil {
+		// Keep the rest of the file (boxctl claude's defaults, say).
+		saved, err := config.Load()
+		if err != nil {
+			saved = &config.Config{}
+		}
+		saved.APIURL, saved.Token = apiURL, token
+		if err := config.Save(saved); err != nil {
 			return fmt.Errorf("saving config: %w", err)
 		}
 		if email != "" {

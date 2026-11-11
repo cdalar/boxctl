@@ -380,6 +380,23 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   directory and only `harness.label` says "built-in pr-only" -- `apply`
   tars from `dir`). `--harness pr-only` names that
   built-in too, unless `~/.boxctl/harness/pr-only` exists -- yours wins. `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
+- `cmd/claudemodel.go` — `claude --model/--effort`: passed to claude on
+  the box as its own `--model`/`--effort` flags (`modelChoice.args`,
+  prepended to the passthrough args: the goal runner's `claude -p` line
+  and an attached session's `commandLine` alike; Claude Code 2.1.322's
+  `--effort` takes low/medium/high/xhigh/max). `resolveModel`'s order: a
+  `-- --model`/`--effort` passthrough, the flags, the harness's
+  `model.json` (`loadHarnessModel`, never copied to the box),
+  `BOXCTL_CLAUDE_MODEL`/`_EFFORT`, `config.Config`'s
+  `claude_model`/`claude_effort`; nothing passed leaves the copied
+  settings.json in charge. `chooseModel` runs before any box (bad
+  effort refused, the choice printed) and sets `runModel`, which
+  `withModelLabels` adds to a new box's labels and `relabelModel` to an
+  existing one's when a new session starts there (`boxctl.model`,
+  `boxctl.effort`); `modelText` reads them for `claude ls`'s MODEL
+  column (`printBoxes`'s `model` argument; `boxctl ls` has none) and
+  `claude status`'s Model line. `boxAgent.runs` resets `runModel`, so
+  kilo has none.
 - `cmd/agent.go`, `cmd/kilo.go` — `kilo`: the same for the Kilo CLI.
   A `boxAgent` is the little that differs between the two (name -- also
   the box prefix and the session's name -- binary, install dir, installer,

@@ -89,7 +89,7 @@ func claudeList(ctx context.Context) error {
 	if rows > 0 {
 		fmt.Println()
 	}
-	return printBoxes(ctx, vms, "table", true, "")
+	return printBoxes(ctx, vms, "table", true, "", true)
 }
 
 // printRunStatus is claude status's report on one run box, from its
@@ -99,7 +99,7 @@ func printRunStatus(vm client.VM) {
 	if updated != "-" {
 		goal += " (" + updated + ")"
 	}
-	fmt.Printf("Box:     %s (%s)\nRun:     %s\nGoal:    %s\nBranch:  %s\nPR:      %s\n", vm.Name, vm.State, runText(vm), goal, branch, pr)
+	fmt.Printf("Box:     %s (%s)\nRun:     %s\nGoal:    %s\nModel:   %s\nBranch:  %s\nPR:      %s\n", vm.Name, vm.State, runText(vm), goal, modelText(vm), branch, pr)
 	if st, _ := parseGoalStatus(vm.RunStatus); st != nil && st.Error != "" {
 		fmt.Printf("Error:   %s\n", st.Error)
 	}

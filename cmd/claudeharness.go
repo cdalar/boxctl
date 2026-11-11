@@ -42,6 +42,7 @@ type harness struct {
 	managed []string // files for harnessManagedDir, relative to dir
 	config  []string // files for ~/.claude, relative to dir
 	size    int64
+	model   *harnessModel // its model.json (harnessModelFile), if any
 }
 
 // errNoHarness is resolveHarness's "nothing by that name": the one
@@ -101,9 +102,12 @@ func loadHarness(dir string) (*harness, error) {
 		return nil, err
 	}
 	h.config, h.size = files, h.size+size
-	if len(h.managed) == 0 && len(h.config) == 0 {
-		return nil, fmt.Errorf("harness %s has none of %s, %s", dir,
-			strings.Join(harnessManaged, ", "), strings.Join(harnessConfigEntries, ", "))
+	if h.model, err = loadHarnessModel(dir); err != nil {
+		return nil, err
+	}
+	if len(h.managed) == 0 && len(h.config) == 0 && h.model == nil {
+		return nil, fmt.Errorf("harness %s has none of %s, %s, %s", dir,
+			strings.Join(harnessManaged, ", "), strings.Join(harnessConfigEntries, ", "), harnessModelFile)
 	}
 	return h, nil
 }
@@ -111,6 +115,9 @@ func loadHarness(dir string) (*harness, error) {
 // apply puts the harness on the box. Its ~/.claude entries overwrite
 // your configuration's, so call it after copyClaudeConfig, not alongside.
 func (h *harness) apply(ctx context.Context, box *boxSSH) error {
+	if len(h.managed) == 0 && len(h.config) == 0 {
+		return nil // only a model.json, which is boxctl's, not the box's
+	}
 	progress := newUploadProgress("Copying the harness "+bold(h.label), h.size)
 	if len(h.managed) > 0 {
 		err := streamTar(ctx, box, "mkdir -p "+harnessManagedDir+" && tar -xzf - -C "+harnessManagedDir+" && chmod 0644 "+harnessManagedDir+"/*", progress,
