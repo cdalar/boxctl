@@ -13,8 +13,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -513,6 +515,34 @@ type ExecResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+var timedOutAfter = regexp.MustCompile(`timed out after (\S+)`)
+
+// HTTPStatus is the HTTP status of an error from the API, or 0 when err
+// isn't one (a network failure, say).
+func HTTPStatus(err error) int {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae.status
+	}
+	return 0
+}
+
+// IsTransient reports whether err is worth retrying: a network failure
+// or a 5xx (a deploy restarting the API answers 502/503, or 500 "no VM
+// state reported yet"). A cancelled context, a 4xx and anything else
+// is not.
+func IsTransient(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if st := HTTPStatus(err); st != 0 {
+		return st >= 500
+	}
+	var ue *url.Error
+	var ne net.Error
+	return errors.As(err, &ue) || errors.As(err, &ne) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
 // MaxExecTimeout is the longest command boxctl-vms's exec endpoint
 // runs (default 30s); a larger timeout_seconds is silently replaced by
 // the 30s default server-side, so the CLI refuses it instead.
@@ -550,10 +580,14 @@ func (c *Client) Exec(ctx context.Context, name, command string, timeout time.Du
 	if err := c.doLong(ctx, http.MethodPost, "/api/vms/"+url.PathEscape(name)+"/exec", body, &result); err != nil {
 		return nil, err
 	}
-	// Whatever the server's wording, the limit that applied is the one
-	// sent (validated above, so the server did not substitute its own).
+	// The server's message is passed through; when the limit it names is
+	// not the one asked for, say both.
 	if strings.Contains(result.Error, "timed out") {
-		result.Error = fmt.Sprintf("command timed out after %s", timeout)
+		if m := timedOutAfter.FindStringSubmatch(result.Error); m != nil {
+			if d, err := time.ParseDuration(m[1]); err == nil && d != timeout {
+				result.Error += fmt.Sprintf(" (this client asked for %s)", timeout)
+			}
+		}
 	}
 	return &result, nil
 }

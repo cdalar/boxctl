@@ -623,11 +623,25 @@ than silently replaced by its 30s default) bounds how long it may run, and
 a timeout message names that limit.
 
 For anything longer, `boxctl ssh <name> --detach -- command` starts the
-command on the box (nohup/setsid, output in `~/.boxctl/detached/<id>/log`)
-and returns; `boxctl ssh <name> --wait [--follow]` polls with short exec
-calls until it ends and exits with its exit status (`--follow` streams the
-log). `boxctl exec -T` has the same 5m cap and is refused above it before a
-box is created.
+command on the box (nohup/setsid, under your login shell -- bash, as
+`-- command` uses -- falling back to sh; output in
+`~/.boxctl/detached/<id>/log`), prints the run's id and returns.
+`boxctl ssh <name> --wait [<id>] [--follow]` polls with short exec calls
+until it ends and exits with its exit status (`--follow` streams the log
+byte for byte; without an id it is the latest run). `-T` doesn't apply to
+either and is refused with them. A failed poll (network, 5xx) is retried
+with backoff for up to 5 minutes. If the wait itself ends, the exit status
+is **250** (box or API unreachable, no such run, box paused) or **251**
+(the command is gone and left no exit status: killed, out of memory, box
+rebooted), with the reason on stderr. The last 20 runs are kept on the
+box; the next `--detach` removes older finished ones.
+
+A detached command does **not** keep the box awake: only API calls count as
+use (`--wait`'s polling does), so a box left alone is paused at its idle
+TTL (default 1h) and the command with it; `--wait` then says the box is
+paused and to `boxctl resume` it. Give `--detach` a longer `--idle-ttl`
+(10m to 720h, set first) for a long unattended run. `boxctl exec -T` has the
+same 5m cap and is refused above it before a box is created.
 
 ## `port-forward`
 
