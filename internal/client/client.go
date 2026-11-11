@@ -13,8 +13,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -513,6 +515,48 @@ type ExecResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+var timedOutAfter = regexp.MustCompile(`timed out after (\S+)`)
+
+// HTTPStatus is the HTTP status of an error from the API, or 0 when err
+// isn't one (a network failure, say).
+func HTTPStatus(err error) int {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae.status
+	}
+	return 0
+}
+
+// IsTransient reports whether err is worth retrying: a network failure
+// or a 5xx (a deploy restarting the API answers 502/503, or 500 "no VM
+// state reported yet"). A cancelled context, a 4xx and anything else
+// is not.
+func IsTransient(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if st := HTTPStatus(err); st != 0 {
+		return st >= 500
+	}
+	var ue *url.Error
+	var ne net.Error
+	return errors.As(err, &ue) || errors.As(err, &ne) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// MaxExecTimeout is the longest command boxctl-vms's exec endpoint
+// runs (default 30s); a larger timeout_seconds is silently replaced by
+// the 30s default server-side, so the CLI refuses it instead.
+const MaxExecTimeout = 5 * time.Minute
+
+// ValidateExecTimeout refuses a timeout the exec endpoint cannot honour:
+// not a whole number of seconds, under 1s or over MaxExecTimeout.
+func ValidateExecTimeout(d time.Duration) error {
+	if d < time.Second || d > MaxExecTimeout || d%time.Second != 0 {
+		return fmt.Errorf("timeout %s not supported: a one-shot command takes a whole number of seconds from 1s to %s (the server's maximum); for longer commands use \"boxctl ssh <box> --detach -- command\"", d, MaxExecTimeout)
+	}
+	return nil
+}
+
 // Exec runs command on name over SSH, no pty -- unlike the interactive
 // ssh session above (WebSocket+pty relay), stdout/stderr/exit code come
 // back cleanly separated, for a caller (a script, an AI agent) that
@@ -522,6 +566,9 @@ type ExecResult struct {
 // deadline is timeout plus headroom for the round trip, via doLong since
 // c.http's fixed 60s would otherwise cut off a longer-running command.
 func (c *Client) Exec(ctx context.Context, name, command string, timeout time.Duration) (*ExecResult, error) {
+	if err := ValidateExecTimeout(timeout); err != nil {
+		return nil, err
+	}
 	body := map[string]any{
 		"command":         command,
 		"timeout_seconds": int(timeout.Seconds()),
@@ -532,6 +579,15 @@ func (c *Client) Exec(ctx context.Context, name, command string, timeout time.Du
 	var result ExecResult
 	if err := c.doLong(ctx, http.MethodPost, "/api/vms/"+url.PathEscape(name)+"/exec", body, &result); err != nil {
 		return nil, err
+	}
+	// The server's message is passed through; when the limit it names is
+	// not the one asked for, say both.
+	if strings.Contains(result.Error, "timed out") {
+		if m := timedOutAfter.FindStringSubmatch(result.Error); m != nil {
+			if d, err := time.ParseDuration(m[1]); err == nil && d != timeout {
+				result.Error += fmt.Sprintf(" (this client asked for %s)", timeout)
+			}
+		}
 	}
 	return &result, nil
 }
