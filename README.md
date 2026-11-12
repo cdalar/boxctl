@@ -765,16 +765,16 @@ boxctl expose my-box 3000 --no-basic-auth             # remove it
 ```
 
 Visitors then get the browser's username/password prompt. The password
-is read from `BOXCTL_EXPOSE_PASSWORD`, else the first line of stdin with
-`--basic-auth-password-stdin`, else a hidden prompt on a terminal; there
+is read from the first line of stdin with `--basic-auth-password-stdin`
+(which wins), else `BOXCTL_EXPOSE_PASSWORD`, else a hidden prompt on a
+terminal (a bad password is refused right after the first entry); there
 is no password flag, so it never reaches shell history or `ps`. The same
 command on an already-exposed port changes the credentials and keeps the
 URL; with neither option they stay as they are. Username: 1-64 of
 `A-Za-z0-9._@+-`; password: 8-128 printable ASCII characters, no spaces,
-no `{` or `}` (checked locally, and by the server, whose 400 is shown with
-these rules). A server without its secret key answers 409 to a password,
+no `{` or `}` (checked locally, and by the server, whose 400 text is shown). A server without its secret key answers 409 to a password,
 which `expose` explains. `expose`, `expose ls` and `-o json` show the
-protected URLs in an AUTH column / `basic_auth`, `basic_auth_user` (never
+protected URLs in an AUTH column (after AGE, only when some URL is protected) / `basic_auth`, `basic_auth_user` (never
 the password), and `expose` prints a `curl -u <user> <url>` hint on stderr.
 
 The command waits up to 30 seconds for the URL to report `active`

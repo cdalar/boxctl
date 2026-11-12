@@ -64,7 +64,9 @@ Two things the app inside the box has to do:
     hostname in the app, or pass --host-header localhost:3000 to have
     requests arrive under that name instead.
 
-To put a username and password in front of the URL:
+To put a username and password in front of the URL (the password comes from
+--basic-auth-password-stdin if given, else BOXCTL_EXPOSE_PASSWORD, else a
+hidden prompt):
 
   boxctl expose my-box 3000 --basic-auth-user demo      # asks for the password (hidden)
   echo "$PW" | boxctl expose my-box 3000 --basic-auth-user demo --basic-auth-password-stdin
@@ -181,16 +183,45 @@ type boxIngress struct {
 }
 
 func printBoxIngressTable(rows []boxIngress) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "BOX\tPORT\tSTATUS\tURL\tAUTH\tAGE"); err != nil {
+	return writeBoxIngressTable(os.Stdout, rows)
+}
+
+// writeBoxIngressTable prints the table. The AUTH column comes after AGE
+// and only when some URL is protected, so a listing without protected
+// URLs is what it was before basic auth existed.
+func writeBoxIngressTable(out io.Writer, rows []boxIngress) error {
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	list := make([]client.Ingress, len(rows))
+	for i, r := range rows {
+		list[i] = r.Ingress
+	}
+	showAuth := anyProtected(list)
+	head := "BOX\tPORT\tSTATUS\tURL\tAGE"
+	if showAuth {
+		head += "\tAUTH"
+	}
+	if _, err := fmt.Fprintln(w, head); err != nil {
 		return err
 	}
 	for _, r := range rows {
-		if _, err := fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\n", r.Box, r.Port, r.Status, r.URL, authText(r.Ingress), age(r.CreatedAt)); err != nil {
+		line := fmt.Sprintf("%s\t%d\t%s\t%s\t%s", r.Box, r.Port, r.Status, r.URL, age(r.CreatedAt))
+		if showAuth {
+			line += "\t" + authText(r.Ingress)
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
 	}
 	return w.Flush()
+}
+
+func anyProtected(list []client.Ingress) bool {
+	for _, in := range list {
+		if in.BasicAuth {
+			return true
+		}
+	}
+	return false
 }
 
 var unexposeCmd = &cobra.Command{
@@ -294,8 +325,19 @@ func exposeNote(name string, in *client.Ingress) string {
 }
 
 func printIngressTable(list []client.Ingress) error {
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "PORT\tSTATUS\tURL\tHOST HEADER\tAUTH\tAGE"); err != nil {
+	return writeIngressTable(os.Stdout, list)
+}
+
+// writeIngressTable prints one box's table; AUTH is last and only shown
+// when a URL is protected (see writeBoxIngressTable).
+func writeIngressTable(out io.Writer, list []client.Ingress) error {
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	showAuth := anyProtected(list)
+	head := "PORT\tSTATUS\tURL\tHOST HEADER\tAGE"
+	if showAuth {
+		head += "\tAUTH"
+	}
+	if _, err := fmt.Fprintln(w, head); err != nil {
 		return err
 	}
 	for _, in := range list {
@@ -303,7 +345,11 @@ func printIngressTable(list []client.Ingress) error {
 		if hostHeader == "" {
 			hostHeader = "-"
 		}
-		if _, err := fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", in.Port, in.Status, in.URL, hostHeader, authText(in), age(in.CreatedAt)); err != nil {
+		line := fmt.Sprintf("%d\t%s\t%s\t%s\t%s", in.Port, in.Status, in.URL, hostHeader, age(in.CreatedAt))
+		if showAuth {
+			line += "\t" + authText(in)
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
 			return err
 		}
 	}
@@ -333,7 +379,7 @@ func curlHint(in *client.Ingress) string {
 }
 
 // exposeOptions turns the flags into the request's options, reading the
-// password -- environment, then --basic-auth-password-stdin, then a hidden
+// password -- --basic-auth-password-stdin, then the environment, then a hidden
 // prompt -- when credentials are being set. stdin is what a terminal
 // check and the prompt use.
 func exposeOptions(r io.Reader, stdin *os.File) (client.ExposeOptions, error) {
@@ -352,11 +398,14 @@ func exposeOptions(r io.Reader, stdin *os.File) (client.ExposeOptions, error) {
 		}
 		return opts, nil
 	}
+	if err := client.ValidateBasicAuthUser(exposeAuthUser); err != nil {
+		return opts, err
+	}
 	pw, err := readExposePassword(os.Getenv(exposePasswordEnv), r, stdin, exposePasswordStdin)
 	if err != nil {
 		return opts, err
 	}
-	if err := client.ValidateBasicAuth(exposeAuthUser, pw); err != nil {
+	if err := client.ValidateBasicAuthPassword(pw); err != nil {
 		return opts, err
 	}
 	user := exposeAuthUser
@@ -365,25 +414,32 @@ func exposeOptions(r io.Reader, stdin *os.File) (client.ExposeOptions, error) {
 	return opts, nil
 }
 
-// readExposePassword returns fromEnv when set, else the first line of r
-// when fromStdin, else a hidden, confirmed prompt on stdin's terminal.
+// trimNewline drops one trailing "\n" or "\r\n", nothing more.
+func trimNewline(s string) string {
+	s = strings.TrimSuffix(s, "\n")
+	return strings.TrimSuffix(s, "\r")
+}
+
+// readExposePassword returns the first line of r when fromStdin, else
+// fromEnv when set, else a hidden, confirmed prompt on stdin's terminal.
+// An explicit flag beats the environment.
 func readExposePassword(fromEnv string, r io.Reader, stdin *os.File, fromStdin bool) (string, error) {
-	if fromEnv != "" {
-		return fromEnv, nil
-	}
 	if fromStdin {
 		line, err := bufio.NewReader(r).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return "", fmt.Errorf("reading password from stdin: %w", err)
 		}
-		pw := strings.TrimRight(line, "\r\n")
+		pw := trimNewline(line)
 		if pw == "" {
 			return "", errors.New("no password on stdin")
 		}
 		return pw, nil
 	}
+	if fromEnv != "" {
+		return trimNewline(fromEnv), nil
+	}
 	if stdin == nil || !term.IsTerminal(int(stdin.Fd())) {
-		return "", errors.New("no password: set " + exposePasswordEnv + ", pass --basic-auth-password-stdin, or run this on a terminal to be asked")
+		return "", errors.New("no password: pass --basic-auth-password-stdin, set " + exposePasswordEnv + ", or run this on a terminal to be asked")
 	}
 	fd := int(stdin.Fd())
 	_, _ = fmt.Fprintf(os.Stderr, "Password for %s (input hidden): ", exposeAuthUser)
@@ -391,6 +447,9 @@ func readExposePassword(fromEnv string, r io.Reader, stdin *os.File, fromStdin b
 	_, _ = fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return "", fmt.Errorf("reading password: %w", err)
+	}
+	if err := client.ValidateBasicAuthPassword(string(a)); err != nil {
+		return "", err
 	}
 	_, _ = fmt.Fprint(os.Stderr, "Repeat it: ")
 	b, err := term.ReadPassword(fd)
@@ -406,7 +465,7 @@ func readExposePassword(fromEnv string, r io.Reader, stdin *os.File, fromStdin b
 
 func init() {
 	exposeCmd.Flags().StringVar(&exposeAuthUser, "basic-auth-user", "", "require this username (and a password, asked for) to open the URL; on an exposed port, changes the credentials")
-	exposeCmd.Flags().BoolVar(&exposePasswordStdin, "basic-auth-password-stdin", false, "read the basic-auth password from the first line of stdin (or set "+exposePasswordEnv+")")
+	exposeCmd.Flags().BoolVar(&exposePasswordStdin, "basic-auth-password-stdin", false, "read the basic-auth password from the first line of stdin (wins over "+exposePasswordEnv+")")
 	exposeCmd.Flags().BoolVar(&exposeNoAuth, "no-basic-auth", false, "remove the URL's username and password")
 	exposeCmd.Flags().StringVar(&exposeHostHeader, "host-header", "", "Host header the app should see instead of the public hostname (e.g. localhost:3000)")
 	exposeCmd.Flags().BoolVar(&exposeNoWait, "no-wait", false, "print the URL without waiting for it to start serving")

@@ -405,18 +405,44 @@ const BasicAuthRules = "the username is 1-64 characters from A-Z a-z 0-9 . _ @ +
 // ValidateBasicAuth checks credentials the way the server will, so a
 // mistake is reported before anything is sent.
 func ValidateBasicAuth(user, password string) error {
-	if !basicAuthUserRE.MatchString(user) {
-		return fmt.Errorf("invalid basic-auth username: %s", BasicAuthRules)
+	if err := ValidateBasicAuthUser(user); err != nil {
+		return err
 	}
+	return ValidateBasicAuthPassword(password)
+}
+
+// ValidateBasicAuthUser checks the username alone, naming only its rule.
+func ValidateBasicAuthUser(user string) error {
+	if !basicAuthUserRE.MatchString(user) {
+		return errors.New("invalid basic-auth username: it must be 1-64 characters from A-Z a-z 0-9 . _ @ + -")
+	}
+	return nil
+}
+
+// ValidateBasicAuthPassword checks the password alone, naming only its rule.
+func ValidateBasicAuthPassword(password string) error {
 	if len(password) < 8 || len(password) > 128 {
-		return fmt.Errorf("invalid basic-auth password: %s", BasicAuthRules)
+		return errors.New("invalid basic-auth password: it must be 8-128 characters")
 	}
 	for _, r := range password {
 		if r <= ' ' || r > '~' || r == '{' || r == '}' {
-			return fmt.Errorf("invalid basic-auth password: %s", BasicAuthRules)
+			return errors.New("invalid basic-auth password: it must be printable ASCII with no spaces and no { or }")
 		}
 	}
 	return nil
+}
+
+// serverMessage is a response body as text: the "error" of a JSON object
+// body, else the trimmed body.
+func serverMessage(body string) string {
+	body = strings.TrimSpace(body)
+	var e struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal([]byte(body), &e) == nil && strings.TrimSpace(e.Error) != "" {
+		return strings.TrimSpace(e.Error)
+	}
+	return body
 }
 
 // Expose gives port on box name a public HTTPS URL. Exposing a port that
@@ -440,7 +466,10 @@ func (c *Client) Expose(ctx context.Context, name string, port int, opts ExposeO
 			if errors.As(err, &ae) {
 				switch ae.status {
 				case http.StatusBadRequest:
-					return nil, fmt.Errorf("the server refused the request: %s\nBasic auth: %s", strings.TrimSpace(ae.body), BasicAuthRules)
+					if msg := serverMessage(ae.body); msg != "" {
+						return nil, fmt.Errorf("the server refused the request: %s", msg)
+					}
+					return nil, fmt.Errorf("the server refused the request; basic auth: %s", BasicAuthRules)
 				case http.StatusConflict:
 					if opts.BasicAuthPassword != "" {
 						return nil, errors.New("this server can't store passwords for public URLs (it has no secret key configured) -- ask its operator, or expose the port without a password")
