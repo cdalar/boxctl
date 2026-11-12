@@ -30,6 +30,10 @@ type Client struct {
 	http    *http.Client
 }
 
+// PublicURLsDocs is the docs page named when an account's plan has no
+// public URLs; cmd sets it from the dashboard setting.
+var PublicURLsDocs = "https://boxctl.io/docs/public-urls"
+
 func New(baseURL, token string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -372,7 +376,7 @@ func ingressUnavailable(err error) error {
 	// server can be, so say what to use meanwhile rather than echo its
 	// one line.
 	if errors.As(err, &ae) && ae.status == http.StatusPaymentRequired {
-		return errors.New("public URLs aren't included in this account's plan -- see https://boxctl.io/docs/public-urls\n" +
+		return errors.New("public URLs aren't included in this account's plan -- see " + PublicURLsDocs + "\n" +
 			"To reach a port yourself without making it public, use `boxctl port-forward`, which is free on every plan")
 	}
 	return err

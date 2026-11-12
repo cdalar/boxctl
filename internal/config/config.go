@@ -15,7 +15,10 @@ const DefaultAPIURL = "https://vms-backend.boxctl.io"
 
 type Config struct {
 	APIURL string `json:"api_url"`
-	Token  string `json:"token"`
+	// DashboardURL is the origin of the web dashboard (token page, docs
+	// links in messages); empty means the hosted one. Never dialed.
+	DashboardURL string `json:"dashboard_url,omitempty"`
+	Token        string `json:"token"`
 	// ClaudeModel and ClaudeEffort are boxctl claude's default model and
 	// effort, below --model/--effort, a harness's and the environment's
 	// (BOXCTL_CLAUDE_MODEL/BOXCTL_CLAUDE_EFFORT).
