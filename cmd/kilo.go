@@ -71,6 +71,7 @@ box, or boxctl kilo fetch brings its work here.
   boxctl kilo -- --model provider/model # arguments for kilo itself
   boxctl kilo --task auth               # a second Kilo, on its own branch
   boxctl kilo --env OPENAI_API_KEY      # a provider key from this shell
+  boxctl kilo --handoff ses_...         # continue a local session on a box
 
 Kilo on the box is logged in as it is here: the credentials kilo auth
 login saved on this machine, and the environment variables your Kilo
@@ -83,6 +84,14 @@ Your configuration (~/.config/kilo: kilo.json(c), AGENTS.md, agents,
 commands, modes, skills) is copied as it is, so a provider it points at
 on this machine or your own network isn't reachable from the box.
 
+--handoff <session-id> continues one of this machine's Kilo sessions on
+the box: its export is copied (never Kilo's database or credentials) and
+imported in the project directory there, and Kilo starts resumed on it.
+It refuses while another Kilo runs on the box, and can't be combined with
+--task, --own-box or --prompt, nor with --continue, --session or --fork
+after --. --project picks the project when you aren't in it. On a run
+that deletes its box, the continued conversation is on the box only.
+
 GitHub (--github), tasks (--task, --own-box) and the idle TTL work as
 they do for boxctl claude.`,
 	RunE: kiloAgent.runs(runKilo),
@@ -92,6 +101,7 @@ func init() {
 	kiloAgent.addFlags(kiloCmd)
 	kiloCmd.Flags().StringVar(&kiloAuth, "kilo-auth", kiloAuthAuto, "how Kilo on the box logs in: auto (this machine's Kilo credentials, passed in its environment) or login (on the box)")
 	_ = kiloCmd.RegisterFlagCompletionFunc("kilo-auth", cobra.FixedCompletions([]string{kiloAuthAuto, kiloAuthLogin}, cobra.ShellCompDirectiveNoFileComp))
+	kiloCmd.Flags().StringVar(&claudeHandoff, "handoff", "", "continue this local Kilo session (its ID, from kilo session list) on the box; not with --task, --own-box, --prompt or a session choice after --")
 	kiloCmd.Flags().StringArrayVarP(&kiloEnvNames, "env", "e", nil, "also pass this environment variable from here to a newly started Kilo (repeatable)")
 	kiloCmd.AddCommand(kiloAgent.lsCmd(), kiloAgent.fetchCmd(), kiloAgent.pushCmd())
 	rootCmd.AddCommand(kiloCmd)
@@ -99,12 +109,24 @@ func init() {
 
 func runKilo(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
+	// Before checkSessionFlags, which turns --own-box's task into a box name.
+	if err := checkKiloHandoffFlags(args); err != nil {
+		return err
+	}
 	if err := checkSessionFlags(); err != nil {
 		return err
 	}
 	configDir, dataDir, err := kiloDirs()
 	if err != nil {
 		return err
+	}
+	// The local session is found and vetted before any box is created or
+	// touched.
+	var handoff *kiloSession
+	if claudeHandoff != "" {
+		if handoff, err = findKiloSession(ctx, dataDir, claudeHandoff); err != nil {
+			return err
+		}
 	}
 	// Before any box is created or touched, like Claude's credentials.
 	env, err := kiloEnv(kiloAuth, configDir, dataDir, kiloEnvNames)
@@ -127,6 +149,21 @@ func runKilo(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("installing Kilo on %s: %w", t.name, err)
 	}
 	running := sessionRunning(ctx, t.box, sess)
+	if handoff != nil {
+		if running {
+			return fmt.Errorf("a Kilo session is already running there -- attach with %s and quit it, then hand off again", sess.attachHint(t.name))
+		}
+		if err := checkNoKiloOnBox(ctx, t.box, t.name); err != nil {
+			return err
+		}
+		if err := copyKiloSession(ctx, t.box, sess.dir, handoff); err != nil {
+			return err
+		}
+		args = kiloResumeArgs(handoff.ID, args)
+		if t.ephemeral {
+			sayNote("The continued conversation lives on %s only, and the box is deleted when Kilo exits (--keep keeps it)", t.name)
+		}
+	}
 	if !running {
 		if env == "" {
 			fmt.Fprintln(os.Stderr, "Kilo on the box has no credentials from here: log it in there with /connect.")
@@ -267,4 +304,57 @@ func kiloAuthContent(p string) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// checkKiloHandoffFlags refuses --handoff together with what
+// docs/plans/kilo-handoff.md rules out, naming both flags; nothing else
+// is checked without --handoff.
+func checkKiloHandoffFlags(args []string) error {
+	if claudeHandoff == "" {
+		return nil
+	}
+	for _, f := range []struct {
+		name string
+		set  bool
+	}{
+		{"--repo", len(claudeRepos) > 0}, {"--goal", claudeGoal != ""}, {"--issue", claudeIssue != 0},
+		{"--task", claudeTask != ""}, {"--own-box", claudeOwnBox}, {"--prompt", claudePrompt != ""},
+	} {
+		if f.set {
+			return fmt.Errorf("--handoff can't be combined with %s", f.name)
+		}
+	}
+	for _, a := range args {
+		name, _, _ := strings.Cut(a, "=")
+		switch name {
+		case "--continue", "-c", "--session", "-s", "--fork":
+			return fmt.Errorf("--handoff can't be combined with %s after --: the session is already chosen", name)
+		}
+	}
+	return nil
+}
+
+// kiloResumeArgs starts Kilo on session id, ahead of the caller's arguments.
+func kiloResumeArgs(id string, args []string) []string {
+	return append([]string{"--session", id}, args...)
+}
+
+// kiloRunningScript prints running or none; unknown without pgrep.
+const kiloRunningScript = `if ! command -v pgrep >/dev/null 2>&1; then echo unknown; elif pgrep -x kilo >/dev/null; then echo running; else echo none; fi`
+
+// checkNoKiloOnBox refuses a handoff while any Kilo process runs on the
+// box (one started by hand isn't boxctl's session): the import would not
+// show in it. Not knowing counts as an error, not as none.
+func checkNoKiloOnBox(ctx context.Context, box *boxSSH, name string) error {
+	out, err := box.output(ctx, kiloRunningScript)
+	if err != nil {
+		return fmt.Errorf("checking for a running Kilo on %s: %w", name, err)
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "none":
+		return nil
+	case "running":
+		return fmt.Errorf("another Kilo is running on %s -- quit it there (check with pgrep -x kilo), then hand off again, or hand off to a fresh box", name)
+	}
+	return fmt.Errorf("couldn't tell whether Kilo is running on %s (no pgrep there)", name)
 }

@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"context"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -89,5 +92,105 @@ func TestKiloEnv(t *testing.T) {
 	write(t, filepath.Join(data, "auth.json"), "not json")
 	if _, err := kiloEnv(kiloAuthAuto, config, data, nil); err == nil {
 		t.Error("a broken auth.json was passed on")
+	}
+}
+
+func withHandoffFlags(t *testing.T, set func()) {
+	t.Helper()
+	oh, or, og, oi, ot, oo, op := claudeHandoff, claudeRepos, claudeGoal, claudeIssue, claudeTask, claudeOwnBox, claudePrompt
+	t.Cleanup(func() {
+		claudeHandoff, claudeRepos, claudeGoal, claudeIssue, claudeTask, claudeOwnBox, claudePrompt = oh, or, og, oi, ot, oo, op
+	})
+	claudeHandoff, claudeRepos, claudeGoal, claudeIssue, claudeTask, claudeOwnBox, claudePrompt = "", nil, "", 0, "", false, ""
+	set()
+}
+
+func TestKiloHandoffFlagConflicts(t *testing.T) {
+	cases := []struct {
+		name string
+		set  func()
+		args []string
+		want string // "" = accepted
+	}{
+		{"plain", func() { claudeHandoff = testKiloID }, nil, ""},
+		{"args", func() { claudeHandoff = testKiloID }, []string{"--model", "a/b"}, ""},
+		{"no handoff, anything goes", func() { claudeTask = "a"; claudePrompt = "x" }, []string{"--continue"}, ""},
+		{"task", func() { claudeHandoff = testKiloID; claudeTask = "a" }, nil, "--task"},
+		{"own-box", func() { claudeHandoff = testKiloID; claudeOwnBox = true }, nil, "--own-box"},
+		{"prompt", func() { claudeHandoff = testKiloID; claudePrompt = "hi" }, nil, "--prompt"},
+		{"repo", func() { claudeHandoff = testKiloID; claudeRepos = []string{"a/b"} }, nil, "--repo"},
+		{"goal", func() { claudeHandoff = testKiloID; claudeGoal = "x" }, nil, "--goal"},
+		{"issue", func() { claudeHandoff = testKiloID; claudeIssue = 3 }, nil, "--issue"},
+		{"continue", func() { claudeHandoff = testKiloID }, []string{"--continue"}, "--continue"},
+		{"-c", func() { claudeHandoff = testKiloID }, []string{"-c"}, "-c"},
+		{"session=", func() { claudeHandoff = testKiloID }, []string{"--session=ses_x"}, "--session"},
+		{"fork", func() { claudeHandoff = testKiloID }, []string{"--model", "m", "--fork"}, "--fork"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			withHandoffFlags(t, c.set)
+			err := checkKiloHandoffFlags(c.args)
+			switch {
+			case c.want == "" && err != nil:
+				t.Errorf("refused: %v", err)
+			case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+				t.Errorf("err = %v, want it to name %q", err, c.want)
+			}
+			if err != nil && !strings.Contains(err.Error(), "--handoff") {
+				t.Errorf("message doesn't name --handoff: %v", err)
+			}
+		})
+	}
+}
+
+func TestKiloResumeArgs(t *testing.T) {
+	got := kiloResumeArgs(testKiloID, []string{"--model", "a/b"})
+	if want := []string{"--session", testKiloID, "--model", "a/b"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestCheckNoKiloOnBox(t *testing.T) {
+	bin := t.TempDir()
+	write(t, filepath.Join(bin, "ssh"), "#!/bin/sh\nfor last; do :; done\nexec sh -c \"$last\"\n")
+	write(t, filepath.Join(bin, "pgrep"), "#!/bin/sh\n[ \"$1\" = -x ] && [ \"$2\" = kilo ] && [ -n \"$KILO_UP\" ]\n")
+	for _, f := range []string{"ssh", "pgrep"} {
+		if err := os.Chmod(filepath.Join(bin, f), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	box := &boxSSH{name: "kilo-x", args: []string{"root@kilo-x"}}
+	if err := checkNoKiloOnBox(context.Background(), box, "kilo-x"); err != nil {
+		t.Errorf("no kilo: %v", err)
+	}
+	t.Setenv("KILO_UP", "1")
+	err := checkNoKiloOnBox(context.Background(), box, "kilo-x")
+	if err == nil || !strings.Contains(err.Error(), "another Kilo is running on kilo-x") {
+		t.Errorf("kilo running: %v", err)
+	}
+}
+
+func TestKiloHandoffFlagHelp(t *testing.T) {
+	f := kiloCmd.Flags().Lookup("handoff")
+	if f == nil || !strings.Contains(f.Usage, "Kilo session") {
+		t.Fatalf("handoff flag: %+v", f)
+	}
+}
+
+// An unknown session fails in runKilo before openSession: no API call is
+// made (config has no token and there is no server), and the error is the
+// lookup's.
+func TestRunKiloHandoffValidatesFirst(t *testing.T) {
+	asKilo(t)
+	fakeKilo(t, `[]`, nil)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	withHandoffFlags(t, func() { claudeHandoff = "ses_nope" })
+	cmd := kiloCmd
+	cmd.SetContext(context.Background())
+	err := runKilo(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "no Kilo session ses_nope here") {
+		t.Fatalf("err = %v", err)
 	}
 }
