@@ -751,9 +751,31 @@ limit them to some plans, `expose` says so and points at
 `port-forward`; listing and `unexpose` keep working either way.)
 
 Where `port-forward` is for your own traffic, this is for everyone
-else's: anyone with the URL can reach the port, with no login in front
-of it. The URL is hard to guess, and that is all the protection there
-is.
+else's: by default anyone with the URL can reach the port, with no login
+in front of it. The URL is hard to guess, and that is all the protection
+there is -- unless you add basic auth (below).
+
+### Basic auth
+
+```bash
+boxctl expose my-box 3000 --basic-auth-user demo      # asks for the password, hidden
+echo "$PW" | boxctl expose my-box 3000 --basic-auth-user demo --basic-auth-password-stdin
+BOXCTL_EXPOSE_PASSWORD=... boxctl expose my-box 3000 --basic-auth-user demo
+boxctl expose my-box 3000 --no-basic-auth             # remove it
+```
+
+Visitors then get the browser's username/password prompt. The password
+is read from the first line of stdin with `--basic-auth-password-stdin`
+(which wins), else `BOXCTL_EXPOSE_PASSWORD`, else a hidden prompt on a
+terminal (a bad password is refused right after the first entry); there
+is no password flag, so it never reaches shell history or `ps`. The same
+command on an already-exposed port changes the credentials and keeps the
+URL; with neither option they stay as they are. Username: 1-64 of
+`A-Za-z0-9._@+-`; password: 8-128 printable ASCII characters, no spaces,
+no `{` or `}` (checked locally, and by the server, whose 400 text is shown). A server without its secret key answers 409 to a password,
+which `expose` explains. `expose`, `expose ls` and `-o json` show the
+protected URLs in an AUTH column (after AGE, only when some URL is protected) / `basic_auth`, `basic_auth_user` (never
+the password), and `expose` prints a `curl -u <user> <url>` hint on stderr.
 
 The command waits up to 30 seconds for the URL to report `active`
 (`--no-wait` to skip), then prints it on stdout alone, with a one-line

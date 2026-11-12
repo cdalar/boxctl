@@ -251,7 +251,10 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   doesn't break an older CLI. `expose ls` lists every box's URLs from the
   `ingress` field of the one `List` call (what the dashboard's Public
   URLs tab does), not a request per box. A box named `ls` is shadowed by
-  that subcommand.
+  that subcommand. `--basic-auth-user` sets/changes a URL's credentials
+  (password from `BOXCTL_EXPOSE_PASSWORD`, `--basic-auth-password-stdin`,
+  else a hidden prompt -- never a flag value), `--no-basic-auth` removes
+  them, neither leaves them (`ExposeOptions.BasicAuthUser` nil/""/set).
 - `cmd/sshproxy.go` — `ssh-proxy <name> [port]`: stdin/stdout relayed
   to a box port (22 by default) over the same `Client.DialPort` tunnel as
   `port-forward`, for ssh's `ProxyCommand` -- real ssh to a box with

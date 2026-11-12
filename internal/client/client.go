@@ -103,6 +103,10 @@ type Ingress struct {
 	Status     string    `json:"status"`
 	HostHeader string    `json:"host_header,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
+	// BasicAuth says the URL asks visitors for a username and password;
+	// BasicAuthUser is the username. The password is never returned.
+	BasicAuth     bool   `json:"basic_auth,omitempty"`
+	BasicAuthUser string `json:"basic_auth_user,omitempty"`
 }
 
 // Size is one box size offered by boxctl-vms, as returned by /api/sizes
@@ -382,16 +386,97 @@ func ingressUnavailable(err error) error {
 	return err
 }
 
-// Expose gives port on box name a public HTTPS URL. hostHeader, when not
-// empty, replaces the Host header the app sees. Exposing a port that is
-// already exposed returns the existing URL.
-func (c *Client) Expose(ctx context.Context, name string, port int, hostHeader string) (*Ingress, error) {
+// ExposeOptions are the optional parts of an Expose request.
+type ExposeOptions struct {
+	// HostHeader, when not empty, replaces the Host header the app sees.
+	HostHeader string
+	// BasicAuthUser nil leaves the URL's credentials as they are; a
+	// pointer to "" removes them; otherwise it and BasicAuthPassword
+	// set or replace them.
+	BasicAuthUser     *string
+	BasicAuthPassword string
+}
+
+var basicAuthUserRE = regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,64}$`)
+
+// BasicAuthRules is the server's rule for credentials, for messages.
+const BasicAuthRules = "the username is 1-64 characters from A-Z a-z 0-9 . _ @ + -; the password is 8-128 printable ASCII characters, no spaces, no { or }"
+
+// ValidateBasicAuth checks credentials the way the server will, so a
+// mistake is reported before anything is sent.
+func ValidateBasicAuth(user, password string) error {
+	if err := ValidateBasicAuthUser(user); err != nil {
+		return err
+	}
+	return ValidateBasicAuthPassword(password)
+}
+
+// ValidateBasicAuthUser checks the username alone, naming only its rule.
+func ValidateBasicAuthUser(user string) error {
+	if !basicAuthUserRE.MatchString(user) {
+		return errors.New("invalid basic-auth username: it must be 1-64 characters from A-Z a-z 0-9 . _ @ + -")
+	}
+	return nil
+}
+
+// ValidateBasicAuthPassword checks the password alone, naming only its rule.
+func ValidateBasicAuthPassword(password string) error {
+	if len(password) < 8 || len(password) > 128 {
+		return errors.New("invalid basic-auth password: it must be 8-128 characters")
+	}
+	for _, r := range password {
+		if r <= ' ' || r > '~' || r == '{' || r == '}' {
+			return errors.New("invalid basic-auth password: it must be printable ASCII with no spaces and no { or }")
+		}
+	}
+	return nil
+}
+
+// serverMessage is a response body as text: the "error" of a JSON object
+// body, else the trimmed body.
+func serverMessage(body string) string {
+	body = strings.TrimSpace(body)
+	var e struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal([]byte(body), &e) == nil && strings.TrimSpace(e.Error) != "" {
+		return strings.TrimSpace(e.Error)
+	}
+	return body
+}
+
+// Expose gives port on box name a public HTTPS URL. Exposing a port that
+// is already exposed returns the existing URL, with credentials changed
+// as opts says.
+func (c *Client) Expose(ctx context.Context, name string, port int, opts ExposeOptions) (*Ingress, error) {
 	body := map[string]any{"port": port}
-	if hostHeader != "" {
-		body["host_header"] = hostHeader
+	if opts.HostHeader != "" {
+		body["host_header"] = opts.HostHeader
+	}
+	if opts.BasicAuthUser != nil {
+		body["basic_auth_user"] = *opts.BasicAuthUser
+		if *opts.BasicAuthUser != "" {
+			body["basic_auth_password"] = opts.BasicAuthPassword
+		}
 	}
 	var in Ingress
 	if err := c.do(ctx, http.MethodPost, "/api/vms/"+url.PathEscape(name)+"/ingress", body, &in); err != nil {
+		if opts.BasicAuthUser != nil {
+			var ae *apiError
+			if errors.As(err, &ae) {
+				switch ae.status {
+				case http.StatusBadRequest:
+					if msg := serverMessage(ae.body); msg != "" {
+						return nil, fmt.Errorf("the server refused the request: %s", msg)
+					}
+					return nil, fmt.Errorf("the server refused the request; basic auth: %s", BasicAuthRules)
+				case http.StatusConflict:
+					if opts.BasicAuthPassword != "" {
+						return nil, errors.New("this server can't store passwords for public URLs (it has no secret key configured) -- ask its operator, or expose the port without a password")
+					}
+				}
+			}
+		}
 		return nil, ingressUnavailable(err)
 	}
 	return &in, nil
