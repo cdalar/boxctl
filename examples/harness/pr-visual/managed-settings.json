@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr review --approve:*)",
+      "Bash(gh api*pulls/*/merge*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push*--delete*)",
+      "Bash(git push*origin main*)",
+      "Bash(git push*origin master*)",
+      "Bash(git push*:main*)",
+      "Bash(git push*:master*)"
+    ]
+  },
+  "allowManagedPermissionRulesOnly": true
+}
