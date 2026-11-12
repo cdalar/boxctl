@@ -501,8 +501,26 @@ they're set in this shell, go into the new session's environment the way
 Claude's token does -- over ssh's stdin into a file in the box's `/run`
 that the session reads and deletes. `--env NAME` (repeatable) passes one
 more variable the same way. `--kilo-auth login` passes none of yours:
-log in on the box with `/connect`, and that login stays there. There is
-no `--handoff` for Kilo yet.
+log in on the box with `/connect`, and that login stays there.
+
+**Handing off a session.** `boxctl kilo --handoff <session-id>` continues
+one of this machine's Kilo sessions on the box. Take the ID from `kilo
+session list`; the start of an ID is enough when only one session has it
+(several matches are refused, naming them). Only the session's export
+(`kilo export`) is copied -- never Kilo's database or credentials: it
+goes over ssh's stdin into a temporary file under `/run/boxctl` on the
+box, is imported there (`kilo import`) from the project directory, and
+the file is removed. Kilo then starts with `--session <id>`.
+The project has the same absolute path on the box. A second handoff
+while Kilo runs on the box -- boxctl's own session or any other `kilo`
+process -- is refused: quit it first, or hand off to a fresh box.
+`--handoff` can't be combined with `--task`, `--own-box` or `--prompt`,
+nor with `--continue`, `--session` or `--fork` after `--`. `--project
+<dir>` picks the project when you aren't in it. A box that already had
+the project keeps its own copy, so local changes since then aren't on
+it: commit them and `boxctl kilo push`, or hand off to a fresh `--box`.
+On a run that deletes its box, the continued conversation lives on the
+box only; use `--keep` to keep it.
 
 ## Copying files (`cp`)
 
