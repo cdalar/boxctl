@@ -44,17 +44,27 @@ size's and never shrinks.`,
 		}
 
 		fmt.Printf("Restoring %s's backup from %s ago as %s...\n", b.VMName, age(b.CreatedAt), name)
-		vm, err := newClient().Restore(cmd.Context(), b.ID, name, restoreSize)
+		vm, notice, err := newClient().Restore(cmd.Context(), b.ID, name, restoreSize)
 		if err != nil {
 			return err
 		}
 		if vm.State == "paused" {
 			fmt.Printf("Restored %s (%s, %s) -- run `boxctl resume %s` to boot it\n", vm.Name, vm.State, sizeLabel(*vm), vm.Name)
+			printTransferNotice(notice)
 			return nil
 		}
 		fmt.Printf("Restored %s (%s, %s)\n", vm.Name, vm.State, sizeLabel(*vm))
+		printTransferNotice(notice)
 		return nil
 	},
+}
+
+// printTransferNotice tells the user what the server said about a
+// finished restore/import (see client.TransferNotice), on stderr.
+func printTransferNotice(n client.TransferNotice) {
+	if t := n.Text(); t != "" {
+		sayWarn("%s", t)
+	}
 }
 
 // findBackup resolves restore's argument against backups (newest first):
