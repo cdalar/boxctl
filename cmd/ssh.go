@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cdalar/boxctl/internal/client"
 	"github.com/gorilla/websocket"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -30,10 +31,8 @@ type resizeMessage struct {
 // sshTimeout bounds a non-interactive `ssh <name> -- command` (see
 // runSSHCommand); irrelevant to an interactive session. boxctl-vms caps
 // this at 5m server-side and silently falls back to its 30s default
-// beyond that, hence the client-side check in sshCmd's RunE.
+// beyond that, hence the client-side check (client.ValidateExecTimeout).
 var sshTimeout time.Duration
-
-const maxSSHTimeout = 5 * time.Minute
 
 // sshSession is --session: 0 for a shell of its own, or one of the box's
 // persistent sessions, 1..maxSSHSessions (boxctl-vms's
@@ -65,12 +64,45 @@ here or the dashboard's terminal, whose shell 1 it is -- attaches to it,
 every attached terminal sharing it. Exiting the shell ends it; to leave
 it running, disconnect with Enter ~ . (as with ssh; ~~ sends a ~).
 
-  boxctl ssh my-box --session 2`,
+  boxctl ssh my-box --session 2
+
+-T/--timeout bounds "-- command" (default 30s, whole seconds, at most 5m,
+the server's limit; more is refused, never shortened). A plain terminal
+or --session shell has no such limit, but ends with your connection
+unless it is a --session.
+
+For a command that needs longer than 5m, don't hold a connection open:
+--detach starts it on the box (surviving the connection, output in a log
+file there), prints how to follow it, and returns. --wait waits for the
+last detached command (or the run whose id --detach printed:
+--wait <box> <id>) and exits with its exit status; --follow also streams
+its log, byte for byte. --wait polls with short requests, so it has no
+limit, and retries a failed poll (network, 5xx) with backoff for up to
+5 minutes. The command runs under your login shell there (bash, as
+"-- command" does), falling back to sh; -T doesn't apply to either.
+The last 20 runs are kept on the box (~/.boxctl/detached/), older finished
+ones are removed by the next --detach.
+
+--wait's exit status is the command's own. If the wait itself ends, it
+is 250 (box or API unreachable, no such run, box paused) or 251 (the
+command is gone and left no exit status: killed, out of memory, box
+rebooted), with the reason on stderr.
+
+A detached command does not keep the box awake: only API calls count as
+use (--wait's polling does), so a box left alone is paused at its idle
+TTL (default 1h), taking the command with it, and --wait then says the
+box is paused and how to resume it. --idle-ttl on --detach sets a longer
+TTL first (10m to 720h).
+
+  boxctl ssh my-box --detach --idle-ttl 6h -- ./build.sh
+  boxctl ssh my-box --wait --follow`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		dash := cmd.ArgsLenAtDash()
 		switch {
 		case len(args) < 1:
 			return fmt.Errorf("requires a box name")
+		case dash == -1 && len(args) == 2 && sshWait:
+			// --wait <box> <run id>
 		case dash == -1 && len(args) > 1:
 			return fmt.Errorf("accepts one box name; put a remote command after \"--\"")
 		case dash > 1:
@@ -84,14 +116,47 @@ it running, disconnect with Enter ~ . (as with ssh; ~~ sends a ~).
 		if sshSession < 0 || sshSession > maxSSHSessions {
 			return fmt.Errorf("--session must be between 1 and %d", maxSSHSessions)
 		}
+		if sshFollow && !sshWait {
+			return fmt.Errorf("--follow goes with --wait")
+		}
+		if sshDetach && sshWait {
+			return fmt.Errorf("--detach and --wait are separate runs")
+		}
+		if (sshDetach || sshWait) && cmd.Flags().Changed("timeout") {
+			return fmt.Errorf("-T/--timeout doesn't apply to --detach/--wait: a detached command has no time limit")
+		}
+		if sshIdleTTL != 0 && !sshDetach {
+			return fmt.Errorf("--idle-ttl goes with --detach")
+		}
+		if sshWait {
+			if len(remote) > 0 || sshSession != 0 || cmd.ArgsLenAtDash() != -1 {
+				return fmt.Errorf("--wait takes only a box name and, optionally, a run id")
+			}
+			id := ""
+			if len(args) == 2 {
+				id = args[1]
+			}
+			code, err := runSSHWait(cmd.Context(), name, id, sshFollow, os.Stdout)
+			if err != nil {
+				PrintError(err)
+			}
+			os.Exit(code)
+			return nil // unreachable
+		}
+		if sshDetach {
+			if len(remote) == 0 || sshSession != 0 {
+				return fmt.Errorf("--detach needs \"-- command\" (and not --session)")
+			}
+			return runSSHDetach(cmd.Context(), name, strings.Join(remote, " "), os.Stdout)
+		}
 		if len(remote) == 0 {
 			return runSSH(cmd.Context(), name, sshSession)
 		}
 		if sshSession != 0 {
 			return fmt.Errorf("--session is for a terminal, not \"-- command\"")
 		}
-		if sshTimeout <= 0 || sshTimeout > maxSSHTimeout {
-			return fmt.Errorf("--timeout must be between 1s and %s", maxSSHTimeout)
+		if err := client.ValidateExecTimeout(sshTimeout); err != nil {
+			return err
 		}
 		code, err := runSSHCommand(cmd.Context(), name, strings.Join(remote, " "))
 		if err != nil {
@@ -104,7 +169,11 @@ it running, disconnect with Enter ~ . (as with ssh; ~~ sends a ~).
 
 func init() {
 	sshCmd.Flags().IntVarP(&sshSession, "session", "s", 0, fmt.Sprintf("attach to (or start) the box's persistent shell N, 1-%d, which outlives the connection", maxSSHSessions))
-	sshCmd.Flags().DurationVarP(&sshTimeout, "timeout", "T", 30*time.Second, "for \"-- command\": how long to let it run before it's killed (max 5m)")
+	sshCmd.Flags().DurationVarP(&sshTimeout, "timeout", "T", 30*time.Second, "for \"-- command\": how long to let it run before it's killed (whole seconds, max 5m; use --detach for longer)")
+	sshCmd.Flags().BoolVar(&sshDetach, "detach", false, "start \"-- command\" on the box and return; it keeps running after you disconnect (see --wait)")
+	sshCmd.Flags().BoolVar(&sshWait, "wait", false, "wait for the box's last --detach command (or the run id given after the box name) and exit with its exit status (250: the wait failed, 251: the command left no exit status)")
+	sshCmd.Flags().DurationVar(&sshIdleTTL, "idle-ttl", 0, "with --detach: first set the box's idle TTL (pause after this long unused, 10m to 720h), as a detached command doesn't count as use")
+	sshCmd.Flags().BoolVar(&sshFollow, "follow", false, "with --wait: stream the command's log while waiting")
 	rootCmd.AddCommand(sshCmd)
 }
 

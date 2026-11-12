@@ -15,10 +15,37 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// hostedDashboard is the hosted site's origin: the default of the
+// dashboard setting (BOXCTL_DASHBOARD_URL, "dashboard_url" in
+// ~/.boxctl/config.json). Only help and error text use it, never dialed.
+const hostedDashboard = "https://boxctl.io"
+
+// dashboardEnv and apiEnv override the saved config (and are overridden
+// by --api-url); see config.Load.
+const (
+	dashboardEnv = "BOXCTL_DASHBOARD_URL"
+	apiEnv       = "BOXCTL_API_URL"
+)
+
+// dashboardBase is the dashboard's origin: the environment, else the
+// config file, else the hosted site. It reads the config itself because
+// help text is built before PersistentPreRunE has loaded cfg.
+func dashboardBase() string {
+	if v := strings.TrimSpace(os.Getenv(dashboardEnv)); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	if c, err := config.Load(); err == nil && c.DashboardURL != "" {
+		return strings.TrimRight(c.DashboardURL, "/")
+	}
+	return hostedDashboard
+}
+
 // dashboardURL is where a user creates a personal token (see
-// boxctl-web's app/dashboard/tokens/). Referenced only in help/error
-// text, never dialed by this binary.
-const dashboardURL = "https://boxctl.io/dashboard/tokens"
+// boxctl-web's app/dashboard/tokens/).
+var dashboardURL = dashboardBase() + "/dashboard/tokens"
+
+// The page that explains public URLs and plans.
+func init() { client.PublicURLsDocs = dashboardBase() + "/docs/public-urls" }
 
 // tokenEnv is the environment variable that supplies the personal token
 // without a `boxctl login`: every command uses it over the saved config
@@ -75,6 +102,9 @@ list, connect to, and destroy your Firecracker microVMs ("boxes").`,
 			return fmt.Errorf("loading config: %w", err)
 		}
 		cfg = loaded
+		if v := strings.TrimSpace(os.Getenv(apiEnv)); v != "" {
+			cfg.APIURL = v
+		}
 		if apiURLFlag != "" {
 			cfg.APIURL = apiURLFlag
 		}
@@ -114,5 +144,5 @@ func newClient() *client.Client {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&apiURLFlag, "api-url", "", "override the boxctl API URL (default: "+config.DefaultAPIURL+", or whatever was saved by a previous login)")
+	rootCmd.PersistentFlags().StringVar(&apiURLFlag, "api-url", "", "override the boxctl API URL (default: "+config.DefaultAPIURL+", or "+apiEnv+", or what a previous login saved)")
 }

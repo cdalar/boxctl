@@ -2,6 +2,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,18 +46,36 @@ var stacks = []stack{
 // order of stacks breaks ties: a Go service with a package.json for its
 // frontend is a Go project.
 func detectStack(dir string) *stack {
+	s, _ := detectStackFile(dir)
+	return s
+}
+
+// detectStackFile is detectStack, also naming the file that showed it.
+func detectStackFile(dir string) (*stack, string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, ""
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return stackOfFiles(names)
+}
+
+// stackOfFiles is detectStack over a list of top-level file names, and
+// the one that matched.
+func stackOfFiles(names []string) (*stack, string) {
 	for i := range stacks {
 		for _, f := range stacks[i].files {
-			if strings.HasPrefix(f, "*") {
-				if m, _ := filepath.Glob(filepath.Join(dir, f)); len(m) > 0 {
-					return &stacks[i]
+			for _, n := range names {
+				if f == n || (strings.HasPrefix(f, "*") && strings.HasSuffix(n, f[1:])) {
+					return &stacks[i], n
 				}
-			} else if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
-				return &stacks[i]
 			}
 		}
 	}
-	return nil
+	return nil, ""
 }
 
 // pickImage returns the name of the image in images made for s, or "".
@@ -95,26 +117,93 @@ func contains(list []string, s string) bool {
 
 // imageFor is the image for a new box holding dir: --image if given,
 // else the one matching dir's stack, else the default. dir is "" when
-// there's no local project (a --repo run), which gets the default.
-func imageFor(ctx context.Context, c *client.Client, dir string) string {
+// there's no local project. why says what decided it ("" for the default
+// with nothing to go on).
+func imageFor(ctx context.Context, c *client.Client, dir string) (image, why string) {
 	if claudeImage != "" {
-		return claudeImage
+		return claudeImage, "--image"
 	}
 	if dir == "" {
-		return claudeDefaultImage
+		return claudeDefaultImage, ""
 	}
-	s := detectStack(dir)
+	s, file := detectStackFile(dir)
+	return imageForStack(ctx, c, s, file, filepath.Base(dir))
+}
+
+// imageForStack matches s against the server's images; src is what the
+// stack was read from, for the message.
+func imageForStack(ctx context.Context, c *client.Client, s *stack, file, src string) (string, string) {
 	if s == nil {
-		return claudeDefaultImage
+		return claudeDefaultImage, "no known stack in " + src
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	images, err := c.ListImages(ctx)
 	if err != nil {
-		return claudeDefaultImage
+		return claudeDefaultImage, "couldn't list images"
 	}
 	if name := pickImage(images, s, agent.name); name != "" {
-		return name
+		return name, file + " in " + src
 	}
-	return claudeDefaultImage
+	return claudeDefaultImage, "no " + s.name + " image (" + file + " in " + src + ")"
+}
+
+// githubAPI is the GitHub REST API's base URL; a variable for tests.
+var githubAPI = "https://api.github.com"
+
+// repoRootFiles lists the names at the root of owner/name, with token if
+// there is one: one call, five seconds.
+func repoRootFiles(ctx context.Context, repo, token string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubAPI+"/repos/"+repo+"/contents/", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub answered %s", resp.Status)
+	}
+	var items []struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&items); err != nil {
+		return nil, err
+	}
+	names := make([]string, len(items))
+	for i, it := range items {
+		names[i] = it.Name
+	}
+	return names, nil
+}
+
+// runImage is the image for a --repo/--goal run: --image, else the stack
+// of the local project (dir, when the run has no --repo), else of the
+// first repository's root files from GitHub, else the default. Any
+// error on the way means the default.
+func runImage(ctx context.Context, c *client.Client, dir string, repos []string, token string) (image, why string) {
+	if claudeImage != "" || dir != "" {
+		return imageFor(ctx, c, dir)
+	}
+	if len(repos) == 0 {
+		return claudeDefaultImage, ""
+	}
+	names, err := repoRootFiles(ctx, repos[0], token)
+	if err != nil {
+		return claudeDefaultImage, "couldn't read " + repos[0] + " from GitHub: " + err.Error()
+	}
+	s, file := stackOfFiles(names)
+	image, why = imageForStack(ctx, c, s, file, repos[0])
+	if len(repos) > 1 {
+		why += "; first of " + fmt.Sprint(len(repos)) + " repositories"
+	}
+	return image, why
 }

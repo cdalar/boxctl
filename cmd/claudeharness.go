@@ -42,7 +42,15 @@ type harness struct {
 	managed []string // files for harnessManagedDir, relative to dir
 	config  []string // files for ~/.claude, relative to dir
 	size    int64
+	model   *harnessModel // its model.json (harnessModelFile), if any
+	// modelFrom names the harness model came from when it isn't this
+	// one: a model-only harness under the built-in (withRules).
+	modelFrom string
 }
+
+// rules says whether the harness has anything for the box -- rules for
+// Claude -- rather than only boxctl's model.json.
+func (h *harness) rules() bool { return len(h.managed) > 0 || len(h.config) > 0 }
 
 // errNoHarness is resolveHarness's "nothing by that name": the one
 // failure the built-in's name falls back from.
@@ -101,9 +109,12 @@ func loadHarness(dir string) (*harness, error) {
 		return nil, err
 	}
 	h.config, h.size = files, h.size+size
-	if len(h.managed) == 0 && len(h.config) == 0 {
-		return nil, fmt.Errorf("harness %s has none of %s, %s", dir,
-			strings.Join(harnessManaged, ", "), strings.Join(harnessConfigEntries, ", "))
+	if h.model, err = loadHarnessModel(dir); err != nil {
+		return nil, err
+	}
+	if len(h.managed) == 0 && len(h.config) == 0 && h.model == nil {
+		return nil, fmt.Errorf("harness %s has none of %s, %s, %s", dir,
+			strings.Join(harnessManaged, ", "), strings.Join(harnessConfigEntries, ", "), harnessModelFile)
 	}
 	return h, nil
 }
@@ -111,6 +122,9 @@ func loadHarness(dir string) (*harness, error) {
 // apply puts the harness on the box. Its ~/.claude entries overwrite
 // your configuration's, so call it after copyClaudeConfig, not alongside.
 func (h *harness) apply(ctx context.Context, box *boxSSH) error {
+	if !h.rules() {
+		return nil // only a model.json, which is boxctl's, not the box's
+	}
 	progress := newUploadProgress("Copying the harness "+bold(h.label), h.size)
 	if len(h.managed) > 0 {
 		err := streamTar(ctx, box, "mkdir -p "+harnessManagedDir+" && tar -xzf - -C "+harnessManagedDir+" && chmod 0644 "+harnessManagedDir+"/*", progress,
@@ -140,7 +154,10 @@ func (h *harness) apply(ctx context.Context, box *boxSSH) error {
 //	                          --dangerously-skip-permissions, so it is the run
 //	                          that most needs a guardrail you didn't have to ask for
 //
-// Whatever is picked besides an explicit --harness is announced.
+// A harness with nothing but a model.json has no rules, so for --goal and
+// --issue it doesn't stand in for the built-in: its model and the
+// built-in's rules both apply (withRules). Whatever is picked besides an
+// explicit --harness is announced, and so is the built-in under one.
 
 const (
 	harnessNone   = "none"
@@ -172,8 +189,10 @@ func prepareHarness() (func(), error) {
 		if err != nil {
 			return nothing, err
 		}
-		claudeHarness, err = loadHarness(dir)
-		return nothing, err
+		if claudeHarness, err = loadHarness(dir); err != nil {
+			return nothing, err
+		}
+		return withRules(nothing, "--harness "+dir)
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		dir := filepath.Join(home, ".boxctl", "harness", "default")
@@ -182,11 +201,13 @@ func prepareHarness() (func(), error) {
 			if claudeHarness, lerr = loadHarness(dir); lerr != nil {
 				return nothing, lerr
 			}
-			sayNote("Using your default harness %s (--harness %s to skip it)", dir, harnessNone)
-			return nothing, nil
+			if claudeHarness.rules() || !unattendedRun() {
+				sayNote("Using your default harness %s (--harness %s to skip it)", dir, harnessNone)
+			}
+			return withRules(nothing, "your default harness "+dir)
 		}
 	}
-	if claudeGoal == "" && claudeIssue == 0 {
+	if !unattendedRun() {
 		return nothing, nil
 	}
 	cleanup, err := builtinHarness()
@@ -194,6 +215,27 @@ func prepareHarness() (func(), error) {
 		sayNote("An unattended run gets the built-in pr-only harness: pull request, never merge (--harness %s to skip it, or --harness <dir> for your own)", harnessNone)
 	}
 	return cleanup, err
+}
+
+// unattendedRun: --goal or --issue, which get the built-in by default.
+func unattendedRun() bool { return claudeGoal != "" || claudeIssue != 0 }
+
+// withRules keeps a model-only claudeHarness (named by what) from
+// standing in for an unattended run's rules: the built-in pr-only takes
+// its place, carrying its model. Anything else is left as it is, with
+// cleanup the func prepareHarness returns.
+func withRules(cleanup func(), what string) (func(), error) {
+	own := claudeHarness
+	if own == nil || own.rules() || !unattendedRun() {
+		return cleanup, nil
+	}
+	c, err := builtinHarness()
+	if err != nil {
+		return cleanup, err
+	}
+	claudeHarness.model, claudeHarness.modelFrom = own.model, own.label
+	sayNote("Using the %s of %s, which has no rules, so this unattended run also gets the built-in pr-only harness: pull request, never merge (--harness %s to skip both)", harnessModelFile, what, harnessNone)
+	return c, nil
 }
 
 // builtinHarness loads the embedded pr-only harness into claudeHarness,

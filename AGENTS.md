@@ -185,7 +185,36 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `Enter ~ .` disconnect (tested). `ssh <name> -- command [args...]`
   bypasses all of that: it joins the words after `--` and runs them via
   `Client.Exec` (the same no-pty endpoint `exec` uses), relaying
-  stdout/stderr and exiting with the remote exit code.
+  stdout/stderr and exiting with the remote exit code. `-T` is checked by
+  `client.ValidateExecTimeout` (whole seconds, 1s..5m: boxctl-vms silently
+  swaps a larger value for its 30s default), for `exec` before it creates a
+  box; `Client.Exec` passes the server's timeout message through (adding what
+  was asked for if the limits differ).
+  `cmd/sshdetach.go`: `--detach -- cmd` starts `run.sh` under nohup/setsid in
+  `~/.boxctl/detached/<id>/` (log, `pid` = pid + start time + boot id,
+  `status` = exit code; the command runs under the login shell, else sh;
+  fails if no pid appears; keeps the last 20 runs) and `--wait [id]
+  [--follow]` polls that run (`latest` by default) with short `Exec` calls.
+  A wrapper gone without a `status` is `lost` (exit 251); the wait itself
+  failing is 250; a failed poll is retried (`client.IsTransient`) with
+  backoff for 5m. The followed log travels base64 so it is byte-exact.
+  `--detach --idle-ttl` exists because a detached command isn't "use" for
+  the idle reaper. Tested by running the scripts for real behind a fake exec
+  endpoint.
+- `cmd/cp.go` — `cp` and `claude evidence`. `cp` is scp only (sftp
+  protocol; no rsync: macOS's openrsync rejects `-s`/`--info`), run with
+  `boxSSH`'s options (`sshOpts`) -- never over `Client.Exec`, which has a
+  timeout and truncates. `scpArgs` builds the vector: `--` before the
+  paths, and `localArg` puts `./` before a local path starting with `-` or
+  with a colon before any `/`. `parseCp`/`splitBoxPath` pick the `box:path`
+  side (a `/` or `\` before the first `:`, or a Windows drive, is local).
+  `connectCpBox` wraps `connectClaudeBox` with cp's own error wording
+  (it installs boxctl's key on the box). `evidence` tars
+  `/root/evidence` over ssh (no symlink following) into `extractTar`, a
+  fresh dir beside the destination, then renames it into place; symlinks
+  are skipped. Tests: `scpArgs`/parser/`fetchEvidence` with a fake `ssh`,
+  and `cp_sshd_test.go` against a throwaway localhost `sshd` (skipped
+  without it).
 - `cmd/portforward.go` — `port-forward`: a local listener per port spec,
   one `Client.DialPort` WebSocket (`GET /api/vms/{id}/port/{port}`,
   bearer token on the upgrade) per accepted TCP connection, raw bytes
@@ -240,6 +269,11 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   keys that point at this machine), the Claude Code install, and `tmux
   new-session -A` (or herdr, below) running `claude`. It never syncs: once the project is
   on the box, the box's copy is the one Claude works on.
+  `cmd/claudeimports.go`: `copyClaudeConfig` also sends the files `~/.claude/CLAUDE.md`
+  imports with `@path` (`importedConfigFiles`: relative to the importing file,
+  `~/`, 5 levels, loops ignored, code spans/blocks skipped), only regular files
+  under `~/.claude` and never an excluded path; others warn. `kilo` copies
+  its own `AGENTS.md` verbatim and has no such import step.
   `cmd/claudegithub.go` is its GitHub side: `--github store` (the
   default) logs a token into the box's gh (`gh auth login --with-token`,
   then `gh auth setup-git`) before the project goes there, so a private
@@ -362,6 +396,15 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `--dangerously-skip-permissions` unless that variable is exactly the
   string `1` (not `true`/`yes`), so keep it that way. Whether the
   harness's deny rules still hold under the flag is not verified.
+- `cmd/imagepick.go` — the image of a new agent box: `--image`, else the
+  stack (`stacks`, `stackOfFiles`) matched against `/api/images`
+  (`pickImage`), else `claude-agent`; `sayNote` prints which and why.
+  `runRepo` (every `--repo`/`--goal`/`--issue` run) passes no local
+  directory to `connectClaudeBox`, so it picks through `runImage` and
+  hands the result over in `newBoxImage`: the cwd's project when there is
+  no `--repo`, else the first repository's root files from GitHub's
+  contents API (`repoRootFiles`, 5s, the run's token; errors mean the
+  default).
 - `cmd/claudeharness.go` — `claude --harness <dir|name>`: rules for the
   box's Claude that don't touch the local `~/.claude`. `CLAUDE.md` and
   `managed-settings.json` go to `/etc/claude-code/` (managed memory and
@@ -379,7 +422,32 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `prepareHarness` returns removes; `harness.dir` stays that temp
   directory and only `harness.label` says "built-in pr-only" -- `apply`
   tars from `dir`). `--harness pr-only` names that
-  built-in too, unless `~/.boxctl/harness/pr-only` exists -- yours wins. `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
+  built-in too, unless `~/.boxctl/harness/pr-only` exists -- yours wins.
+  A harness with only a `model.json` (`!harness.rules()`) never replaces
+  an unattended run's rules: `withRules` loads the built-in in its place
+  with its model (`harness.modelFrom` names where that came from). `kilo` has no `--harness`: `/etc/claude-code` is Claude's.
+- `cmd/claudemodel.go` — `claude --model/--effort`: passed to claude on
+  the box as its own `--model`/`--effort` flags (`modelChoice.args`,
+  prepended to the passthrough args: the goal runner's `claude -p` line
+  and an attached session's `commandLine` alike; Claude Code 2.1.322's
+  `--effort` takes low/medium/high/xhigh/max). `resolveModel`'s order: a
+  `-- --model`/`--effort` passthrough, the flags, the harness's
+  `model.json` (`loadHarnessModel`, never copied to the box),
+  `BOXCTL_CLAUDE_MODEL`/`_EFFORT`, `config.Config`'s
+  `claude_model`/`claude_effort`; nothing passed leaves the box's
+  settings in charge (`boxModelSettings`: the harness's
+  managed-settings.json, then the copied settings.json -- what
+  `describe` names). `chooseModel` runs before any box (bad effort or a
+  control character refused, an empty passthrough value dropped) and
+  sets `runModel`; `announceModel` prints the choice only once a new
+  session is known to start (`startSession`'s reattach warning names
+  `--model`/`--effort` instead). `withModelLabels` adds it to a new
+  box's labels and `relabelModel` to an existing one's when a new
+  session starts there -- not to a box this run created
+  (`claudeTarget.created`) -- (`boxctl.model`, `boxctl.effort`); `modelText` reads them for `claude ls`'s MODEL
+  column (`printBoxes`'s `model` argument; `boxctl ls` has none) and
+  `claude status`'s Model line. `boxAgent.runs` resets `runModel`, so
+  kilo has none.
 - `cmd/agent.go`, `cmd/kilo.go` — `kilo`: the same for the Kilo CLI.
   A `boxAgent` is the little that differs between the two (name -- also
   the box prefix and the session's name -- binary, install dir, installer,
@@ -504,3 +572,9 @@ environment, and neither is `CLAUDE_SESSION_ID`, which is why
 markdown); the hooks read `session_id` from their stdin. Check it
 with `shellcheck claude-plugin/bin/* claude-plugin/hooks/route-bash` and
 `claude plugin validate .`.
+
+## Lessons
+
+- Hosted names are settings: API URL (`--api-url`/`BOXCTL_API_URL`/`api_url`), dashboard origin (`BOXCTL_DASHBOARD_URL`/`dashboard_url`, `dashboardBase` in `cmd/root.go`); `newBoxSSH`'s ProxyCommand carries `--api-url`. Don't hard-code a boxctl.io name in user-facing text.
+- CI runs `golangci-lint run ./...` (lint.yml) and govulncheck besides `go vet`/`gofmt`.
+- `cp_sshd_test.go` needs `sshd`, `scp` and `ssh-keygen` (apt `openssh-server`); without them it skips, so CI passing doesn't prove a real copy works.

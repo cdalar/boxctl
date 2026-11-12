@@ -47,15 +47,16 @@ var lsCmd = &cobra.Command{
 			none = "No boxes for " + dir + "."
 		}
 		all, _ := cmd.Flags().GetBool("all")
-		return printBoxes(cmd.Context(), vms, format, all, none)
+		return printBoxes(cmd.Context(), vms, format, all, none, false)
 	},
 }
 
 // printBoxes is ls's listing of vms in format (table, wide or json):
 // only the live ones unless all, none when there are no boxes at all.
 // On a terminal it then stays around to fill in each PR's state
-// (lspr.go), which is the only use it has for ctx.
-func printBoxes(ctx context.Context, vms []client.VM, format string, all bool, none string) error {
+// (lspr.go), which is the only use it has for ctx. model adds claude
+// ls's MODEL column (modelText) to the table, before PR.
+func printBoxes(ctx context.Context, vms []client.VM, format string, all bool, none string, model bool) error {
 	asJSON := format == "json"
 	if len(vms) == 0 && !asJSON {
 		fmt.Println(none)
@@ -116,6 +117,8 @@ func printBoxes(ctx context.Context, vms []client.VM, format string, all bool, n
 	var table strings.Builder
 	if wide {
 		fmt.Fprintln(&table, "NAME\tSTATE\tIP\tIMAGE\tSIZE\tPROVIDER\tREADY\tAGE\tRUN\tPROJECT\tBRANCH\tPR")
+	} else if model {
+		fmt.Fprintln(&table, "NAME\tSTATE\tIMAGE\tSIZE\tAGE\tRUN\tPROJECT\tMODEL\tPR")
 	} else {
 		fmt.Fprintln(&table, "NAME\tSTATE\tIMAGE\tSIZE\tAGE\tRUN\tPROJECT\tPR")
 	}
@@ -125,6 +128,10 @@ func printBoxes(ctx context.Context, vms []client.VM, format string, all bool, n
 		image := vm.Image
 		if image == "" {
 			image = "-"
+		}
+		if !wide && model {
+			fmt.Fprintf(&table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, image, sizeLabel(vm), age(vm.CreatedAt), runText(vm), projectText(vm), modelText(vm), prText(vm))
+			continue
 		}
 		if !wide {
 			fmt.Fprintf(&table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", vm.Name, vm.State, image, sizeLabel(vm), age(vm.CreatedAt), runText(vm), projectText(vm), prText(vm))

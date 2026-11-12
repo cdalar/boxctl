@@ -79,8 +79,7 @@ Other agents ran into these on the same image. Don't rediscover them.
   (`curl -fsSL https://go.dev/dl/go<version>.linux-amd64.tar.gz | tar -C /usr/local -xz`)
   and put `/usr/local/go/bin` on PATH in every command -- each Bash call
   starts a fresh shell.
-- `zstd` is not installed, and some Go tests in boxctl-vms skip without
-  it: `apt-get install -y zstd` before the final test run.
+- `zstd` is installed (some Go tests in boxctl-vms skip without it).
 
 ## Report what slowed you down
 End `/root/evidence/README.md` with a section "Setup friction": every tool
@@ -111,3 +110,18 @@ pull request.
 - About the repository, not this box: box facts go in "Setup friction".
 - Nothing AGENTS.md already says.
 - One line each, at most three per run.
+
+More, from later runs:
+
+- `golangci-lint` (v2) and `govulncheck` are on `claude-agent-go`, in
+  `/usr/local/bin`. If you ever have to install golangci-lint yourself,
+  the module path needs `/v2`
+  (`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`);
+  without it you get v1, which rejects the config.
+- `govulncheck` may report standard-library advisories against the box's
+  Go that CI's newer Go doesn't have. If `main` shows the same ones, it
+  isn't your change: note it and move on.
+- Don't `pkill -f <pattern>`: your own shell's command line contains the
+  pattern and gets killed. Use `kill $(pgrep -x <name>)`.
+- `asciinema rec -q` can write nothing when there's no terminal; record
+  without `-q`.

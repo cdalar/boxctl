@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/cdalar/boxctl/internal/client"
 	"github.com/spf13/cobra"
 )
 
@@ -44,11 +45,21 @@ stderr, stdout is always exactly one JSON object, and the process exits
 with the command's own exit code (or 1 on a transport-level failure) --
 so both "parse stdout as JSON" and "check $?" work.
 
+-T/--timeout bounds the command (default 30s, whole seconds, at most 5m --
+the server's limit; a longer value is refused before any box is created,
+never silently shortened). A timeout is reported with the limit that
+applied. For a command that needs longer, start it on a long-lived box
+with "boxctl ssh <box> --detach -- command" and follow it with
+"boxctl ssh <box> --wait".
+
 command is a single shell string, e.g.:
 
   boxctl exec "ls -la | grep foo"`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := client.ValidateExecTimeout(execTimeout); err != nil {
+			return err
+		}
 		code, err := runExec(cmd.Context(), args[0])
 		if err != nil {
 			return err
@@ -62,7 +73,7 @@ func init() {
 	execCmd.Flags().StringVarP(&execImage, "image", "i", defaultImage, "boot image to use (list them with boxctl images)")
 	execCmd.Flags().StringVarP(&execSize, "size", "s", "", "box size: small, medium or large (list them with boxctl sizes; default small)")
 	_ = execCmd.RegisterFlagCompletionFunc("size", completeSize)
-	execCmd.Flags().DurationVarP(&execTimeout, "timeout", "T", 30*time.Second, "how long to let the command run before it's killed")
+	execCmd.Flags().DurationVarP(&execTimeout, "timeout", "T", 30*time.Second, "how long to let the command run before it's killed (whole seconds, max 5m)")
 	rootCmd.AddCommand(execCmd)
 }
 
