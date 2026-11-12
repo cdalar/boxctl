@@ -567,7 +567,7 @@ func (m tuiModel) askExpose(vm *client.VM) (tea.Model, tea.Cmd) {
 				return m, m.fail("%s is gone", name)
 			}
 			return m.act(vm, "expose", "", func(ctx context.Context) (string, error) {
-				in, err := m.c.Expose(ctx, name, port, "")
+				in, err := m.c.Expose(ctx, name, port, client.ExposeOptions{})
 				if err != nil {
 					return "", err
 				}
