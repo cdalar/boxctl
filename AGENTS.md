@@ -606,3 +606,4 @@ above.
   CI runs on every pull request" under Build & run.
 - Hosted names are settings: API URL (`--api-url`/`BOXCTL_API_URL`/`api_url`), dashboard origin (`BOXCTL_DASHBOARD_URL`/`dashboard_url`, `dashboardBase` in `cmd/root.go`); `newBoxSSH`'s ProxyCommand carries `--api-url`. Don't hard-code a boxctl.io name in user-facing text.
 - `cp_sshd_test.go` needs `sshd`, `scp` and `ssh-keygen` (apt `openssh-server`); without them it skips, so CI passing doesn't prove a real copy works.
+- `kilo` isn't needed for `go test`, but `TestKiloRoundTrip` (cmd/kilosession_test.go) runs against a real one when `kilo` or `~/.kilo/bin/kilo` exists; without it that test skips.
