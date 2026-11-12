@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -40,5 +41,30 @@ func TestIsTransient(t *testing.T) {
 	_, err := New("http://127.0.0.1:1", "t").List(context.Background())
 	if !IsTransient(err) {
 		t.Errorf("connection refused not transient: %v", err)
+	}
+}
+
+func TestTransferNoticeText(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want string
+	}{
+		{"nothing", `{"status":"done"}`, ""},
+		{"null readdressed", `{"readdressed":null}`, ""},
+		{"warning wins", `{"warning":"careful","cold_boot":true,"readdressed":{"ip":"1.2.3.4"}}`, "careful"},
+		{"readdressed only", `{"readdressed":{"ip":"172.16.0.9","previous_ip":"172.16.0.7"}}`, "The box got a new address."},
+		{"cold boot only", `{"cold_boot":true}`, "The box's memory state was dropped and it cold-booted."},
+		{"both", `{"cold_boot":true,"readdressed":{"ip":"1.2.3.4"}}`, "The box got a new address and its memory state was dropped; it cold-booted."},
+		{"blank warning", `{"warning":"  ","cold_boot":true}`, "The box's memory state was dropped and it cold-booted."},
+	}
+	for _, tc := range cases {
+		var st transferStatus
+		if err := json.Unmarshal([]byte(tc.json), &st); err != nil {
+			t.Fatal(err)
+		}
+		if got := st.notice().Text(); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }

@@ -42,11 +42,12 @@ local/dev mode.`,
 		}
 
 		fmt.Printf("Importing %s as %s (this can take a while for a large bundle)...\n", path, name)
-		vm, err := newClient().Import(cmd.Context(), name, f, info.Size())
+		vm, notice, err := newClient().Import(cmd.Context(), name, f, info.Size())
 		if err != nil {
 			return err
 		}
 		fmt.Printf("Imported %s (%s) -- run `boxctl resume %s` to boot it\n", vm.Name, vm.State, vm.Name)
+		printTransferNotice(notice)
 		return nil
 	},
 }

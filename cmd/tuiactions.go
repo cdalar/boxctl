@@ -620,13 +620,16 @@ func (m tuiModel) askRestore() (tea.Model, tea.Cmd) {
 		run := func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
-			vm, err := c.Restore(ctx, backup.ID, name, size)
+			vm, notice, err := c.Restore(ctx, backup.ID, name, size)
 			if err != nil {
 				return tuiActionMsg{name: name, verb: "restore", err: err}
 			}
 			result := fmt.Sprintf("restored %s (%s, %s)", vm.Name, vm.State, sizeLabel(*vm))
 			if vm.State == "paused" {
 				result += " -- r in :boxes resumes it"
+			}
+			if t := notice.Text(); t != "" {
+				result += " -- " + t
 			}
 			return tuiActionMsg{name: name, verb: "restore", result: result}
 		}

@@ -696,6 +696,48 @@ type transferStatus struct {
 	BackupID string `json:"backup_id,omitempty"`
 	VM       *VM    `json:"vm,omitempty"`
 	Error    string `json:"error,omitempty"`
+	// Warning, ColdBoot and Readdressed are set on a finished import or
+	// restore; see TransferNotice.
+	Warning     string          `json:"warning,omitempty"`
+	ColdBoot    bool            `json:"cold_boot,omitempty"`
+	Readdressed json.RawMessage `json:"readdressed,omitempty"`
+}
+
+// TransferNotice is what the server says about how a restore or import
+// went beyond "done": free-form Warning text, whether the box was booted
+// from its disk instead of resumed (ColdBoot, its memory state dropped)
+// and whether it got a new address (Readdressed).
+type TransferNotice struct {
+	Warning     string
+	ColdBoot    bool
+	Readdressed bool
+}
+
+func (s *transferStatus) notice() TransferNotice {
+	r := bytes.TrimSpace(s.Readdressed)
+	return TransferNotice{
+		Warning:     strings.TrimSpace(s.Warning),
+		ColdBoot:    s.ColdBoot,
+		Readdressed: len(r) > 0 && string(r) != "null" && string(r) != "false",
+	}
+}
+
+// Text is what to tell the user, or "" if there's nothing to say. The
+// server's warning wins; without one, a plain sentence of ours covers a
+// re-addressed or cold-booted box.
+func (n TransferNotice) Text() string {
+	if n.Warning != "" {
+		return n.Warning
+	}
+	switch {
+	case n.Readdressed && n.ColdBoot:
+		return "The box got a new address and its memory state was dropped; it cold-booted."
+	case n.Readdressed:
+		return "The box got a new address."
+	case n.ColdBoot:
+		return "The box's memory state was dropped and it cold-booted."
+	}
+	return ""
 }
 
 // Download streams name's paused snapshot bundle to w. This is a
@@ -770,20 +812,20 @@ func (c *Client) Download(ctx context.Context, name string, w io.Writer) error {
 // back from R2 and reconstructed it (GET /api/imports/{import_id}).
 // size doubles as both the upload's Content-Length and the progress
 // display's total.
-func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int64) (*VM, error) {
+func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int64) (*VM, TransferNotice, error) {
 	var kickoff struct {
 		ImportID  string `json:"import_id"`
 		UploadURL string `json:"upload_url"`
 		Name      string `json:"name"`
 	}
 	if err := c.do(ctx, http.MethodPost, "/api/vms/import", map[string]string{"name": name}, &kickoff); err != nil {
-		return nil, err
+		return nil, TransferNotice{}, err
 	}
 
 	pr := &progressReader{r: r, total: size}
 	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, kickoff.UploadURL, pr)
 	if err != nil {
-		return nil, err
+		return nil, TransferNotice{}, err
 	}
 	if size > 0 {
 		putReq.ContentLength = size
@@ -791,24 +833,24 @@ func (c *Client) Import(ctx context.Context, name string, r io.Reader, size int6
 	putRes, err := streamClient.Do(putReq)
 	finishProgress(pr.read, pr.total)
 	if err != nil {
-		return nil, fmt.Errorf("uploading bundle to object storage: %w", err)
+		return nil, TransferNotice{}, fmt.Errorf("uploading bundle to object storage: %w", err)
 	}
 	defer func() { _ = putRes.Body.Close() }()
 	if putRes.StatusCode >= 300 {
 		data, _ := io.ReadAll(putRes.Body)
-		return nil, fmt.Errorf("uploading bundle to object storage: http %d: %s", putRes.StatusCode, string(data))
+		return nil, TransferNotice{}, fmt.Errorf("uploading bundle to object storage: http %d: %s", putRes.StatusCode, string(data))
 	}
 
 	completePath := "/api/imports/" + url.PathEscape(kickoff.ImportID) + "/complete?name=" + url.QueryEscape(kickoff.Name)
 	if err := c.do(ctx, http.MethodPost, completePath, nil, nil); err != nil {
-		return nil, err
+		return nil, TransferNotice{}, err
 	}
 
 	status, err := c.pollTransfer(ctx, "/api/imports/"+url.PathEscape(kickoff.ImportID), "waiting for the host to reconstruct the box")
 	if err != nil {
-		return nil, err
+		return nil, TransferNotice{}, err
 	}
-	return status.VM, nil
+	return status.VM, status.notice(), nil
 }
 
 // Backup is one entry of GET /api/backups: a saved copy of a paused box
@@ -837,7 +879,7 @@ func (c *Client) ListBackups(ctx context.Context) ([]Backup, error) {
 // empty size keeps the one the box was backed up at, and it comes back
 // paused; with another size the server boots it fresh from the backup's
 // disk at that size, so it comes back running.
-func (c *Client) Restore(ctx context.Context, backupID, name, size string) (*VM, error) {
+func (c *Client) Restore(ctx context.Context, backupID, name, size string) (*VM, TransferNotice, error) {
 	body := map[string]string{"name": name}
 	if size != "" {
 		body["size"] = size
@@ -846,13 +888,13 @@ func (c *Client) Restore(ctx context.Context, backupID, name, size string) (*VM,
 		ImportID string `json:"import_id"`
 	}
 	if err := c.do(ctx, http.MethodPost, "/api/backups/"+url.PathEscape(backupID)+"/restore", body, &kickoff); err != nil {
-		return nil, err
+		return nil, TransferNotice{}, err
 	}
 	status, err := c.pollTransfer(ctx, "/api/imports/"+url.PathEscape(kickoff.ImportID), "waiting for the host to rebuild the box")
 	if err != nil {
-		return nil, err
+		return nil, TransferNotice{}, err
 	}
-	return status.VM, nil
+	return status.VM, status.notice(), nil
 }
 
 // pollTransfer polls path (a backup or import status endpoint) at
