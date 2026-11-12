@@ -43,6 +43,25 @@ go vet ./...
 gofmt -l .
 ```
 
+**What CI runs on every pull request** (`.github/workflows/`), all of
+which must pass before a merge -- run them before you push:
+
+```bash
+gofmt -s -l .                           # build.yml fails on any diff from gofmt -s
+go mod tidy && git diff --exit-code     # go.mod/go.sum must already be tidy
+go vet ./...
+go test -count=1 -race -shuffle=on ./...
+golangci-lint run ./...                 # lint.yml: default linters -- errcheck, staticcheck, ...
+govulncheck -test ./...                 # vuln.yml: go install golang.org/x/vuln/cmd/govulncheck@latest
+```
+
+`golangci-lint` is the one that catches people: an unchecked
+`fmt.Fprintf` to a writer is an errcheck finding (write `_, _ =
+fmt.Fprintf(...)` when there's nothing to do about the error), and a
+deprecated API is a staticcheck one. `govulncheck` also fails on a
+standard-library advisory, which no change here caused: the fix is a
+`go` bump in `go.mod`, in a pull request of its own.
+
 `make release-snapshot` runs GoReleaser locally against `.goreleaser.yml`
 (unsigned, nothing published) to check the release config still builds
 every target; it needs `goreleaser` on PATH.
@@ -575,6 +594,12 @@ with `shellcheck claude-plugin/bin/* claude-plugin/hooks/route-bash` and
 
 ## Lessons
 
+Things someone learned the hard way about this repository, one line
+each. An agent that loses time to something this file didn't say adds it
+here, in the same pull request; settled ones move up into the sections
+above.
+
+- CI runs `golangci-lint` and `govulncheck`, not only `gofmt`: see "What
+  CI runs on every pull request" under Build & run.
 - Hosted names are settings: API URL (`--api-url`/`BOXCTL_API_URL`/`api_url`), dashboard origin (`BOXCTL_DASHBOARD_URL`/`dashboard_url`, `dashboardBase` in `cmd/root.go`); `newBoxSSH`'s ProxyCommand carries `--api-url`. Don't hard-code a boxctl.io name in user-facing text.
-- CI runs `golangci-lint run ./...` (lint.yml) and govulncheck besides `go vet`/`gofmt`.
 - `cp_sshd_test.go` needs `sshd`, `scp` and `ssh-keygen` (apt `openssh-server`); without them it skips, so CI passing doesn't prove a real copy works.
