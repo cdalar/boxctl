@@ -48,10 +48,8 @@ shells that won't have the variable.`,
   boxctl login < token.txt`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		apiURL := config.DefaultAPIURL
-		if apiURLFlag != "" {
-			apiURL = apiURLFlag
-		}
+		// cfg already has flag > BOXCTL_API_URL > saved > default.
+		apiURL := cfg.APIURL
 
 		token, email, err := obtainToken(cmd, apiURL)
 		if err != nil {
@@ -64,7 +62,13 @@ shells that won't have the variable.`,
 			return fmt.Errorf("that token didn't work against %s: %w", apiURL, err)
 		}
 
-		if err := config.Save(&config.Config{APIURL: apiURL, Token: token}); err != nil {
+		// Keep the rest of the file (boxctl claude's defaults, say).
+		saved, err := config.Load()
+		if err != nil {
+			saved = &config.Config{}
+		}
+		saved.APIURL, saved.Token = apiURL, token
+		if err := config.Save(saved); err != nil {
 			return fmt.Errorf("saving config: %w", err)
 		}
 		if email != "" {
