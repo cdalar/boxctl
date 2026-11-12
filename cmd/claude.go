@@ -830,6 +830,13 @@ func newBoxSSH(name, key string) (*boxSSH, error) {
 		return nil, fmt.Errorf("boxctl %s needs ssh on this machine", agent.name)
 	}
 	control := filepath.Join(filepath.Dir(key), "cm-%C")
+	// ssh-proxy is a new process: without this it would go to the default
+	// server whatever --api-url this run was given. (The environment's
+	// BOXCTL_API_URL is inherited.)
+	proxy := shellQuote(self)
+	if apiURLFlag != "" {
+		proxy += " --api-url " + shellQuote(apiURLFlag)
+	}
 	return &boxSSH{name: name, args: []string{
 		// None of the user's ssh config applies -- least of all macOS's
 		// SendEnv LC_*, which the box has no locales for.
@@ -839,7 +846,7 @@ func newBoxSSH(name, key string) (*boxSSH, error) {
 		// token, over TLS to boxctl.io), and every box has fresh host
 		// keys, so there's nothing for known_hosts to add.
 		"-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
-		"-o", "ProxyCommand=" + shellQuote(self) + " ssh-proxy --running " + shellQuote(name),
+		"-o", "ProxyCommand=" + proxy + " ssh-proxy --running " + shellQuote(name),
 		"-o", "ServerAliveInterval=30",
 		"-o", "ControlMaster=auto", "-o", "ControlPath=" + control, "-o", "ControlPersist=60s",
 		"root@" + name,

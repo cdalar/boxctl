@@ -142,9 +142,18 @@ boxctl pause all                  # also resume all / rm all: every box it appli
 boxctl logout   # forgets the token locally; revoke it from the dashboard too
 ```
 
-Every command talks to `https://vms-backend.boxctl.io` by default; override
-with `--api-url` (or by passing a different one to `boxctl login`) for a
-local/dev `boxctl-vms` instance.
+Every command talks to `https://vms-backend.boxctl.io` by default. To use
+another server (an on-prem site, a local `boxctl-vms`), set, highest first:
+
+| What | Flag / env | `~/.boxctl/config.json` | Default |
+|---|---|---|---|
+| API URL | `--api-url`, `BOXCTL_API_URL` | `api_url` | `https://vms-backend.boxctl.io` |
+| Dashboard (token page `/dashboard/tokens`, `/docs/public-urls` in messages; never dialed) | `BOXCTL_DASHBOARD_URL` | `dashboard_url` | `https://boxctl.io` |
+
+`boxctl login --api-url URL` saves the API URL. The browser login's approval
+page comes from the server; the public URLs of exposed ports are whatever
+the server assigns. The installer (`get.sh`) and the plugin's docs links
+are not settings of the CLI.
 
 **Unused boxes are paused, then deleted.** A running box nobody has used
 for its idle TTL (1 hour unless you set `--idle-ttl`) is paused, which

@@ -575,6 +575,6 @@ with `shellcheck claude-plugin/bin/* claude-plugin/hooks/route-bash` and
 
 ## Lessons
 
-- `boxctl`'s ssh ProxyCommand (`newBoxSSH`) doesn't pass `--api-url` on, so anything run against a non-default API must use `~/.boxctl/config.json`'s `api_url`, not the flag.
+- Hosted names are settings: API URL (`--api-url`/`BOXCTL_API_URL`/`api_url`), dashboard origin (`BOXCTL_DASHBOARD_URL`/`dashboard_url`, `dashboardBase` in `cmd/root.go`); `newBoxSSH`'s ProxyCommand carries `--api-url`. Don't hard-code a boxctl.io name in user-facing text.
 - CI runs `golangci-lint run ./...` (lint.yml) and govulncheck besides `go vet`/`gofmt`.
 - `cp_sshd_test.go` needs `sshd`, `scp` and `ssh-keygen` (apt `openssh-server`); without them it skips, so CI passing doesn't prove a real copy works.

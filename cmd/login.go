@@ -48,10 +48,8 @@ shells that won't have the variable.`,
   boxctl login < token.txt`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		apiURL := config.DefaultAPIURL
-		if apiURLFlag != "" {
-			apiURL = apiURLFlag
-		}
+		// cfg already has flag > BOXCTL_API_URL > saved > default.
+		apiURL := cfg.APIURL
 
 		token, email, err := obtainToken(cmd, apiURL)
 		if err != nil {
