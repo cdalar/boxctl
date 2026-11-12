@@ -480,6 +480,7 @@ boxctl kilo --detach --prompt "..."     # start it without attaching
 boxctl kilo -- --model provider/model   # arguments for kilo itself
 boxctl kilo --task auth                 # a second Kilo, in parallel, on its own branch
 boxctl kilo --env OPENAI_API_KEY        # pass a provider key from this shell
+boxctl kilo --handoff <session-id>      # continue a local Kilo session on a box
 boxctl kilo ls                          # this project's Kilo sessions
 boxctl kilo fetch                       # the box's branches and uncommitted work, as box/*
 boxctl kilo push                        # this branch to the box
