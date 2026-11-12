@@ -274,11 +274,12 @@ Claude without it. Two limits: Claude runs as root on the box, so
 managed settings are a guardrail against mistakes, not against a
 determined agent -- the real boundary is the credentials (`--github store`
 with a one-repository fine-grained token, and branch protection on
-`main` so nothing merges without review). And whether deny rules hold
-under `--goal`'s `--dangerously-skip-permissions` is unverified against a
-real box. (The flag itself is: Claude Code refuses it as root unless
-`IS_SANDBOX=1` is set, which the goal runner does, checked against Claude
-Code 2.1.303.)
+`main` so nothing merges without review). Deny rules do hold under
+`--goal`'s `--dangerously-skip-permissions`: on a real box (Claude Code
+2.1.322, `pr-visual`) `gh pr merge`, `git push --force` and `gh pr review
+--approve` were refused while `gh pr view` ran. Only those plain commands
+were tried, not ways around them. (The flag itself: Claude Code refuses it
+as root unless `IS_SANDBOX=1` is set, which the goal runner does.)
 
 **Which harness a run gets.** `--harness none` means none; `--harness
 <dir|name>` means that one (`pr-only` is the built-in, unless
@@ -292,6 +293,14 @@ guardrail you didn't have to ask for. A harness that is nothing but a
 built-in `pr-only`, and says so. Anything chosen implicitly is
 announced on stderr. An attended run with no default directory gets no
 harness.
+
+`examples/harness/pr-visual` is `pr-only` plus rules for runs whose result
+someone will check by eye: screenshots, a video or a terminal recording of
+what was built, kept on the box in `/root/evidence/`; the checks CI runs,
+before the pull request; and two kinds of memory -- notes on the box image
+that earlier runs paid for, and a rule to leave repository lessons in that
+repository's `AGENTS.md`. Copy it to `~/.boxctl/harness/` to use it; its
+README says how it's kept current.
 
 **Model and effort.** `--model <name>` and `--effort <level>` choose the
 model Claude runs on the box and how hard it thinks, for attached runs
