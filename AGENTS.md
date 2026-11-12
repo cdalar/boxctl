@@ -485,6 +485,22 @@ vet`, `gofmt`, and manual verification (`go build -o boxctl . && ./boxctl
   `auth.json` as `KILO_AUTH_CONTENT`, plus the `{env:NAME}` variables the
   config refers to and any `--env NAME`. A third agent (opencode, which
   Kilo is a fork of) is another `boxAgent` and a file like `kilo.go`.
+  `kilo --handoff <session-id>` (`cmd/kilosession.go`, design in
+  `docs/plans/kilo-handoff.md`): `runKilo` first calls
+  `checkKiloHandoffFlags` (refuses `--repo/--goal/--issue/--task/--own-box/--prompt`
+  and `--continue/-c/--session/-s/--fork` after `--`), then
+  `findKiloSession` -- before any box exists -- looks the ID up (a unique
+  prefix is enough, an ambiguous one is refused) with `kilo db`, runs
+  `kilo export`, and `checkKiloExport` refuses anything but `{info,
+  messages}` or containing a value of `auth.json`. After `openSession`,
+  a boxctl session already running is refused, then `checkNoKiloOnBox`
+  (`pgrep -x kilo`; no `pgrep` counts as an error). `copyKiloSession`
+  sends only the export over ssh stdin to a file under `/run/boxctl`
+  (`kiloHandoffDir`), `kilo import` runs in the project directory (it
+  takes project and directory from where it runs), the file is removed
+  whatever happens, and `kiloResumeArgs` starts Kilo with `--session <id>`.
+  Never copy Kilo's database (it holds credentials). The "local changes
+  aren't on the box" hint is shared with `claude` and names `agent.name`'s `push`.
 - `cmd/backups.go`/`restore.go` — `backups` (GET /api/backups) and
   `restore <backup> [--name] [--size]` (POST
   /api/backups/{id}/restore, then the same import poll as `import`).

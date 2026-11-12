@@ -383,7 +383,7 @@ func prepareSession(ctx context.Context, t *claudeTarget, sess taskSession) erro
 	} else if claudeTask == "" {
 		sayNote("%s is already on %s; working with the box's copy (it isn't copied again)", dir, name)
 		if claudeHandoff != "" {
-			sayWarn("Your local changes since then aren't on the box: commit them and run boxctl claude push, or hand off to a fresh box with --box.")
+			sayWarn("Your local changes since then aren't on the box: commit them and run boxctl %s push, or hand off to a fresh box with --box.", agent.name)
 		}
 	}
 	if sess.task != "" {
