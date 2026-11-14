@@ -24,7 +24,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/cdalar/boxctl/cmd.BuildTime={{.Date}}'
+      - -w -s -X 'github.com/boxctl-io/boxctl-cli/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/boxctl-io/boxctl-cli/cmd.BuildTime={{.Date}}'
 
 archives:
   - id: repl

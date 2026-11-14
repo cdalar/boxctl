@@ -8,7 +8,7 @@ name: edge
 # .goreleaser.edge.yml, then this workflow updates a single rolling `edge`
 # prerelease/tag in place on every run, so there's always exactly
 # one, always-current release at a fixed URL
-# (github.com/cdalar/boxctl/releases/tag/edge).
+# (github.com/boxctl-io/boxctl-cli/releases/tag/edge).
 #
 # Runs on a plain GitHub-hosted ubuntu-latest runner -- unlike onctl's
 # self-hosted onctl-2 runner (needed there because building
@@ -98,7 +98,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          repo=cdalar/boxctl
+          repo="${{ github.repository }}"
           title="edge ($(date -u +%Y-%m-%d))"
           notes="Automated, unsigned build of main @ ${{ github.sha }}. Not a tagged release -- see the Releases page for stable versions."
           if gh release view edge --repo "$repo" >/dev/null 2>&1; then

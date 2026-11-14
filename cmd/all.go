@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cdalar/boxctl/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
 )
 
 // allBoxes is the magic <name> that makes rm/pause/resume act on every

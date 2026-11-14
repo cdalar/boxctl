@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cdalar/boxctl/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
 )
 
 func TestFilterUnfinished(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cdalar/boxctl/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
 )
 
 // What ls says about a box's project, and which boxes are a project's

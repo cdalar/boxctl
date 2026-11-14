@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cdalar/boxctl/internal/client"
-	"github.com/cdalar/boxctl/internal/config"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/config"
 	"github.com/gorilla/websocket"
 	"github.com/openai/openai-go/v3"
 )

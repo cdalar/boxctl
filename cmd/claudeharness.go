@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cdalar/boxctl/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
 )
 
 // --harness: rules for Claude on the box that don't belong in your own

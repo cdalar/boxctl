@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cdalar/boxctl/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
 )
 
 // fakeLoginServer is boxctl-vms's two public login routes

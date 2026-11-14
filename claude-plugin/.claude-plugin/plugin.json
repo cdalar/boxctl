@@ -6,7 +6,7 @@
     "name": "Cemal Y. Dalar"
   },
   "homepage": "https://boxctl.io",
-  "repository": "https://github.com/cdalar/boxctl",
+  "repository": "https://github.com/boxctl-io/boxctl-cli",
   "userConfig": {
     "autostart": {
       "type": "string",

@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cdalar/boxctl/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
 	"github.com/spf13/cobra"
 )
 

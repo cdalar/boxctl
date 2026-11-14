@@ -9,8 +9,8 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/cdalar/boxctl/internal/client"
-	"github.com/cdalar/boxctl/internal/config"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/config"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"

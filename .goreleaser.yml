@@ -40,7 +40,7 @@ builds:
   #     - amd64
   #     - arm64
   #   ldflags:
-  #     - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/cdalar/boxctl/cmd.BuildTime={{.Date}}'
+  #     - -w -s -X 'github.com/boxctl-io/boxctl-cli/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/boxctl-io/boxctl-cli/cmd.BuildTime={{.Date}}'
   #   hooks:
   #     post:
   #       # --dry-run/--ad-hoc on snapshots so `goreleaser release --snapshot`
@@ -60,7 +60,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/cdalar/boxctl/cmd.BuildTime={{.Date}}'
+      - -w -s -X 'github.com/boxctl-io/boxctl-cli/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/boxctl-io/boxctl-cli/cmd.BuildTime={{.Date}}'
 
   # macOS, unsigned -- stands in for boxctl-macos above until signing is
   # set up; delete it when that's re-enabled (both would produce the same
@@ -76,7 +76,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -w -s -X 'github.com/cdalar/boxctl/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/cdalar/boxctl/cmd.BuildTime={{.Date}}'
+      - -w -s -X 'github.com/boxctl-io/boxctl-cli/cmd.Version=v{{.Version}}-{{.ShortCommit}}' -X 'github.com/boxctl-io/boxctl-cli/cmd.BuildTime={{.Date}}'
 
 archives:
   - id: repl
@@ -101,8 +101,8 @@ changelog:
 
 release:
   github:
-    owner: cdalar
-    name: boxctl
+    owner: boxctl-io
+    name: boxctl-cli
   prerelease: auto
 
 # Homebrew cask -- disabled along with the macOS build above. Re-enabling

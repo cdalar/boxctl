@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cdalar/boxctl/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
 )
 
 // `boxctl ssh <box> --detach -- cmd` / `--wait [id] [--follow]`: a command

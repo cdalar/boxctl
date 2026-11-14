@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cdalar/boxctl/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
 )
 
 // The tui's resource views, k9s-style: each is a table over one of the
