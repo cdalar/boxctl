@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/cdalar/boxctl/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
 )
 
 func TestFindBackup(t *testing.T) {

@@ -1,6 +1,6 @@
 # boxctl
 
-[![Release](https://img.shields.io/github/v/release/cdalar/boxctl)](https://github.com/cdalar/boxctl/releases)
+[![Release](https://img.shields.io/github/v/release/boxctl-io/boxctl-cli)](https://github.com/boxctl-io/boxctl-cli/releases)
 
 **Firecracker microVMs ("boxes") from your terminal.** `boxctl` is the
 command-line client for [boxctl.io](https://boxctl.io): boot, connect to,
@@ -55,7 +55,7 @@ sudo install boxctl /usr/local/bin/
 
 Windows (x64 and ARM64): download `boxctl-windows-amd64.zip` or
 `boxctl-windows-arm64.zip` from the [releases
-page](https://github.com/cdalar/boxctl/releases) and put `boxctl.exe` on your
+page](https://github.com/boxctl-io/boxctl-cli/releases) and put `boxctl.exe` on your
 `PATH`. In Git Bash the install script above works too; it leaves `boxctl.exe`
 in the current directory. The `edge` prerelease below has both zips as well.
 
@@ -66,7 +66,7 @@ binary downloaded through a browser gets quarantined, so clear it with
 
 #### Edge build (latest `main`)
 
-To install or update to the `edge` build, an unsigned binary rebuilt from the tip of `main` on every push (Windows: `boxctl-windows-amd64.zip` and `boxctl-windows-arm64.zip` on the [edge release](https://github.com/cdalar/boxctl/releases/tag/edge)):
+To install or update to the `edge` build, an unsigned binary rebuilt from the tip of `main` on every push (Windows: `boxctl-windows-amd64.zip` and `boxctl-windows-arm64.zip` on the [edge release](https://github.com/boxctl-io/boxctl-cli/releases/tag/edge)):
 
 ```bash
 curl -sLS https://boxctl.io/get-edge.sh | bash
@@ -373,7 +373,7 @@ work as `box/wip-<name>`.
 
 A new box boots the image for the project's language when the server has
 one (`claude-agent-go` for a Go project), else `claude-agent`, and says
-which and why (`image claude-agent-go (go.mod in cdalar/boxctl)`).
+which and why (`image claude-agent-go (go.mod in boxctl-io/boxctl-cli)`).
 `--goal`/`--issue`/`--repo` runs read the stack from the current
 directory when they have no `--repo`, else from the first `--repo`'s root
 files on GitHub (one short API call; any error means `claude-agent`).
@@ -564,7 +564,7 @@ key logins for root: add your public key once with
 one of your boxes instead of on your machine. Install it from this repo:
 
 ```
-/plugin marketplace add cdalar/boxctl
+/plugin marketplace add boxctl-io/boxctl-cli
 /plugin install boxctl@boxctl
 ```
 

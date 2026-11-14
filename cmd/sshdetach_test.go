@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cdalar/boxctl/internal/client"
-	"github.com/cdalar/boxctl/internal/config"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/config"
 )
 
 // fakeBoxAPI serves POST /api/vms/<name>/exec by running the command

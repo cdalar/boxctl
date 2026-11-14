@@ -13,8 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cdalar/boxctl/internal/client"
-	"github.com/cdalar/boxctl/internal/config"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/config"
 )
 
 // setModelFlags sets --model/--effort for a test, and resets them after.

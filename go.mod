@@ -1,4 +1,4 @@
-module github.com/cdalar/boxctl
+module github.com/boxctl-io/boxctl-cli
 
 go 1.26.5
 

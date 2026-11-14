@@ -9,7 +9,7 @@ import (
 )
 
 // Version and BuildTime are set at build time via -ldflags "-X
-// github.com/cdalar/boxctl/cmd.Version=..." -- by both .goreleaser*.yml
+// github.com/boxctl-io/boxctl-cli/cmd.Version=..." -- by both .goreleaser*.yml
 // (v<tag>-<commit>, and the build's date) and the Makefile. A plain `go
 // build` sets neither, so versionInfo falls back to the commit and commit
 // time Go records in the binary itself.

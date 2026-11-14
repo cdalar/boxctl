@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/cdalar/boxctl/cmd"
+	"github.com/boxctl-io/boxctl-cli/cmd"
 )
 
 func main() {

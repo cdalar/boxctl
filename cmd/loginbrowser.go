@@ -14,7 +14,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/cdalar/boxctl/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
 )
 
 // browserLogin is `boxctl login` without a pasted token

@@ -1,9 +1,9 @@
-module github.com/cdalar/boxctl/examples/openai-agents
+module github.com/boxctl-io/boxctl-cli/examples/openai-agents
 
 go 1.26.5
 
 require (
-	github.com/cdalar/boxctl v0.0.0
+	github.com/boxctl-io/boxctl-cli v0.0.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/openai/openai-go/v3 v3.68.0
 )
@@ -18,4 +18,4 @@ require (
 	golang.org/x/term v0.46.0 // indirect
 )
 
-replace github.com/cdalar/boxctl => ../..
+replace github.com/boxctl-io/boxctl-cli => ../..

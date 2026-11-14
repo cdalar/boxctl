@@ -10,8 +10,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/cdalar/boxctl/internal/client"
-	"github.com/cdalar/boxctl/internal/config"
+	"github.com/boxctl-io/boxctl-cli/internal/client"
+	"github.com/boxctl-io/boxctl-cli/internal/config"
 )
 
 // Which model Claude runs on the box, and with what effort: --model and
