@@ -850,3 +850,8 @@ an existing tag to dry-run all of that without publishing.
 `make release-snapshot` builds the same artifacts locally (unsigned,
 into `dist/`).
 
+
+## License
+
+The boxctl CLI and its Claude Code plugin are licensed under the
+[Apache License 2.0](LICENSE). Copyright 2026 Crash Code B.V.
